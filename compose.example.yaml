@@ -1,0 +1,24 @@
+services:
+  twitch-logs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: twitch-logs:latest
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    ports:
+      - "8787:8787"
+    volumes:
+      - twitch_tokens:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  twitch_tokens:

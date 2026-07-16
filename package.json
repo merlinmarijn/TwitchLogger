@@ -1,0 +1,47 @@
+{
+  "name": "twitch-logs",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n web,convex,worker -c cyan,magenta,yellow \"vite\" \"convex dev\" \"tsx watch worker/index.ts\"",
+    "dev:web": "vite",
+    "dev:convex": "convex dev",
+    "dev:worker": "tsx watch worker/index.ts",
+    "build": "tsc -b && vite build",
+    "start:worker": "tsx worker/index.ts",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "convex": "latest",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "pino": "^9.6.0",
+    "tsx": "latest",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@vitejs/plugin-react": "latest",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.1",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/ws": "^8.18.1",
+    "concurrently": "latest",
+    "eslint": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "eslint-plugin-react-refresh": "latest",
+    "globals": "latest",
+    "pino-pretty": "^13.0.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "typescript": "~5.8.3",
+    "typescript-eslint": "latest",
+    "vite": "latest",
+    "vitest": "latest"
+  }
+}

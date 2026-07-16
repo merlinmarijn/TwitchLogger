@@ -3,38 +3,65 @@ import express from "express";
 import { existsSync } from "node:fs";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
+import type { LoadedConfiguration } from "./config";
 import type { Logger } from "./logger";
-import type { TwitchOptions, WorkerOptions } from "./types";
 import type { TwitchAuthService } from "./twitch/TwitchAuthService";
 
+export interface ApplicationRuntimeState {
+  auth?: TwitchAuthService;
+  integrationError?: string;
+}
+
 export function createHttpServer(
-  options: WorkerOptions,
-  auth: TwitchAuthService,
+  configuration: LoadedConfiguration,
+  runtime: ApplicationRuntimeState,
   logger: Logger,
 ): Promise<Server> {
   const app = express();
-  const twitchOptions: TwitchOptions = options.twitch;
   app.disable("x-powered-by");
-  app.use(cors({ origin: twitchOptions.frontendUrl, methods: ["GET"] }));
+  app.use(cors({ origin: configuration.frontendUrl, methods: ["GET"] }));
 
   app.get("/health", (_request, response) => {
-    response.json({ ok: true, twitchAuthenticated: auth.getStatus().authenticated });
+    response.json({
+      ok: true,
+      ready: Boolean(configuration.options) && !runtime.integrationError,
+      configured: Boolean(configuration.options),
+      configurationIssues: configuration.issues,
+      integrationError: runtime.integrationError,
+      twitchAuthenticated: runtime.auth?.getStatus().authenticated ?? false,
+    });
+  });
+
+  app.get("/ready", (_request, response) => {
+    const ready = Boolean(configuration.options) && !runtime.integrationError;
+    response.status(ready ? 200 : 503).json({
+      ready,
+      configurationIssues: configuration.issues,
+      integrationError: runtime.integrationError,
+    });
   });
 
   app.get("/auth/twitch/status", (_request, response) => {
-    const status = auth.getStatus();
+    const status = runtime.auth?.getStatus();
     response.set("Cache-Control", "no-store").json({
-      authenticated: status.authenticated,
-      login: status.login,
-      scopes: status.scopes,
-      reason: status.reason,
+      configured: Boolean(configuration.options),
+      authenticated: status?.authenticated ?? false,
+      login: status?.login,
+      scopes: status?.scopes ?? [],
+      reason:
+        status?.reason ??
+        runtime.integrationError ??
+        (configuration.issues.length > 0
+          ? `Configuration required: ${configuration.issues.join("; ")}`
+          : undefined),
     });
   });
 
   app.get("/runtime-config.js", (_request, response) => {
     const runtimeConfig = JSON.stringify({
-      convexUrl: options.convexUrl,
-      workerUrl: options.publicWorkerUrl,
+      convexUrl: configuration.convexUrl,
+      workerUrl: configuration.publicWorkerUrl,
+      configurationIssues: configuration.issues,
     }).replace(/</g, "\\u003c");
     response
       .type("application/javascript")
@@ -43,16 +70,30 @@ export function createHttpServer(
   });
 
   app.get("/auth/twitch/start", (_request, response) => {
-    response.redirect(auth.createAuthorizationUrl());
+    if (!runtime.auth) {
+      response
+        .status(503)
+        .type("text/plain")
+        .send("Twitch integration is not configured. Check /health for missing settings.");
+      return;
+    }
+    response.redirect(runtime.auth.createAuthorizationUrl());
   });
 
   app.get("/auth/twitch/callback", async (request, response) => {
+    if (!runtime.auth) {
+      response
+        .status(503)
+        .type("text/plain")
+        .send("Twitch integration is not configured. Check /health for missing settings.");
+      return;
+    }
     const error = typeof request.query.error === "string" ? request.query.error : undefined;
     const code = typeof request.query.code === "string" ? request.query.code : undefined;
     const state = typeof request.query.state === "string" ? request.query.state : undefined;
     if (error) {
       logger.warn({ error }, "Twitch OAuth authorization was denied");
-      response.redirect(`${twitchOptions.frontendUrl}/?twitch=denied`);
+      response.redirect(`${configuration.frontendUrl}/?twitch=denied`);
       return;
     }
     if (!code || !state) {
@@ -60,11 +101,11 @@ export function createHttpServer(
       return;
     }
     try {
-      await auth.exchangeAuthorizationCode(code, state);
-      response.redirect(`${twitchOptions.frontendUrl}/?twitch=connected`);
+      await runtime.auth.exchangeAuthorizationCode(code, state);
+      response.redirect(`${configuration.frontendUrl}/?twitch=connected`);
     } catch (cause) {
       logger.error({ err: cause }, "Twitch OAuth callback failed");
-      response.redirect(`${twitchOptions.frontendUrl}/?twitch=error`);
+      response.redirect(`${configuration.frontendUrl}/?twitch=error`);
     }
   });
 
@@ -91,13 +132,17 @@ export function createHttpServer(
     });
   }
 
-  return new Promise((resolve, reject) => {
-    const server = app.listen(options.port, "0.0.0.0", () => {
+  return new Promise((resolveServer, reject) => {
+    const server = app.listen(configuration.port, "0.0.0.0", () => {
       logger.info(
-        { port: options.port, servesFrontend: existsSync(staticDirectory) },
+        {
+          port: configuration.port,
+          servesFrontend: existsSync(staticDirectory),
+          configured: Boolean(configuration.options),
+        },
         "Twitch application server listening",
       );
-      resolve(server);
+      resolveServer(server);
     });
     server.once("error", reject);
   });

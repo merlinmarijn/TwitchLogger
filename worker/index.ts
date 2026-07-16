@@ -1,6 +1,9 @@
 import { ConvexChatRepository } from "./ConvexChatRepository";
-import { loadOptions } from "./config";
-import { createHttpServer } from "./httpServer";
+import { loadConfiguration } from "./config";
+import {
+  createHttpServer,
+  type ApplicationRuntimeState,
+} from "./httpServer";
 import { createLogger } from "./logger";
 import { EncryptedTokenStore } from "./twitch/EncryptedTokenStore";
 import { TwitchApiClient } from "./twitch/TwitchApiClient";
@@ -8,26 +11,47 @@ import { TwitchAuthService } from "./twitch/TwitchAuthService";
 import { TwitchChatService } from "./twitch/TwitchChatService";
 import { TwitchEventSubClient } from "./twitch/TwitchEventSubClient";
 
-const options = loadOptions();
-const logger = createLogger(options.logLevel);
+const configuration = loadConfiguration();
+const logger = createLogger(configuration.logLevel);
 const abortController = new AbortController();
+const runtime: ApplicationRuntimeState = {};
+let chat: TwitchChatService | undefined;
 
-const tokenStore = new EncryptedTokenStore(
-  options.twitch.tokenStorePath,
-  options.twitch.tokenEncryptionKey,
-);
-const auth = new TwitchAuthService(options.twitch, tokenStore, logger);
-const api = new TwitchApiClient(options.twitch.clientId, auth, logger);
-const eventSub = new TwitchEventSubClient(options.twitch.eventSubUrl, api, logger);
-const repository = new ConvexChatRepository(
-  options.convexUrl,
-  options.ingestionSecret,
-  logger,
-);
-const chat = new TwitchChatService(auth, api, eventSub, repository, logger);
+for (const warning of configuration.warnings) logger.warn({ warning }, "Configuration warning");
+if (configuration.issues.length > 0) {
+  logger.warn(
+    { configurationIssues: configuration.issues },
+    "Integration configuration is incomplete; starting in setup mode",
+  );
+}
 
-const server = await createHttpServer(options, auth, logger);
-await chat.start(abortController.signal);
+const server = await createHttpServer(configuration, runtime, logger);
+
+if (configuration.options) {
+  const options = configuration.options;
+  try {
+    const tokenStore = new EncryptedTokenStore(
+      options.twitch.tokenStorePath,
+      options.twitch.tokenEncryptionKey,
+    );
+    const auth = new TwitchAuthService(options.twitch, tokenStore, logger);
+    runtime.auth = auth;
+    const api = new TwitchApiClient(options.twitch.clientId, auth, logger);
+    const eventSub = new TwitchEventSubClient(options.twitch.eventSubUrl, api, logger);
+    const repository = new ConvexChatRepository(
+      options.convexUrl,
+      options.ingestionSecret,
+      logger,
+    );
+    chat = new TwitchChatService(auth, api, eventSub, repository, logger);
+    await chat.start(abortController.signal);
+  } catch (error) {
+    runtime.integrationError = "Twitch integration failed to initialize; inspect server logs";
+    runtime.auth = undefined;
+    chat?.stop();
+    logger.error({ err: error }, "Twitch integration initialization failed; server remains online");
+  }
+}
 
 async function shutdown(signal: string) {
   logger.info({ signal }, "Shutting down Twitch worker");

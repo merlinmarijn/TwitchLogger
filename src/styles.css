@@ -60,6 +60,7 @@ h2 { font-size: 18px; }
 .button:disabled { opacity: .55; cursor: wait; }
 .add-channel { margin-top: auto; width: 100%; }
 .auth-chip { border-radius: 99px; padding: 7px 11px; font-size: 12px; background: #163a32; color: #74efca; }
+.auth-chip.setup { background: #352913; color: #f4cc80; }
 .feed-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto 1fr; background: #0e0e10; }
 .feed-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--border); background: #121214; }
 .toolbar-actions { display: flex; align-items: center; gap: 8px; }
@@ -97,6 +98,10 @@ h2 { font-size: 18px; }
 .notice { width: 100%; border-width: 0 0 1px; border-radius: 0; text-align: center; cursor: pointer; }
 .fatal { width: min(560px, calc(100% - 40px)); margin: 20vh auto; text-align: center; display: grid; gap: 15px; }
 .fatal p { color: var(--muted); }
+.setup-required { width: min(600px, calc(100% - 40px)); min-height: 100vh; margin: 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 13px; text-align: center; }
+.setup-required p { max-width: 520px; color: var(--muted); line-height: 1.55; }
+.setup-required ul { width: 100%; margin: 5px 0; padding: 13px 16px 13px 35px; border: 1px solid #6e5426; border-radius: 8px; background: #352913; color: #f4cc80; text-align: left; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.setup-required .setup-hint { font-size: 12px; }
 @media (max-width: 1050px) {
   .dashboard { grid-template-columns: 230px minmax(400px, 1fr); }
   .filters-panel { display: none; }

@@ -1,6 +1,7 @@
 interface RuntimeConfig {
   convexUrl?: string;
   workerUrl?: string;
+  configurationIssues?: string[];
 }
 
 declare global {
@@ -18,3 +19,5 @@ export const workerUrl =
   runtimeConfig.workerUrl ??
   (import.meta.env.VITE_WORKER_URL as string | undefined) ??
   "";
+
+export const configurationIssues = runtimeConfig.configurationIssues ?? [];

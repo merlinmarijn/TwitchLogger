@@ -83,8 +83,12 @@ export class ConvexChatRepository {
     private readonly ingestionSecret: string,
     private readonly logger: Logger,
   ) {
-    this.realtime = new ConvexClient(convexUrl);
-    this.http = new ConvexHttpClient(convexUrl);
+    this.realtime = new ConvexClient(convexUrl, {
+      skipConvexDeploymentUrlCheck: true,
+    });
+    this.http = new ConvexHttpClient(convexUrl, {
+      skipConvexDeploymentUrlCheck: true,
+    });
   }
 
   watchLoggingChannels(

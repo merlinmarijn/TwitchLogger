@@ -57,6 +57,9 @@ The image:
 - Includes an HTTP health check at `/health`.
 - Persists only the encrypted Twitch token file under `/data`.
 - Accepts all configuration at runtime; no secrets are Docker build arguments.
+- Remains online in setup mode when required configuration is missing or still contains example placeholders.
+
+`GET /health` is a liveness endpoint and always returns HTTP 200 while the process is operating. Its JSON includes `ready`, `configured`, and safe `configurationIssues` fields. `GET /ready` returns HTTP 503 until configuration and integration initialization succeed. Missing credentials disable ingestion and OAuth but do not terminate the dashboard container.
 
 Place TLS in front of port 8787 with your production ingress or reverse proxy. The public origin and Twitch callback must route to the same container endpoints. Run one ingestion-worker replica unless you add leader election and a shared OAuth-state/token-store implementation.
 

@@ -2,46 +2,122 @@ import "dotenv/config";
 import { resolve } from "node:path";
 import type { WorkerOptions } from "./types";
 
-function required(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`Missing required environment variable ${name}`);
+type Environment = Record<string, string | undefined>;
+
+export interface LoadedConfiguration {
+  options?: WorkerOptions;
+  issues: string[];
+  warnings: string[];
+  port: number;
+  logLevel: string;
+  convexUrl?: string;
+  publicWorkerUrl: string;
+  frontendUrl: string;
+}
+
+const placeholderPatterns = [
+  /^your[_-]/i,
+  /^replace[_-]with[_-]/i,
+  /^base64[_-]encoded/i,
+];
+
+function required(env: Environment, name: string, issues: string[]): string | undefined {
+  const value = env[name]?.trim();
+  if (!value || placeholderPatterns.some((pattern) => pattern.test(value))) {
+    issues.push(`${name} is missing or still contains an example value`);
+    return undefined;
+  }
   return value;
 }
 
-function encryptionKey(): Buffer {
-  const key = Buffer.from(required("TWITCH_TOKEN_ENCRYPTION_KEY"), "base64");
+function readEncryptionKey(
+  env: Environment,
+  issues: string[],
+): Buffer | undefined {
+  const encoded = required(env, "TWITCH_TOKEN_ENCRYPTION_KEY", issues);
+  if (!encoded) return undefined;
+  const key = Buffer.from(encoded, "base64");
   if (key.length !== 32) {
-    throw new Error("TWITCH_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
+    issues.push("TWITCH_TOKEN_ENCRYPTION_KEY must decode to exactly 32 bytes");
+    return undefined;
   }
   return key;
 }
 
-export function loadOptions(): WorkerOptions {
-  const port = Number.parseInt(process.env.WORKER_PORT ?? "8787", 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("WORKER_PORT must be a valid TCP port");
+export function loadConfiguration(env: Environment = process.env): LoadedConfiguration {
+  const issues: string[] = [];
+  const warnings: string[] = [];
+  const configuredPort = Number.parseInt(env.WORKER_PORT ?? "8787", 10);
+  const port =
+    Number.isInteger(configuredPort) && configuredPort >= 1 && configuredPort <= 65535
+      ? configuredPort
+      : 8787;
+  if (port !== configuredPort) {
+    warnings.push("WORKER_PORT is invalid; using port 8787");
   }
 
+  const convexUrl = required(env, "CONVEX_URL", issues);
+  const ingestionSecret = required(env, "INGESTION_SECRET", issues);
+  const clientId = required(env, "TWITCH_CLIENT_ID", issues);
+  const clientSecret = required(env, "TWITCH_CLIENT_SECRET", issues);
+  const redirectUri = required(env, "TWITCH_REDIRECT_URI", issues);
+  const tokenEncryptionKey = readEncryptionKey(env, issues);
+  const frontendUrl = env.TWITCH_FRONTEND_URL?.trim() || "http://localhost:5173";
+  const publicWorkerUrl = env.PUBLIC_WORKER_URL?.trim().replace(/\/$/, "") ?? "";
+
+  const hasInitialAccessToken = Boolean(env.TWITCH_ACCESS_TOKEN?.trim());
+  const hasInitialRefreshToken = Boolean(env.TWITCH_REFRESH_TOKEN?.trim());
+  if (hasInitialAccessToken !== hasInitialRefreshToken) {
+    warnings.push(
+      "TWITCH_ACCESS_TOKEN and TWITCH_REFRESH_TOKEN must both be set to bootstrap tokens; ignoring the incomplete pair",
+    );
+  }
+
+  const options =
+    convexUrl &&
+    ingestionSecret &&
+    clientId &&
+    clientSecret &&
+    redirectUri &&
+    tokenEncryptionKey
+      ? {
+          convexUrl,
+          publicWorkerUrl,
+          ingestionSecret,
+          port,
+          logLevel: env.LOG_LEVEL ?? "info",
+          twitch: {
+            clientId,
+            clientSecret,
+            redirectUri,
+            frontendUrl,
+            eventSubUrl:
+              env.TWITCH_EVENTSUB_URL ??
+              "wss://eventsub.wss.twitch.tv/ws?keepalive_timeout_seconds=30",
+            tokenEncryptionKey,
+            tokenStorePath: resolve(
+              env.TWITCH_TOKEN_STORE_PATH ?? "./data/twitch-tokens.enc",
+            ),
+            initialAccessToken:
+              hasInitialAccessToken && hasInitialRefreshToken
+                ? env.TWITCH_ACCESS_TOKEN!.trim()
+                : undefined,
+            initialRefreshToken:
+              hasInitialAccessToken && hasInitialRefreshToken
+                ? env.TWITCH_REFRESH_TOKEN!.trim()
+                : undefined,
+          },
+        }
+      : undefined;
+
   return {
-    convexUrl: required("CONVEX_URL"),
-    publicWorkerUrl: process.env.PUBLIC_WORKER_URL?.replace(/\/$/, "") ?? "",
-    ingestionSecret: required("INGESTION_SECRET"),
+    options,
+    issues,
+    warnings,
     port,
-    logLevel: process.env.LOG_LEVEL ?? "info",
-    twitch: {
-      clientId: required("TWITCH_CLIENT_ID"),
-      clientSecret: required("TWITCH_CLIENT_SECRET"),
-      redirectUri: required("TWITCH_REDIRECT_URI"),
-      frontendUrl: process.env.TWITCH_FRONTEND_URL ?? "http://localhost:5173",
-      eventSubUrl:
-        process.env.TWITCH_EVENTSUB_URL ??
-        "wss://eventsub.wss.twitch.tv/ws?keepalive_timeout_seconds=30",
-      tokenEncryptionKey: encryptionKey(),
-      tokenStorePath: resolve(
-        process.env.TWITCH_TOKEN_STORE_PATH ?? "./data/twitch-tokens.enc",
-      ),
-      initialAccessToken: process.env.TWITCH_ACCESS_TOKEN || undefined,
-      initialRefreshToken: process.env.TWITCH_REFRESH_TOKEN || undefined,
-    },
+    logLevel: env.LOG_LEVEL ?? "info",
+    convexUrl,
+    publicWorkerUrl,
+    frontendUrl,
   };
 }

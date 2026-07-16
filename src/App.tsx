@@ -12,6 +12,7 @@ import { api, type Channel, type ChatMessage } from "./api";
 import { workerUrl } from "./runtimeConfig";
 
 interface AuthStatus {
+  configured?: boolean;
   authenticated: boolean;
   login?: string;
   reason?: string;
@@ -86,6 +87,10 @@ export default function App() {
           </div>
           {auth?.authenticated ? (
             <span className="auth-chip connected">Connected as {auth.login}</span>
+          ) : auth?.configured === false ? (
+            <span className="auth-chip setup" title={auth.reason}>
+              Twitch setup required
+            </span>
           ) : (
             <a className="button primary" href={`${workerUrl}/auth/twitch/start`}>
               Connect Twitch

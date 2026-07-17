@@ -15,6 +15,7 @@ export type FilterOperator =
   | "startsWith"
   | "endsWith"
   | "wholeWord"
+  | "regex"
   | "has"
   | "notHas";
 export type FilterAction = "show" | "hide" | "highlight";
@@ -59,7 +60,7 @@ const actions = new Set<FilterAction>(["show", "hide", "highlight"]);
 const matchModes = new Set<FilterMatchMode>(["all", "any"]);
 
 export function operatorsForField(field: FilterField): FilterOperator[] {
-  if (field === "role" || field === "messageType") return ["equals", "notEquals"];
+  if (field === "role") return ["equals", "notEquals"];
   if (field === "badge") return ["has", "notHas"];
   return [
     "contains",
@@ -69,7 +70,14 @@ export function operatorsForField(field: FilterField): FilterOperator[] {
     "startsWith",
     "endsWith",
     "wholeWord",
+    "regex",
   ];
+}
+
+export function filterRuleError(rule: FilterRule): string | undefined {
+  if (!rule.value.trim()) return "Enter a value.";
+  if (rule.operator !== "regex") return undefined;
+  return parseRegex(rule.value).error;
 }
 
 export function matchesMessageFilter(message: ChatMessage, filter: MessageFilter) {
@@ -127,6 +135,10 @@ export function serializeFilterState(state: FilterState) {
 }
 
 function matchesRule(message: ChatMessage, rule: FilterRule) {
+  if (rule.operator === "regex") {
+    const expression = compileRegex(rule.value);
+    return expression?.test(fieldText(message, rule.field)) ?? false;
+  }
   const value = normalize(rule.value);
   if (!value) return false;
 
@@ -235,13 +247,62 @@ function parseRule(value: unknown): FilterRule[] {
   ) return [];
   const field = value.field as FilterField;
   const operator = value.operator as FilterOperator;
-  if (!operatorsForField(field).includes(operator) || !value.value.trim()) return [];
-  return [{
+  if (!operatorsForField(field).includes(operator)) return [];
+  const rule = {
     id: value.id.slice(0, 100),
     field,
     operator,
     value: value.value.slice(0, 200),
-  }];
+  };
+  return filterRuleError(rule) ? [] : [rule];
+}
+
+const regexCache = new Map<string, RegExp | null>();
+
+function compileRegex(value: string) {
+  if (regexCache.has(value)) return regexCache.get(value) ?? null;
+  const parsed = parseRegex(value);
+  const expression = parsed.error
+    ? null
+    : new RegExp(parsed.pattern!, parsed.flags);
+  regexCache.set(value, expression);
+  if (regexCache.size > 100) regexCache.delete(regexCache.keys().next().value!);
+  return expression;
+}
+
+function parseRegex(value: string): {
+  pattern?: string;
+  flags?: string;
+  error?: string;
+} {
+  const input = value.trim();
+  if (!input) return { error: "Enter a regular expression." };
+  if (input.length > 200) return { error: "Regular expressions are limited to 200 characters." };
+
+  let pattern = input;
+  let flags = "i";
+  if (input.startsWith("/")) {
+    const closingSlash = input.lastIndexOf("/");
+    if (closingSlash === 0) return { error: "Delimited expressions need a closing /." };
+    pattern = input.slice(1, closingSlash);
+    flags = input.slice(closingSlash + 1);
+    if (!/^[imsu]*$/.test(flags)) {
+      return { error: "Supported flags are i, m, s, and u." };
+    }
+    if (new Set(flags).size !== flags.length) {
+      return { error: "Regular-expression flags cannot be repeated." };
+    }
+  }
+  if (!pattern) return { error: "The regular-expression pattern cannot be empty." };
+  if (/(?:\([^)]*(?:[+*]|\{\d+,?\d*\})[^)]*\))(?:[+*]|\{\d+,?\d*\})/.test(pattern)) {
+    return { error: "Nested repetition is not allowed because it may freeze the feed." };
+  }
+  try {
+    void new RegExp(pattern, flags);
+  } catch {
+    return { error: "Invalid regular expression." };
+  }
+  return { pattern, flags };
 }
 
 function normalize(value: string) {

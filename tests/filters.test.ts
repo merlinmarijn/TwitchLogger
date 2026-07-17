@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "../src/api";
 import {
   applyMessageFilters,
+  filterRuleError,
   matchesMessageFilter,
   parseFilterState,
   type MessageFilter,
@@ -45,6 +46,33 @@ describe("message filters", () => {
         rules: [{ id: "word", field: "message", operator: "wholeWord", value: "C++" }],
       }),
     )).toBe(true);
+  });
+
+  it("supports plain case-insensitive regex and delimited expressions with flags", () => {
+    expect(matchesMessageFilter(messages[0], makeFilter({
+      rules: [{ id: "regex", field: "message", operator: "regex", value: "^hello\\s+chat$" }],
+    }))).toBe(true);
+    expect(matchesMessageFilter(messages[0], makeFilter({
+      rules: [{ id: "regex", field: "message", operator: "regex", value: "/^hello/" }],
+    }))).toBe(false);
+    expect(matchesMessageFilter(messages[0], makeFilter({
+      rules: [{ id: "regex", field: "message", operator: "regex", value: "/^hello/i" }],
+    }))).toBe(true);
+  });
+
+  it("rejects invalid and nested-repetition regular expressions", () => {
+    expect(filterRuleError({
+      id: "regex",
+      field: "message",
+      operator: "regex",
+      value: "([",
+    })).toBe("Invalid regular expression.");
+    expect(filterRuleError({
+      id: "regex",
+      field: "message",
+      operator: "regex",
+      value: "(a+)+$",
+    })).toContain("Nested repetition");
   });
 
   it("processes show, hide, and highlight filters in a deterministic pipeline", () => {

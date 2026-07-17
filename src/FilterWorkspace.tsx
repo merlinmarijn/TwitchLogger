@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ChatMessage } from "./api";
 import {
+  filterRuleError,
   matchesMessageFilter,
   operatorsForField,
   type FilterAction,
@@ -36,6 +37,7 @@ const operatorLabels: Record<FilterOperator, string> = {
   startsWith: "starts with",
   endsWith: "ends with",
   wholeWord: "contains whole word",
+  regex: "matches regular expression",
   has: "has",
   notHas: "does not have",
 };
@@ -68,9 +70,12 @@ export default function FilterWorkspace({
     [filters, messages],
   );
   const draftIsSaved = filters.some((filter) => filter.id === draft.id);
-  const canSave = Boolean(
-    draft.name.trim() && draft.rules.length > 0 && draft.rules.every((rule) => rule.value.trim()),
-  );
+  const editorError = !draft.name.trim()
+    ? "Give the filter a name."
+    : draft.rules.length === 0
+      ? "Add at least one condition."
+      : draft.rules.map(filterRuleError).find(Boolean);
+  const canSave = !editorError;
 
   const edit = (filter: MessageFilter) => {
     setDraft({ ...filter, rules: filter.rules.map((rule) => ({ ...rule })) });
@@ -257,7 +262,11 @@ export default function FilterWorkspace({
                   ))}
                 </select>
               </label>
-              <RuleValueInput rule={rule} onChange={(value) => updateRule(rule.id, { value })} />
+              <RuleValueInput
+                error={rule.operator === "regex" && rule.value ? filterRuleError(rule) : undefined}
+                rule={rule}
+                onChange={(value) => updateRule(rule.id, { value })}
+              />
               <button
                 aria-label={`Remove condition ${index + 1}`}
                 className="remove-rule"
@@ -275,7 +284,7 @@ export default function FilterWorkspace({
         </div>
 
         <div className="filter-editor-actions">
-          <span>{canSave ? "Ready to save" : "Give the filter a name and complete every condition."}</span>
+          <span>{canSave ? "Ready to save" : editorError}</span>
           <button className="button" disabled={!canSave} onClick={() => onSave(draft, false)}>
             Save
           </button>
@@ -293,9 +302,11 @@ export default function FilterWorkspace({
 }
 
 function RuleValueInput({
+  error,
   rule,
   onChange,
 }: {
+  error?: string;
   rule: FilterRule;
   onChange: (value: string) => void;
 }) {
@@ -333,9 +344,16 @@ function RuleValueInput({
       <input
         maxLength={200}
         onChange={(event) => onChange(event.target.value)}
-        placeholder={rule.field === "badge" ? "e.g. subscriber or bits/100" : "Enter a value"}
+        placeholder={
+          rule.operator === "regex"
+            ? "e.g. ^hello or /hello|hi/i"
+            : rule.field === "badge"
+              ? "e.g. subscriber or bits/100"
+              : "Enter a value"
+        }
         value={rule.value}
       />
+      {error && <small className="rule-error">{error}</small>}
     </label>
   );
 }

@@ -8,7 +8,26 @@ import {
   useState,
 } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { api, type Channel, type ChatMessage } from "./api";
+import {
+  api,
+  type Channel,
+  type ChatBadgeDefinition,
+  type ChatMessage,
+} from "./api";
+import {
+  buildMessageParts,
+  renderMessageParts,
+  type ThirdPartyEmote,
+} from "./emotes";
+import FilterWorkspace from "./FilterWorkspace";
+import {
+  applyMessageFilters,
+  FILTER_STORAGE_KEY,
+  parseFilterState,
+  serializeFilterState,
+  type FilterState,
+  type MessageFilter,
+} from "./filters";
 import { workerUrl } from "./runtimeConfig";
 
 interface AuthStatus {
@@ -18,14 +37,13 @@ interface AuthStatus {
   reason?: string;
 }
 
-interface Filters {
-  sender: string;
-  text: string;
-  hasBadges: boolean;
-  rolesOnly: boolean;
+function loadSavedFilterState() {
+  try {
+    return parseFilterState(localStorage.getItem(FILTER_STORAGE_KEY));
+  } catch {
+    return { filters: [], activeIds: [] };
+  }
 }
-
-const emptyFilters: Filters = { sender: "", text: "", hasBadges: false, rolesOnly: false };
 
 export default function App() {
   const channels = useQuery(api.channels.list, {}) ?? [];
@@ -37,13 +55,17 @@ export default function App() {
   });
   const messages = useMemo(() => queriedMessages ?? [], [queriedMessages]);
   const ensureSeeded = useMutation(api.platforms.ensureSeeded);
-  const [filters, setFilters] = useState(emptyFilters);
+  const [view, setView] = useState<"chat" | "filters">("chat");
+  const [quickSearch, setQuickSearch] = useState("");
+  const [filterState, setFilterState] = useState<FilterState>(loadSavedFilterState);
   const [paused, setPaused] = useState(false);
   const [pausedMessages, setPausedMessages] = useState<ChatMessage[]>([]);
   const [clearBefore, setClearBefore] = useState(0);
   const [auth, setAuth] = useState<AuthStatus>();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [notice, setNotice] = useState<string>();
+  const emotesByChannel = useThirdPartyEmotes(channels);
+  const badgesByChannel = useTwitchBadges(channels);
 
   useEffect(() => {
     void ensureSeeded({});
@@ -53,26 +75,55 @@ export default function App() {
       .catch(() => setAuth({ authenticated: false, reason: "Ingestion worker is offline" }));
   }, [ensureSeeded]);
 
-  const displayedMessages = useMemo(() => {
+  useEffect(() => {
+    try {
+      localStorage.setItem(FILTER_STORAGE_KEY, serializeFilterState(filterState));
+    } catch (error) {
+      console.warn("Could not persist filters", error);
+    }
+  }, [filterState]);
+
+  const sourceMessages = useMemo(() => {
     const source = paused ? pausedMessages : messages;
-    const text = filters.text.trim().toLowerCase();
-    const sender = filters.sender.trim().toLowerCase().replace(/^@/, "");
-    return source.filter((message) => {
-      if (message.timestamp <= clearBefore) return false;
-      if (text && !message.messageText.toLowerCase().includes(text)) return false;
-      if (sender && !message.senderUsername.toLowerCase().includes(sender)) return false;
-      if (filters.hasBadges && message.badges.length === 0) return false;
-      if (
-        filters.rolesOnly &&
-        !message.isBroadcaster &&
-        !message.isModerator &&
-        !message.isSubscriber &&
-        !message.isVip
-      )
-        return false;
-      return true;
+    return source.filter((message) => message.timestamp > clearBefore);
+  }, [paused, pausedMessages, messages, clearBefore]);
+  const activeFilters = useMemo(() => {
+    const activeIds = new Set(filterState.activeIds);
+    return filterState.filters.filter((filter) => activeIds.has(filter.id));
+  }, [filterState]);
+  const filtered = useMemo(
+    () => applyMessageFilters(sourceMessages, quickSearch, activeFilters),
+    [sourceMessages, quickSearch, activeFilters],
+  );
+
+  const saveFilter = (filter: MessageFilter, apply: boolean) => {
+    setFilterState((current) => {
+      const exists = current.filters.some((candidate) => candidate.id === filter.id);
+      const filters = exists
+        ? current.filters.map((candidate) => candidate.id === filter.id ? filter : candidate)
+        : [...current.filters, filter];
+      const activeIds = apply
+        ? [...new Set([...current.activeIds, filter.id])]
+        : current.activeIds;
+      return { filters, activeIds };
     });
-  }, [paused, pausedMessages, messages, filters, clearBefore]);
+  };
+
+  const toggleFilter = (id: string) => {
+    setFilterState((current) => ({
+      ...current,
+      activeIds: current.activeIds.includes(id)
+        ? current.activeIds.filter((candidate) => candidate !== id)
+        : [...current.activeIds, id],
+    }));
+  };
+
+  const deleteFilter = (id: string) => {
+    setFilterState((current) => ({
+      filters: current.filters.filter((filter) => filter.id !== id),
+      activeIds: current.activeIds.filter((candidate) => candidate !== id),
+    }));
+  };
 
   return (
     <ErrorBoundary>
@@ -113,26 +164,41 @@ export default function App() {
             onError={setNotice}
           />
 
-          <section className="feed-panel">
+          <section className={`feed-panel ${view === "filters" ? "filters-view" : ""}`}>
             <FeedToolbar
+              activeFilterCount={activeFilters.length}
               channel={selectedChannel}
               paused={paused}
-              filterText={filters.text}
-              onTextChange={(text) => setFilters((current) => ({ ...current, text }))}
+              filterText={quickSearch}
+              view={view}
+              onTextChange={setQuickSearch}
+              onViewChange={setView}
               onPause={() => {
                 if (!paused) setPausedMessages(messages);
                 setPaused((value) => !value);
               }}
               onClear={() => setClearBefore(Date.now())}
             />
-            <MessageFeed
-              messages={displayedMessages}
-              loading={queriedMessages === undefined}
-              paused={paused}
-            />
+            {view === "chat" ? (
+              <MessageFeed
+                badgesByChannel={badgesByChannel}
+                emotesByChannel={emotesByChannel}
+                highlightedIds={filtered.highlightedIds}
+                loading={queriedMessages === undefined}
+                messages={filtered.messages}
+                paused={paused}
+              />
+            ) : (
+              <FilterWorkspace
+                activeIds={filterState.activeIds}
+                filters={filterState.filters}
+                messages={sourceMessages}
+                onDelete={deleteFilter}
+                onSave={saveFilter}
+                onToggle={toggleFilter}
+              />
+            )}
           </section>
-
-          <FilterSidebar filters={filters} onChange={setFilters} />
         </main>
 
         {dialogOpen && (
@@ -229,39 +295,67 @@ function ChannelSidebar({
 }
 
 function FeedToolbar({
+  activeFilterCount,
   channel,
   paused,
   filterText,
+  view,
   onTextChange,
+  onViewChange,
   onPause,
   onClear,
 }: {
+  activeFilterCount: number;
   channel?: Channel;
   paused: boolean;
   filterText: string;
+  view: "chat" | "filters";
   onTextChange: (text: string) => void;
+  onViewChange: (view: "chat" | "filters") => void;
   onPause: () => void;
   onClear: () => void;
 }) {
   return (
     <div className="feed-toolbar">
       <div>
-        <span className="eyebrow">Live feed</span>
-        <h1>{channel?.displayName ?? "All channels"}</h1>
+        <span className="eyebrow">{view === "chat" ? "Live feed" : "Filter studio"}</span>
+        <h1>{view === "chat" ? channel?.displayName ?? "All channels" : "Filters"}</h1>
       </div>
-      <div className="toolbar-actions">
-        <label className="search-field">
-          <span>⌕</span>
-          <input
-            value={filterText}
-            onChange={(event) => onTextChange(event.target.value)}
-            placeholder="Search recent messages"
-          />
-        </label>
-        <button className={`button ${paused ? "primary" : ""}`} onClick={onPause}>
-          {paused ? "Resume" : "Pause"}
-        </button>
-        <button className="button" onClick={onClear}>Clear view</button>
+      <div className="feed-toolbar-right">
+        <div className="view-tabs" role="tablist" aria-label="Feed view">
+          <button
+            aria-selected={view === "chat"}
+            className={view === "chat" ? "selected" : ""}
+            onClick={() => onViewChange("chat")}
+            role="tab"
+          >
+            Chat
+          </button>
+          <button
+            aria-selected={view === "filters"}
+            className={view === "filters" ? "selected" : ""}
+            onClick={() => onViewChange("filters")}
+            role="tab"
+          >
+            Filters {activeFilterCount > 0 && <span>{activeFilterCount}</span>}
+          </button>
+        </div>
+        {view === "chat" && (
+          <div className="toolbar-actions">
+            <label className="search-field">
+              <span>⌕</span>
+              <input
+                value={filterText}
+                onChange={(event) => onTextChange(event.target.value)}
+                placeholder="Search messages, senders, or channels"
+              />
+            </label>
+            <button className={`button ${paused ? "primary" : ""}`} onClick={onPause}>
+              {paused ? "Resume" : "Pause"}
+            </button>
+            <button className="button" onClick={onClear}>Clear view</button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -271,10 +365,16 @@ function MessageFeed({
   messages,
   loading,
   paused,
+  highlightedIds,
+  emotesByChannel,
+  badgesByChannel,
 }: {
   messages: ChatMessage[];
   loading: boolean;
   paused: boolean;
+  highlightedIds: ReadonlySet<string>;
+  emotesByChannel: ReadonlyMap<string, ReadonlyMap<string, ThirdPartyEmote>>;
+  badgesByChannel: ReadonlyMap<string, ReadonlyMap<string, ChatBadgeDefinition>>;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [followNewest, setFollowNewest] = useState(true);
@@ -303,7 +403,15 @@ function MessageFeed({
             <span>New public chat messages appear here after the connection starts.</span>
           </div>
         ) : (
-          messages.map((message) => <MessageRow key={message._id} message={message} />)
+          messages.map((message) => (
+            <MessageRow
+              badgeCatalog={badgesByChannel.get(message.externalChannelId)}
+              emotes={emotesByChannel.get(message.externalChannelId)}
+              highlighted={highlightedIds.has(message._id)}
+              key={message._id}
+              message={message}
+            />
+          ))
         )}
       </div>
       {!followNewest && (
@@ -324,15 +432,24 @@ function MessageFeed({
   );
 }
 
-function MessageRow({ message }: { message: ChatMessage }) {
-  const roles = [
-    message.isBroadcaster && "Broadcaster",
-    message.isModerator && "Mod",
-    message.isVip && "VIP",
-    message.isSubscriber && "Sub",
-  ].filter(Boolean) as string[];
+function MessageRow({
+  message,
+  emotes = new Map(),
+  badgeCatalog = new Map(),
+  highlighted = false,
+}: {
+  message: ChatMessage;
+  emotes?: ReadonlyMap<string, ThirdPartyEmote>;
+  badgeCatalog?: ReadonlyMap<string, ChatBadgeDefinition>;
+  highlighted?: boolean;
+}) {
+  const messageParts = buildMessageParts(
+    message.messageText,
+    message.metadata?.fragments,
+    emotes,
+  );
   return (
-    <article className="message-row">
+    <article className={`message-row ${highlighted ? "filter-highlighted" : ""}`}>
       <time dateTime={new Date(message.timestamp).toISOString()}>
         {new Date(message.timestamp).toLocaleTimeString([], {
           hour: "2-digit",
@@ -343,39 +460,137 @@ function MessageRow({ message }: { message: ChatMessage }) {
       <span className="channel-tag">#{message.channelName}</span>
       <div className="message-content">
         <div className="sender-line">
+          {message.badges.map((badge) => {
+            const definition = badgeCatalog.get(`${badge.setId}/${badge.id}`);
+            return definition ? (
+              <img
+                alt={definition.title}
+                className="chat-badge"
+                key={`${badge.setId}/${badge.id}`}
+                src={definition.imageUrl}
+                title={definition.description || definition.title}
+              />
+            ) : (
+              <span
+                className="role-badge"
+                key={`${badge.setId}/${badge.id}`}
+                title={`${badge.setId} ${badge.id}`}
+              >
+                {badgeLabel(badge.setId)}
+              </span>
+            );
+          })}
           <strong style={message.userColor ? { color: message.userColor } : undefined}>
             {message.senderDisplayName}
           </strong>
           {message.senderDisplayName.toLowerCase() !== message.senderUsername.toLowerCase() && (
             <small>@{message.senderUsername}</small>
           )}
-          {roles.map((role) => <span className="role-badge" key={role}>{role}</span>)}
         </div>
-        <p>{message.messageText}</p>
+        <p>{renderMessageParts(messageParts)}</p>
       </div>
     </article>
   );
 }
 
-function FilterSidebar({ filters, onChange }: { filters: Filters; onChange: (filters: Filters) => void }) {
-  const count = [filters.sender, filters.text, filters.hasBadges, filters.rolesOnly].filter(Boolean).length;
-  return (
-    <aside className="sidebar filters-panel">
-      <div className="panel-heading">
-        <div><span className="eyebrow">Narrow results</span><h2>Filters</h2></div>
-        <span className="count">{count}</span>
-      </div>
-      <label className="field"><span>Sender</span><input value={filters.sender} onChange={(event) => onChange({ ...filters, sender: event.target.value })} placeholder="Username" /></label>
-      <label className="field"><span>Contains text</span><input value={filters.text} onChange={(event) => onChange({ ...filters, text: event.target.value })} placeholder="Search term" /></label>
-      <label className="checkbox"><input type="checkbox" checked={filters.hasBadges} onChange={(event) => onChange({ ...filters, hasBadges: event.target.checked })} /><span>Has Twitch badges</span></label>
-      <label className="checkbox"><input type="checkbox" checked={filters.rolesOnly} onChange={(event) => onChange({ ...filters, rolesOnly: event.target.checked })} /><span>Broadcaster, mod, sub, or VIP</span></label>
-      <div className="filter-summary">
-        <strong>{count ? `${count} active filter${count === 1 ? "" : "s"}` : "No active filters"}</strong>
-        <span>Filters apply to the visible real-time window.</span>
-      </div>
-      <button className="button" onClick={() => onChange(emptyFilters)}>Clear filters</button>
-    </aside>
+function badgeLabel(setId: string) {
+  const labels: Record<string, string> = {
+    broadcaster: "Broadcaster",
+    moderator: "Mod",
+    vip: "VIP",
+    subscriber: "Sub",
+    founder: "Founder",
+  };
+  return labels[setId] ?? setId.replaceAll("-", " ");
+}
+
+function useThirdPartyEmotes(channels: Channel[]) {
+  const [catalogs, setCatalogs] = useState(
+    () => new Map<string, ReadonlyMap<string, ThirdPartyEmote>>(),
   );
+  const channelIds = channels
+    .flatMap((channel) => channel.externalChannelId ?? [])
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    const ids = channelIds ? channelIds.split(",") : [];
+    if (ids.length === 0) return;
+    const controller = new AbortController();
+    void Promise.all(
+      ids.map(async (id) => {
+        const response = await fetch(`${workerUrl}/emotes/twitch/${encodeURIComponent(id)}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`Could not load emotes for Twitch channel ${id}`);
+        const body = (await response.json()) as { emotes?: ThirdPartyEmote[] };
+        return [id, new Map((body.emotes ?? []).map((emote) => [emote.name, emote]))] as const;
+      }),
+    )
+      .then((entries) => setCatalogs(new Map(entries)))
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          console.warn("Third-party emotes are unavailable; showing message text", error);
+        }
+      });
+    return () => controller.abort();
+  }, [channelIds]);
+
+  return catalogs;
+}
+
+function useTwitchBadges(channels: Channel[]) {
+  const [catalogs, setCatalogs] = useState(
+    () => new Map<string, ReadonlyMap<string, ChatBadgeDefinition>>(),
+  );
+  const channelIds = channels
+    .flatMap((channel) => channel.externalChannelId ?? [])
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    const ids = channelIds ? channelIds.split(",") : [];
+    if (ids.length === 0) return;
+    const controller = new AbortController();
+    const load = async () => {
+      const entries = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const response = await fetch(
+              `${workerUrl}/badges/twitch/${encodeURIComponent(id)}`,
+              { signal: controller.signal },
+            );
+            if (!response.ok) throw new Error(`Could not load badges for Twitch channel ${id}`);
+            const body = (await response.json()) as { badges?: ChatBadgeDefinition[] };
+            return [
+              id,
+              new Map(
+                (body.badges ?? []).map((badge) => [`${badge.setId}/${badge.id}`, badge]),
+              ),
+            ] as const;
+          } catch (error) {
+            if (!(error instanceof DOMException && error.name === "AbortError")) {
+              console.warn("Twitch badges are unavailable; showing text labels", error);
+            }
+            return undefined;
+          }
+        }),
+      );
+      if (controller.signal.aborted) return;
+      const loaded = entries.filter((entry) => entry !== undefined);
+      if (loaded.length > 0) {
+        setCatalogs((current) => new Map([...current, ...loaded]));
+      }
+    };
+    void load();
+    const retry = window.setTimeout(() => void load(), 5_000);
+    return () => {
+      controller.abort();
+      window.clearTimeout(retry);
+    };
+  }, [channelIds]);
+
+  return catalogs;
 }
 
 function AddChannelDialog({

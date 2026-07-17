@@ -1,5 +1,9 @@
 import type { Logger } from "../logger";
-import { TwitchApiError, type TwitchUser } from "../types";
+import {
+  TwitchApiError,
+  type TwitchChatBadgeDefinition,
+  type TwitchUser,
+} from "../types";
 import type { TwitchAuthService } from "./TwitchAuthService";
 
 interface HelixResponse<T> {
@@ -15,6 +19,16 @@ interface HelixUser {
 interface EventSubSubscription {
   id: string;
   status: string;
+}
+
+interface HelixChatBadgeSet {
+  set_id: string;
+  versions: Array<{
+    id: string;
+    image_url_2x: string;
+    title: string;
+    description: string;
+  }>;
 }
 
 export class TwitchApiClient {
@@ -75,6 +89,25 @@ export class TwitchApiClient {
     this.logger.info({ subscriptionId }, "Twitch chat subscription removed");
   }
 
+  async getGlobalChatBadges(signal?: AbortSignal): Promise<TwitchChatBadgeDefinition[]> {
+    const response = await this.request<HelixResponse<HelixChatBadgeSet>>(
+      "/chat/badges/global",
+      { signal },
+    );
+    return flattenChatBadges(response.data);
+  }
+
+  async getChannelChatBadges(
+    broadcasterUserId: string,
+    signal?: AbortSignal,
+  ): Promise<TwitchChatBadgeDefinition[]> {
+    const response = await this.request<HelixResponse<HelixChatBadgeSet>>(
+      `/chat/badges?broadcaster_id=${encodeURIComponent(broadcasterUserId)}`,
+      { signal },
+    );
+    return flattenChatBadges(response.data);
+  }
+
   private async request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
     const accessToken = await this.auth.getAccessToken();
     const response = await fetch(`https://api.twitch.tv/helix${path}`, {
@@ -104,4 +137,16 @@ export class TwitchApiClient {
     if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
   }
+}
+
+function flattenChatBadges(sets: HelixChatBadgeSet[]): TwitchChatBadgeDefinition[] {
+  return sets.flatMap((set) =>
+    set.versions.map((version) => ({
+      setId: set.set_id,
+      id: version.id,
+      imageUrl: version.image_url_2x,
+      title: version.title,
+      description: version.description,
+    })),
+  );
 }

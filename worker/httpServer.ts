@@ -5,10 +5,14 @@ import type { Server } from "node:http";
 import { resolve } from "node:path";
 import type { LoadedConfiguration } from "./config";
 import type { Logger } from "./logger";
+import type { ThirdPartyEmoteService } from "./emotes/ThirdPartyEmoteService";
+import type { TwitchBadgeService } from "./twitch/TwitchBadgeService";
 import type { TwitchAuthService } from "./twitch/TwitchAuthService";
 
 export interface ApplicationRuntimeState {
   auth?: TwitchAuthService;
+  badges?: TwitchBadgeService;
+  emotes?: ThirdPartyEmoteService;
   integrationError?: string;
 }
 
@@ -55,6 +59,40 @@ export function createHttpServer(
           ? `Configuration required: ${configuration.issues.join("; ")}`
           : undefined),
     });
+  });
+
+  app.get("/emotes/twitch/:channelId", async (request, response) => {
+    if (!/^\d+$/.test(request.params.channelId)) {
+      response.status(400).json({ error: "A numeric Twitch channel ID is required" });
+      return;
+    }
+    if (!runtime.emotes) {
+      response.status(503).json({ error: "Third-party emotes are unavailable" });
+      return;
+    }
+    const emotes = await runtime.emotes.getCatalog(request.params.channelId);
+    response.set("Cache-Control", "public, max-age=300").json({ emotes });
+  });
+
+  app.get("/badges/twitch/:channelId", async (request, response) => {
+    if (!/^\d+$/.test(request.params.channelId)) {
+      response.status(400).json({ error: "A numeric Twitch channel ID is required" });
+      return;
+    }
+    if (!runtime.badges) {
+      response.status(503).json({ error: "Twitch badges are unavailable" });
+      return;
+    }
+    try {
+      const badges = await runtime.badges.getCatalog(request.params.channelId);
+      response.set("Cache-Control", "public, max-age=300").json({ badges });
+    } catch (cause) {
+      logger.warn(
+        { err: cause, channelId: request.params.channelId },
+        "Could not serve Twitch chat badges",
+      );
+      response.status(503).json({ error: "Twitch badges are temporarily unavailable" });
+    }
   });
 
   app.get("/runtime-config.js", (_request, response) => {

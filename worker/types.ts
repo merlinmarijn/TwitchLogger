@@ -47,6 +47,14 @@ export interface TwitchBadge {
   info: string;
 }
 
+export interface TwitchChatBadgeDefinition {
+  setId: string;
+  id: string;
+  imageUrl: string;
+  title: string;
+  description: string;
+}
+
 export interface TwitchChatMessage {
   messageId: string;
   eventNotificationId: string;

@@ -1,5 +1,6 @@
 import { ConvexChatRepository } from "./ConvexChatRepository";
 import { loadConfiguration } from "./config";
+import { ThirdPartyEmoteService } from "./emotes/ThirdPartyEmoteService";
 import {
   createHttpServer,
   type ApplicationRuntimeState,
@@ -8,13 +9,16 @@ import { createLogger } from "./logger";
 import { EncryptedTokenStore } from "./twitch/EncryptedTokenStore";
 import { TwitchApiClient } from "./twitch/TwitchApiClient";
 import { TwitchAuthService } from "./twitch/TwitchAuthService";
+import { TwitchBadgeService } from "./twitch/TwitchBadgeService";
 import { TwitchChatService } from "./twitch/TwitchChatService";
 import { TwitchEventSubClient } from "./twitch/TwitchEventSubClient";
 
 const configuration = loadConfiguration();
 const logger = createLogger(configuration.logLevel);
 const abortController = new AbortController();
-const runtime: ApplicationRuntimeState = {};
+const runtime: ApplicationRuntimeState = {
+  emotes: new ThirdPartyEmoteService(logger),
+};
 let chat: TwitchChatService | undefined;
 
 for (const warning of configuration.warnings) logger.warn({ warning }, "Configuration warning");
@@ -37,6 +41,7 @@ if (configuration.options) {
     const auth = new TwitchAuthService(options.twitch, tokenStore, logger);
     runtime.auth = auth;
     const api = new TwitchApiClient(options.twitch.clientId, auth, logger);
+    runtime.badges = new TwitchBadgeService(api, logger);
     const eventSub = new TwitchEventSubClient(options.twitch.eventSubUrl, api, logger);
     const repository = new ConvexChatRepository(
       options.convexUrl,

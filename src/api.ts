@@ -36,6 +36,18 @@ export interface ChatMessage {
   isSubscriber: boolean;
   isVip: boolean;
   messageType: string;
+  metadata?: {
+    fragments?: unknown;
+    [key: string]: unknown;
+  };
+}
+
+export interface ChatBadgeDefinition {
+  setId: string;
+  id: string;
+  imageUrl: string;
+  title: string;
+  description: string;
 }
 
 export const api = {

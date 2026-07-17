@@ -6,6 +6,8 @@ The live feed renders native Twitch emotes from EventSub message fragments, reso
 
 The Filters tab provides reusable, browser-persisted filter presets. Each preset can match all or any sender, message, channel, role, badge, or message-type conditions and then show only, hide, or highlight matching messages. Text conditions support validated regular expressions, including `/pattern/flags` notation. Starter recipes make common filters available without configuring rules manually.
 
+The chat feed also has browser-persisted tabs. **All chat** is always available, while **Add tab** creates a named filtered view using the same condition editor. Quick starts are included for image links and mentions, and custom tabs can combine multiple rules with all/any matching.
+
 ## Production container
 
 The supplied image contains only the compiled dashboard and the always-on Node ingestion worker. It does **not** contain, start, provision, or emulate a Convex database. At runtime it connects to the existing deployment supplied through `CONVEX_URL`.

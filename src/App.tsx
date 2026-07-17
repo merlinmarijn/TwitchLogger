@@ -14,6 +14,14 @@ import {
   type ChatBadgeDefinition,
   type ChatMessage,
 } from "./api";
+import { ChatTabBar, ChatTabDialog } from "./ChatTabs";
+import {
+  CHAT_TABS_STORAGE_KEY,
+  chatTabAsFilter,
+  parseChatTabs,
+  serializeChatTabs,
+  type ChatViewTab,
+} from "./chatTabModel";
 import {
   buildMessageParts,
   renderMessageParts,
@@ -45,6 +53,14 @@ function loadSavedFilterState() {
   }
 }
 
+function loadSavedChatTabs() {
+  try {
+    return parseChatTabs(localStorage.getItem(CHAT_TABS_STORAGE_KEY));
+  } catch {
+    return [];
+  }
+}
+
 export default function App() {
   const channels = useQuery(api.channels.list, {}) ?? [];
   const [selectedChannelId, setSelectedChannelId] = useState<string>();
@@ -58,6 +74,9 @@ export default function App() {
   const [view, setView] = useState<"chat" | "filters">("chat");
   const [quickSearch, setQuickSearch] = useState("");
   const [filterState, setFilterState] = useState<FilterState>(loadSavedFilterState);
+  const [chatTabs, setChatTabs] = useState<ChatViewTab[]>(loadSavedChatTabs);
+  const [activeChatTabId, setActiveChatTabId] = useState("all");
+  const [editingChatTab, setEditingChatTab] = useState<ChatViewTab | "new">();
   const [paused, setPaused] = useState(false);
   const [pausedMessages, setPausedMessages] = useState<ChatMessage[]>([]);
   const [clearBefore, setClearBefore] = useState(0);
@@ -83,6 +102,14 @@ export default function App() {
     }
   }, [filterState]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_TABS_STORAGE_KEY, serializeChatTabs(chatTabs));
+    } catch (error) {
+      console.warn("Could not persist chat tabs", error);
+    }
+  }, [chatTabs]);
+
   const sourceMessages = useMemo(() => {
     const source = paused ? pausedMessages : messages;
     return source.filter((message) => message.timestamp > clearBefore);
@@ -91,9 +118,16 @@ export default function App() {
     const activeIds = new Set(filterState.activeIds);
     return filterState.filters.filter((filter) => activeIds.has(filter.id));
   }, [filterState]);
+  const activeChatTab = chatTabs.find((tab) => tab.id === activeChatTabId);
+  const viewFilters = useMemo(
+    () => activeChatTab
+      ? [...activeFilters, chatTabAsFilter(activeChatTab)]
+      : activeFilters,
+    [activeFilters, activeChatTab],
+  );
   const filtered = useMemo(
-    () => applyMessageFilters(sourceMessages, quickSearch, activeFilters),
-    [sourceMessages, quickSearch, activeFilters],
+    () => applyMessageFilters(sourceMessages, quickSearch, viewFilters),
+    [sourceMessages, quickSearch, viewFilters],
   );
 
   const saveFilter = (filter: MessageFilter, apply: boolean) => {
@@ -123,6 +157,20 @@ export default function App() {
       filters: current.filters.filter((filter) => filter.id !== id),
       activeIds: current.activeIds.filter((candidate) => candidate !== id),
     }));
+  };
+
+  const saveChatTab = (tab: ChatViewTab) => {
+    setChatTabs((current) => current.some((candidate) => candidate.id === tab.id)
+      ? current.map((candidate) => candidate.id === tab.id ? tab : candidate)
+      : [...current, tab]);
+    setActiveChatTabId(tab.id);
+    setEditingChatTab(undefined);
+  };
+
+  const deleteChatTab = (id: string) => {
+    setChatTabs((current) => current.filter((tab) => tab.id !== id));
+    if (activeChatTabId === id) setActiveChatTabId("all");
+    setEditingChatTab(undefined);
   };
 
   return (
@@ -180,14 +228,23 @@ export default function App() {
               onClear={() => setClearBefore(Date.now())}
             />
             {view === "chat" ? (
-              <MessageFeed
-                badgesByChannel={badgesByChannel}
-                emotesByChannel={emotesByChannel}
-                highlightedIds={filtered.highlightedIds}
-                loading={queriedMessages === undefined}
-                messages={filtered.messages}
-                paused={paused}
-              />
+              <>
+                <ChatTabBar
+                  activeId={activeChatTabId}
+                  tabs={chatTabs}
+                  onAdd={() => setEditingChatTab("new")}
+                  onEdit={setEditingChatTab}
+                  onSelect={setActiveChatTabId}
+                />
+                <MessageFeed
+                  badgesByChannel={badgesByChannel}
+                  emotesByChannel={emotesByChannel}
+                  highlightedIds={filtered.highlightedIds}
+                  loading={queriedMessages === undefined}
+                  messages={filtered.messages}
+                  paused={paused}
+                />
+              </>
             ) : (
               <FilterWorkspace
                 activeIds={filterState.activeIds}
@@ -206,6 +263,14 @@ export default function App() {
             onClose={() => setDialogOpen(false)}
             onError={setNotice}
             authenticated={Boolean(auth?.authenticated)}
+          />
+        )}
+        {editingChatTab && (
+          <ChatTabDialog
+            tab={editingChatTab === "new" ? undefined : editingChatTab}
+            onClose={() => setEditingChatTab(undefined)}
+            onDelete={deleteChatTab}
+            onSave={saveChatTab}
           />
         )}
       </div>

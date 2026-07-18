@@ -49,6 +49,20 @@ describe("image gallery", () => {
     ]);
   });
 
+  it("routes TouhouWiki previews through the HTTP/2 worker endpoint", () => {
+    const url = "https://en.touhouwiki.net/images/7/78/Th11SC159.jpg?20191126144715";
+    const message = {
+      _id: "touhou-wiki",
+      messageText: url,
+      timestamp: 1,
+    } as ChatMessage;
+
+    expect(buildGalleryImages([message], "https://worker.example/")[0]).toMatchObject({
+      url,
+      previewUrl: `https://worker.example/images/touhouwiki?url=${encodeURIComponent(url)}`,
+    });
+  });
+
   it("uses image URLs precomputed by the gallery query", () => {
     const message = {
       _id: "indexed",

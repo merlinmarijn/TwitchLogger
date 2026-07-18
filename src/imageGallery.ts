@@ -1,5 +1,9 @@
 import type { ChatMessage } from "./api";
-import { extractImageUrls, pixivArtworkId } from "../shared/imageUrls";
+import {
+  extractImageUrls,
+  isTouhouWikiImage,
+  pixivArtworkId,
+} from "../shared/imageUrls";
 
 export { extractImageUrls } from "../shared/imageUrls";
 
@@ -10,14 +14,22 @@ export interface GalleryImage {
   message: ChatMessage;
 }
 
-function galleryPreviewUrl(url: string): string {
-  const artworkId = pixivArtworkId(new URL(url));
+function galleryPreviewUrl(url: string, workerBaseUrl: string): string {
+  const parsed = new URL(url);
+  const artworkId = pixivArtworkId(parsed);
+  if (isTouhouWikiImage(parsed)) {
+    const baseUrl = workerBaseUrl.replace(/\/$/, "");
+    return `${baseUrl}/images/touhouwiki?url=${encodeURIComponent(parsed.href)}`;
+  }
   return artworkId
     ? `https://embed.pixiv.net/decorate.php?illust_id=${artworkId}`
     : url;
 }
 
-export function buildGalleryImages(messages: ChatMessage[]): GalleryImage[] {
+export function buildGalleryImages(
+  messages: ChatMessage[],
+  workerBaseUrl = "",
+): GalleryImage[] {
   const images: GalleryImage[] = [];
   const newestFirst = [...messages].sort((left, right) => right.timestamp - left.timestamp);
   for (const message of newestFirst) {
@@ -26,7 +38,7 @@ export function buildGalleryImages(messages: ChatMessage[]): GalleryImage[] {
       images.push({
         id: `${message._id}:${urlIndex}`,
         message,
-        previewUrl: galleryPreviewUrl(url),
+        previewUrl: galleryPreviewUrl(url, workerBaseUrl),
         url,
       });
     }

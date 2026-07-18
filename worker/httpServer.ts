@@ -8,6 +8,11 @@ import type { Logger } from "./logger";
 import type { ThirdPartyEmoteService } from "./emotes/ThirdPartyEmoteService";
 import type { TwitchBadgeService } from "./twitch/TwitchBadgeService";
 import type { TwitchAuthService } from "./twitch/TwitchAuthService";
+import { isTouhouWikiImage } from "../shared/imageUrls";
+import {
+  fetchTouhouWikiImage,
+  type ProxiedImage,
+} from "./touhouWikiImage";
 
 export interface ApplicationRuntimeState {
   auth?: TwitchAuthService;
@@ -16,10 +21,15 @@ export interface ApplicationRuntimeState {
   integrationError?: string;
 }
 
+export interface HttpServerDependencies {
+  fetchTouhouWikiImage?: (url: URL) => Promise<ProxiedImage>;
+}
+
 export function createHttpServer(
   configuration: LoadedConfiguration,
   runtime: ApplicationRuntimeState,
   logger: Logger,
+  dependencies: HttpServerDependencies = {},
 ): Promise<Server> {
   const app = express();
   app.disable("x-powered-by");
@@ -92,6 +102,33 @@ export function createHttpServer(
         "Could not serve Twitch chat badges",
       );
       response.status(503).json({ error: "Twitch badges are temporarily unavailable" });
+    }
+  });
+
+  app.get("/images/touhouwiki", async (request, response) => {
+    const rawUrl = typeof request.query.url === "string" ? request.query.url : "";
+    let imageUrl: URL;
+    try {
+      imageUrl = new URL(rawUrl);
+    } catch {
+      response.status(400).json({ error: "A valid TouhouWiki image URL is required" });
+      return;
+    }
+    if (!isTouhouWikiImage(imageUrl)) {
+      response.status(400).json({ error: "Only en.touhouwiki.net image URLs are supported" });
+      return;
+    }
+
+    try {
+      const image = await (dependencies.fetchTouhouWikiImage ?? fetchTouhouWikiImage)(imageUrl);
+      response.set("Content-Type", image.contentType);
+      response.set("Cache-Control", "public, max-age=86400");
+      if (image.etag) response.set("ETag", image.etag);
+      if (image.lastModified) response.set("Last-Modified", image.lastModified);
+      response.send(image.body);
+    } catch (cause) {
+      logger.warn({ err: cause, url: imageUrl.href }, "Could not proxy TouhouWiki image");
+      response.status(502).json({ error: "TouhouWiki image is temporarily unavailable" });
     }
   });
 

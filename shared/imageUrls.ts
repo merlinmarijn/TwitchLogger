@@ -2,11 +2,19 @@ const URL_PATTERN = /https?:\/\/[^\s<>"']+/giu;
 const IMAGE_PATH_PATTERN = /\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)$/i;
 const PIXIV_HOSTS = new Set(["pixiv.net", "www.pixiv.net"]);
 const PIXIV_ARTWORK_PATH_PATTERN = /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?artworks\/([1-9]\d*)\/?$/i;
+const TOUHOU_WIKI_IMAGE_HOSTS = new Set(["en.touhouwiki.net"]);
 const TRAILING_PUNCTUATION = /[),.!;:\]}]+$/;
 
 export function pixivArtworkId(url: URL): string | undefined {
   if (!PIXIV_HOSTS.has(url.hostname.toLowerCase())) return undefined;
   return PIXIV_ARTWORK_PATH_PATTERN.exec(url.pathname)?.[1];
+}
+
+export function isTouhouWikiImage(url: URL): boolean {
+  return url.protocol === "https:" &&
+    TOUHOU_WIKI_IMAGE_HOSTS.has(url.hostname.toLowerCase()) &&
+    url.pathname.startsWith("/images/") &&
+    IMAGE_PATH_PATTERN.test(url.pathname);
 }
 
 export function extractImageUrls(messageText: string): string[] {

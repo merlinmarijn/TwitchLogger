@@ -595,7 +595,10 @@ function ImageGallery({
   paused: boolean;
   status: PaginationStatus;
 }) {
-  const images = useMemo(() => buildGalleryImages(messages), [messages]);
+  const images = useMemo(
+    () => buildGalleryImages(messages, workerUrl),
+    [messages],
+  );
   const viewportRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLDivElement>(null);
 

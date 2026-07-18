@@ -37,4 +37,56 @@ describe("setup-mode HTTP server", () => {
       true,
     );
   });
+
+  it("serves an allowed TouhouWiki image through the dedicated proxy", async () => {
+    const configuration = { ...loadConfiguration({}), port: 0 };
+    const requestedUrls: string[] = [];
+    const server = await createHttpServer(
+      configuration,
+      {},
+      createLogger("silent"),
+      {
+        fetchTouhouWikiImage: async (url) => {
+          requestedUrls.push(url.href);
+          return {
+            body: Buffer.from([0xff, 0xd8, 0xff]),
+            contentType: "image/jpeg",
+            etag: "test-etag",
+          };
+        },
+      },
+    );
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+    const imageUrl = "https://en.touhouwiki.net/images/7/78/Th11SC159.jpg?20191126144715";
+
+    const response = await fetch(
+      `http://127.0.0.1:${port}/images/touhouwiki?url=${encodeURIComponent(imageUrl)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+    expect(requestedUrls).toEqual([imageUrl]);
+  });
+
+  it("rejects arbitrary image hosts without fetching them", async () => {
+    const configuration = { ...loadConfiguration({}), port: 0 };
+    let fetched = false;
+    const server = await createHttpServer(configuration, {}, createLogger("silent"), {
+      fetchTouhouWikiImage: async () => {
+        fetched = true;
+        throw new Error("should not be called");
+      },
+    });
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(
+      `http://127.0.0.1:${port}/images/touhouwiki?url=${encodeURIComponent("https://example.com/image.jpg")}`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(fetched).toBe(false);
+  });
 });

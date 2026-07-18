@@ -529,7 +529,7 @@ function ImageGallery({
         <div className="empty gallery-empty">
           <span aria-hidden="true" className="empty-icon gallery-empty-icon">+</span>
           <strong>No images found</strong>
-          <span>Direct links ending in JPG, PNG, GIF, WebP, SVG, AVIF, BMP, or TIFF will appear here.</span>
+          <span>Direct image links and supported artwork pages, including Pixiv, will appear here.</span>
         </div>
       ) : (
         <>
@@ -566,7 +566,7 @@ function GalleryCard({ image }: { image: GalleryImage }) {
             decoding="async"
             loading="lazy"
             onError={() => setFailed(true)}
-            src={image.url}
+            src={image.previewUrl}
           />
         )}
         <span className="gallery-open-hint">Open original ↗</span>

@@ -344,7 +344,14 @@ function ChannelSidebar({
                 channel.connectionStatus === "disconnected") && (
                 <button onClick={() => run(reconnect({ id: channel._id }))}>Reconnect</button>
               )}
-              <button className="danger" onClick={() => run(remove({ id: channel._id }))}>
+              <button
+                className="danger"
+                onClick={() =>
+                  run(remove({ id: channel._id }).then(() => {
+                    if (selectedChannelId === channel._id) onSelect(undefined);
+                  }))
+                }
+              >
                 Remove
               </button>
             </div>

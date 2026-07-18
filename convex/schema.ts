@@ -25,6 +25,7 @@ export default defineSchema({
     loggingEnabled: v.boolean(),
     connectionStatus,
     connectionError: v.optional(v.string()),
+    hiddenAt: v.optional(v.number()),
     lastConnectedAt: v.optional(v.number()),
     lastMessageAt: v.optional(v.number()),
     createdAt: v.number(),

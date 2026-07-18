@@ -6,7 +6,10 @@ const twitchLoginPattern = /^[a-z0-9_]{1,25}$/;
 
 export const list = query({
   args: {},
-  handler: async (ctx) => ctx.db.query("channels").order("asc").collect(),
+  handler: async (ctx) => {
+    const channels = await ctx.db.query("channels").order("asc").collect();
+    return channels.filter((channel) => channel.hiddenAt === undefined);
+  },
 });
 
 export const listLogging = query({
@@ -36,7 +39,21 @@ export const add = mutation({
       .withIndex("by_platform_username", (q) => q.eq("platform", args.platform))
       .filter((q) => q.eq(q.field("username"), username))
       .unique();
-    if (existing) throw new ConvexError("That channel is already followed");
+    if (existing) {
+      if (existing.hiddenAt === undefined) {
+        throw new ConvexError("That channel is already followed");
+      }
+
+      await ctx.db.patch(existing._id, {
+        displayName: args.displayName?.trim() || existing.displayName,
+        loggingEnabled: args.loggingEnabled,
+        connectionStatus: args.loggingEnabled ? "connecting" : "disconnected",
+        connectionError: undefined,
+        hiddenAt: undefined,
+        updatedAt: Date.now(),
+      });
+      return existing._id;
+    }
 
     const now = Date.now();
     return ctx.db.insert("channels", {
@@ -82,16 +99,12 @@ export const reconnect = mutation({
 export const remove = mutation({
   args: { id: v.id("channels") },
   handler: async (ctx, args) => {
-    const messages = await ctx.db
-      .query("chatMessages")
-      .withIndex("by_channel_timestamp", (q) => q.eq("channelId", args.id))
-      .take(1);
-    if (messages.length > 0) {
-      throw new ConvexError(
-        "This channel has stored messages. Disable logging instead of removing it.",
-      );
-    }
-    await ctx.db.delete(args.id);
+    const channel = await ctx.db.get(args.id);
+    if (!channel) throw new ConvexError("Channel not found");
+    await ctx.db.patch(args.id, {
+      hiddenAt: Date.now(),
+      updatedAt: Date.now(),
+    });
   },
 });
 

@@ -37,7 +37,6 @@ import {
 } from "./emotes";
 import { buildGalleryImages, type GalleryImage } from "./imageGallery";
 import {
-  FILTER_SCAN_ROW_LIMIT,
   FILTER_STORAGE_KEY,
   highlightedMessageIds,
   parseFilterState,
@@ -544,12 +543,7 @@ function MessageFeed({
   const viewportRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLDivElement>(null);
   const previousScrollHeightRef = useRef<number | undefined>(undefined);
-  // A rare filter keeps the loader visible; only continue automatically while pages add matches.
-  const visibleCountBeforeLoadRef = useRef<number | undefined>(undefined);
   const [followNewest, setFollowNewest] = useState(true);
-  const [automaticSearchStopped, setAutomaticSearchStopped] = useState(false);
-  const historySearchStopped = automaticSearchStopped ||
-    (serverFiltering && messages.length === 0 && status === "CanLoadMore");
 
   useEffect(() => {
     if (followNewest && !paused) {
@@ -564,36 +558,22 @@ function MessageFeed({
       viewport.scrollTop += viewport.scrollHeight - previousScrollHeightRef.current;
     }
     previousScrollHeightRef.current = undefined;
-
-    const visibleCountBeforeLoad = visibleCountBeforeLoadRef.current;
-    if (visibleCountBeforeLoad !== undefined) {
-      setAutomaticSearchStopped(messages.length <= visibleCountBeforeLoad);
-      visibleCountBeforeLoadRef.current = undefined;
-    }
   }, [messages.length, status]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
     const trigger = historyTriggerRef.current;
-    if (!viewport || !trigger || paused || !historyEnabled || historySearchStopped ||
-        status !== "CanLoadMore") return;
+    if (!viewport || !trigger || paused || !historyEnabled || status !== "CanLoadMore") return;
 
     const observer = new IntersectionObserver((entries) => {
       if (!entries.some((entry) => entry.isIntersecting) ||
           previousScrollHeightRef.current !== undefined) return;
       previousScrollHeightRef.current = viewport.scrollHeight;
-      visibleCountBeforeLoadRef.current = messages.length;
       loadMore(HISTORY_PAGE_SIZE);
     }, { root: viewport, rootMargin: "120px 0px 0px" });
     observer.observe(trigger);
     return () => observer.disconnect();
-  }, [historyEnabled, historySearchStopped, loadMore, messages.length, paused, status]);
-
-  const loadNextHistoryPage = () => {
-    previousScrollHeightRef.current = viewportRef.current?.scrollHeight;
-    visibleCountBeforeLoadRef.current = messages.length;
-    loadMore(HISTORY_PAGE_SIZE);
-  };
+  }, [historyEnabled, loadMore, paused, status]);
 
   const handleScroll = () => {
     const element = viewportRef.current;
@@ -610,14 +590,7 @@ function MessageFeed({
           ) : status === "LoadingMore" ? (
             <span>Loading older messages…</span>
           ) : historyEnabled && status === "CanLoadMore" ? (
-            <button
-              className="button"
-              onClick={loadNextHistoryPage}
-            >
-              {historySearchStopped
-                ? "Search farther back"
-                : "Load older messages"}
-            </button>
+            <span>Searching older messages…</span>
           ) : null}
         </div>
         {status === "LoadingFirstPage" ? (
@@ -629,18 +602,14 @@ function MessageFeed({
               ? "No messages since clearing"
               : status === "Exhausted"
                 ? serverFiltering ? "No matching messages" : "No messages to show"
-                : historySearchStopped
-                  ? "No matches in searched history"
-                  : "Searching history…"}</strong>
+                : "Searching history…"}</strong>
             <span>{!historyEnabled
               ? "New public chat messages will appear here."
               : status === "Exhausted"
                 ? serverFiltering
                   ? "The server searched all saved messages for this filter."
                   : "New public chat messages appear here after the connection starts."
-                : historySearchStopped
-                  ? `The server checked up to ${FILTER_SCAN_ROW_LIMIT.toLocaleString()} older messages. Search farther back to continue.`
-                  : "The server is searching older messages for a match."}</span>
+                : "The server is searching older messages for a match."}</span>
           </div>
         ) : (
           messages.map((message) => (
@@ -693,51 +662,35 @@ function ImageGallery({
   );
   const viewportRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLDivElement>(null);
-  const visibleCountBeforeLoadRef = useRef<number | undefined>(undefined);
-  const [automaticSearchStopped, setAutomaticSearchStopped] = useState(false);
-  const historySearchStopped = automaticSearchStopped ||
-    (serverFiltering && messages.length === 0 && status === "CanLoadMore");
-
-  useEffect(() => {
-    if (status === "LoadingMore" || visibleCountBeforeLoadRef.current === undefined) return;
-    setAutomaticSearchStopped(messages.length <= visibleCountBeforeLoadRef.current);
-    visibleCountBeforeLoadRef.current = undefined;
-  }, [messages.length, status]);
+  const historyLoadPendingRef = useRef(false);
 
   useEffect(() => {
     const viewport = viewportRef.current;
     const trigger = historyTriggerRef.current;
-    if (!viewport || !trigger || paused || !historyEnabled || historySearchStopped ||
-        status !== "CanLoadMore") return;
+    if (!viewport || !trigger || paused || !historyEnabled || status !== "CanLoadMore") return;
 
+    historyLoadPendingRef.current = false;
     const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      visibleCountBeforeLoadRef.current = messages.length;
+      if (!entries.some((entry) => entry.isIntersecting) || historyLoadPendingRef.current) return;
+      historyLoadPendingRef.current = true;
       loadMore(HISTORY_PAGE_SIZE);
     }, { root: viewport, rootMargin: "0px 0px 500px" });
     observer.observe(trigger);
     return () => observer.disconnect();
-  }, [historyEnabled, historySearchStopped, loadMore, messages.length, paused, status]);
-
-  const loadNextHistoryPage = () => {
-    visibleCountBeforeLoadRef.current = messages.length;
-    loadMore(HISTORY_PAGE_SIZE);
-  };
+  }, [historyEnabled, loadMore, paused, status]);
 
   return (
     <div className="image-gallery-wrap" ref={viewportRef}>
       {status === "LoadingFirstPage" ? (
         <div className="empty">Loading artwork…</div>
       ) : images.length === 0 &&
-          (!historyEnabled || historySearchStopped || status === "Exhausted") ? (
+          (!historyEnabled || status === "Exhausted") ? (
         <div className="empty gallery-empty">
           <span aria-hidden="true" className="empty-icon gallery-empty-icon">+</span>
-          <strong>{historySearchStopped || serverFiltering
+          <strong>{serverFiltering
             ? "No matching images in searched history"
             : "No images found"}</strong>
-          <span>{historySearchStopped
-            ? `The server checked up to ${FILTER_SCAN_ROW_LIMIT.toLocaleString()} older images. Search farther back to continue.`
-            : "Direct image links and supported artwork pages, including Pixiv, will appear here."}</span>
+          <span>Direct image links and supported artwork pages, including Pixiv, will appear here.</span>
         </div>
       ) : (
         <>
@@ -747,9 +700,7 @@ function ImageGallery({
               ? "Paused"
               : status === "Exhausted"
                 ? "Complete history"
-                : historySearchStopped
-                  ? "Newest first · history search paused"
-                  : "Newest first · loading history"}</span>
+                : "Newest first · loading history"}</span>
           </div>
           <div className="image-gallery">
             {images.map((image) => <GalleryCard image={image} key={image.id} />)}
@@ -762,11 +713,7 @@ function ImageGallery({
         ) : status === "LoadingMore" ? (
           <span>Loading older images…</span>
         ) : historyEnabled && status === "CanLoadMore" ? (
-          <button className="button" onClick={loadNextHistoryPage}>
-            {historySearchStopped
-              ? "Search farther back"
-              : "Load older images"}
-          </button>
+          <span>Searching older images…</span>
         ) : images.length > 0 ? (
           <span>All saved images loaded</span>
         ) : null}

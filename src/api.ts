@@ -3,6 +3,7 @@ import {
   type PaginationOptions,
   type PaginationResult,
 } from "convex/server";
+import type { MessageFilter } from "../shared/messageFilters";
 
 export interface Channel {
   _id: string;
@@ -87,13 +88,30 @@ export const api = {
     >("messages:listRecent"),
     page: makeFunctionReference<
       "query",
-      { channelId?: string; paginationOpts: PaginationOptions },
+      {
+        channelId?: string;
+        paginationOpts: PaginationOptions;
+        quickSearch?: string;
+        filters?: MessageFilter[];
+        afterTimestamp?: number;
+      },
       PaginationResult<ChatMessage>
     >("messages:page"),
     pageImages: makeFunctionReference<
       "query",
-      { channelId?: string; paginationOpts: PaginationOptions },
+      {
+        channelId?: string;
+        paginationOpts: PaginationOptions;
+        quickSearch?: string;
+        filters?: MessageFilter[];
+        afterTimestamp?: number;
+      },
       PaginationResult<ChatMessage>
     >("messages:pageImages"),
+    filterMatchCounts: makeFunctionReference<
+      "query",
+      { channelId?: string; filters: MessageFilter[]; afterTimestamp?: number },
+      Array<{ id: string; count: number }>
+    >("messages:filterMatchCounts"),
   },
 };

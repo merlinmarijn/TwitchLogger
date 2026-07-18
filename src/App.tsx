@@ -37,8 +37,8 @@ import {
 } from "./emotes";
 import { buildGalleryImages, type GalleryImage } from "./imageGallery";
 import {
-  applyMessageFilters,
   FILTER_STORAGE_KEY,
+  highlightedMessageIds,
   parseFilterState,
   serializeFilterState,
   type FilterState,
@@ -49,6 +49,7 @@ import { workerUrl } from "./runtimeConfig";
 const FilterWorkspace = lazy(() => import("./FilterWorkspace"));
 const INITIAL_MESSAGE_COUNT = 50;
 const HISTORY_PAGE_SIZE = 100;
+const SEARCH_DEBOUNCE_MS = 200;
 
 interface AuthStatus {
   configured?: boolean;
@@ -78,26 +79,48 @@ export default function App() {
   const [selectedChannelId, setSelectedChannelId] = useState<string>();
   const [view, setView] = useState<"chat" | "filters">("chat");
   const [quickSearch, setQuickSearch] = useState("");
+  const [querySearch, setQuerySearch] = useState("");
   const [filterState, setFilterState] = useState<FilterState>(loadSavedFilterState);
   const [chatTabs, setChatTabs] = useState<ChatViewTab[]>(loadSavedChatTabs);
   const [activeChatTabId, setActiveChatTabId] = useState("all");
   const [editingChatTab, setEditingChatTab] = useState<ChatViewTab | "new">();
   const [paused, setPaused] = useState(false);
   const [pausedMessages, setPausedMessages] = useState<ChatMessage[]>([]);
+  const [pausedMessageKey, setPausedMessageKey] = useState("");
   const [clearBefore, setClearBefore] = useState(0);
   const [auth, setAuth] = useState<AuthStatus>();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [notice, setNotice] = useState<string>();
   const selectedChannel = channels.find((channel) => channel._id === selectedChannelId);
   const activeChatTab = chatTabs.find((tab) => tab.id === activeChatTabId);
+  const activeFilters = useMemo(() => {
+    const activeIds = new Set(filterState.activeIds);
+    return filterState.filters.filter((filter) => activeIds.has(filter.id));
+  }, [filterState]);
+  const viewFilters = useMemo(
+    () => activeChatTab
+      ? [...activeFilters, chatTabAsFilter(activeChatTab)]
+      : activeFilters,
+    [activeFilters, activeChatTab],
+  );
+  const selectionFilters = useMemo(
+    () => viewFilters.filter((filter) => filter.action !== "highlight"),
+    [viewFilters],
+  );
   const galleryActive = view === "chat" && activeChatTab?.layout === "gallery";
   const queryArgs = useMemo(
-    () => selectedChannelId ? { channelId: selectedChannelId } : {},
-    [selectedChannelId],
+    () => ({
+      ...(selectedChannelId ? { channelId: selectedChannelId } : {}),
+      ...(querySearch.trim() ? { quickSearch: querySearch } : {}),
+      ...(selectionFilters.length > 0 ? { filters: selectionFilters } : {}),
+      ...(clearBefore > 0 ? { afterTimestamp: clearBefore } : {}),
+    }),
+    [selectedChannelId, querySearch, selectionFilters, clearBefore],
   );
+  const messageFeedKey = useMemo(() => JSON.stringify(queryArgs), [queryArgs]);
   const recentQuery = usePaginatedQuery(
     api.messages.page,
-    galleryActive ? "skip" : queryArgs,
+    view === "chat" && !galleryActive ? queryArgs : "skip",
     { initialNumItems: INITIAL_MESSAGE_COUNT },
   );
   const galleryQuery = usePaginatedQuery(
@@ -111,6 +134,27 @@ export default function App() {
       : [...recentQuery.results].reverse(),
     [galleryActive, galleryQuery.results, recentQuery.results],
   );
+  const sourceMessages = paused && pausedMessageKey === messageFeedKey
+    ? pausedMessages
+    : messages;
+  const highlightedIds = useMemo(
+    () => highlightedMessageIds(sourceMessages, viewFilters),
+    [sourceMessages, viewFilters],
+  );
+  const filterMatchCountResults = useQuery(
+    api.messages.filterMatchCounts,
+    view === "filters" && filterState.filters.length > 0
+      ? {
+          filters: filterState.filters,
+          ...(selectedChannelId ? { channelId: selectedChannelId } : {}),
+          ...(clearBefore > 0 ? { afterTimestamp: clearBefore } : {}),
+        }
+      : "skip",
+  );
+  const filterMatchCounts = useMemo(
+    () => new Map((filterMatchCountResults ?? []).map(({ id, count }) => [id, count])),
+    [filterMatchCountResults],
+  );
   const ensureSeeded = useMutation(api.platforms.ensureSeeded);
   const visibleChannelIds = useMemo(
     () => galleryActive
@@ -120,6 +164,11 @@ export default function App() {
   );
   const emotesByChannel = useThirdPartyEmotes(visibleChannelIds);
   const badgesByChannel = useTwitchBadges(visibleChannelIds);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setQuerySearch(quickSearch), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [quickSearch]);
 
   useEffect(() => {
     void ensureSeeded({});
@@ -144,34 +193,6 @@ export default function App() {
       console.warn("Could not persist chat tabs", error);
     }
   }, [chatTabs]);
-
-  const sourceMessages = useMemo(() => {
-    const source = paused ? pausedMessages : messages;
-    return source.filter((message) => message.timestamp > clearBefore);
-  }, [paused, pausedMessages, messages, clearBefore]);
-  const activeFilters = useMemo(() => {
-    const activeIds = new Set(filterState.activeIds);
-    return filterState.filters.filter((filter) => activeIds.has(filter.id));
-  }, [filterState]);
-  const viewFilters = useMemo(
-    () => activeChatTab
-      ? [...activeFilters, chatTabAsFilter(activeChatTab)]
-      : activeFilters,
-    [activeFilters, activeChatTab],
-  );
-  const messageFeedKey = useMemo(
-    () => JSON.stringify({
-      channelId: selectedChannelId ?? null,
-      quickSearch,
-      filters: viewFilters,
-      clearBefore,
-    }),
-    [selectedChannelId, quickSearch, viewFilters, clearBefore],
-  );
-  const filtered = useMemo(
-    () => applyMessageFilters(sourceMessages, quickSearch, viewFilters),
-    [sourceMessages, quickSearch, viewFilters],
-  );
 
   const saveFilter = (filter: MessageFilter, apply: boolean) => {
     setFilterState((current) => {
@@ -265,7 +286,10 @@ export default function App() {
               onTextChange={setQuickSearch}
               onViewChange={setView}
               onPause={() => {
-                if (!paused) setPausedMessages(messages);
+                if (!paused) {
+                  setPausedMessages(messages);
+                  setPausedMessageKey(messageFeedKey);
+                }
                 setPaused((value) => !value);
               }}
               onClear={() => setClearBefore(Date.now())}
@@ -281,8 +305,10 @@ export default function App() {
                 />
                 {activeChatTab?.layout === "gallery" ? (
                   <ImageGallery
+                    historyEnabled={clearBefore === 0}
+                    key={messageFeedKey}
                     loadMore={galleryQuery.loadMore}
-                    messages={filtered.messages}
+                    messages={sourceMessages}
                     paused={paused}
                     status={galleryQuery.status}
                   />
@@ -290,11 +316,11 @@ export default function App() {
                   <MessageFeed
                     badgesByChannel={badgesByChannel}
                     emotesByChannel={emotesByChannel}
-                    highlightedIds={filtered.highlightedIds}
+                    highlightedIds={highlightedIds}
                     historyEnabled={clearBefore === 0}
                     key={messageFeedKey}
                     loadMore={recentQuery.loadMore}
-                    messages={filtered.messages}
+                    messages={sourceMessages}
                     paused={paused}
                     status={recentQuery.status}
                   />
@@ -305,7 +331,7 @@ export default function App() {
                 <FilterWorkspace
                   activeIds={filterState.activeIds}
                   filters={filterState.filters}
-                  messages={sourceMessages}
+                  matchCounts={filterMatchCounts}
                   onDelete={deleteFilter}
                   onSave={saveFilter}
                   onToggle={toggleFilter}
@@ -638,11 +664,13 @@ function MessageFeed({
 
 function ImageGallery({
   messages,
+  historyEnabled,
   loadMore,
   paused,
   status,
 }: {
   messages: ChatMessage[];
+  historyEnabled: boolean;
   loadMore: (numItems: number) => void;
   paused: boolean;
   status: PaginationStatus;
@@ -653,28 +681,47 @@ function ImageGallery({
   );
   const viewportRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLDivElement>(null);
+  const visibleCountBeforeLoadRef = useRef<number | undefined>(undefined);
+  const [automaticSearchStopped, setAutomaticSearchStopped] = useState(false);
+
+  useEffect(() => {
+    if (status === "LoadingMore" || visibleCountBeforeLoadRef.current === undefined) return;
+    setAutomaticSearchStopped(messages.length <= visibleCountBeforeLoadRef.current);
+    visibleCountBeforeLoadRef.current = undefined;
+  }, [messages.length, status]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
     const trigger = historyTriggerRef.current;
-    if (!viewport || !trigger || paused || status !== "CanLoadMore") return;
+    if (!viewport || !trigger || paused || !historyEnabled || automaticSearchStopped ||
+        status !== "CanLoadMore") return;
 
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) loadMore(HISTORY_PAGE_SIZE);
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      visibleCountBeforeLoadRef.current = messages.length;
+      loadMore(HISTORY_PAGE_SIZE);
     }, { root: viewport, rootMargin: "0px 0px 500px" });
     observer.observe(trigger);
     return () => observer.disconnect();
-  }, [loadMore, paused, status]);
+  }, [automaticSearchStopped, historyEnabled, loadMore, messages.length, paused, status]);
+
+  const loadNextHistoryPage = () => {
+    visibleCountBeforeLoadRef.current = messages.length;
+    loadMore(HISTORY_PAGE_SIZE);
+  };
 
   return (
     <div className="image-gallery-wrap" ref={viewportRef}>
       {status === "LoadingFirstPage" ? (
         <div className="empty">Loading artwork…</div>
-      ) : images.length === 0 && status === "Exhausted" ? (
+      ) : images.length === 0 &&
+          (!historyEnabled || automaticSearchStopped || status === "Exhausted") ? (
         <div className="empty gallery-empty">
           <span aria-hidden="true" className="empty-icon gallery-empty-icon">+</span>
-          <strong>No images found</strong>
-          <span>Direct image links and supported artwork pages, including Pixiv, will appear here.</span>
+          <strong>{automaticSearchStopped ? "No matching images in loaded history" : "No images found"}</strong>
+          <span>{automaticSearchStopped
+            ? `Search another ${HISTORY_PAGE_SIZE} older images to look further back.`
+            : "Direct image links and supported artwork pages, including Pixiv, will appear here."}</span>
         </div>
       ) : (
         <>
@@ -684,7 +731,9 @@ function ImageGallery({
               ? "Paused"
               : status === "Exhausted"
                 ? "Complete history"
-                : "Newest first · loading history"}</span>
+                : automaticSearchStopped
+                  ? "Newest first · history search paused"
+                  : "Newest first · loading history"}</span>
           </div>
           <div className="image-gallery">
             {images.map((image) => <GalleryCard image={image} key={image.id} />)}
@@ -696,8 +745,12 @@ function ImageGallery({
           <span>History loading paused</span>
         ) : status === "LoadingMore" ? (
           <span>Loading older images…</span>
-        ) : status === "CanLoadMore" ? (
-          <button className="button" onClick={() => loadMore(HISTORY_PAGE_SIZE)}>Load older images</button>
+        ) : historyEnabled && status === "CanLoadMore" ? (
+          <button className="button" onClick={loadNextHistoryPage}>
+            {automaticSearchStopped
+              ? `Search next ${HISTORY_PAGE_SIZE} older images`
+              : "Load older images"}
+          </button>
         ) : images.length > 0 ? (
           <span>All saved images loaded</span>
         ) : null}

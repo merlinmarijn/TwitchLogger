@@ -36,8 +36,9 @@ export const add = mutation({
 
     const existing = await ctx.db
       .query("channels")
-      .withIndex("by_platform_username", (q) => q.eq("platform", args.platform))
-      .filter((q) => q.eq(q.field("username"), username))
+      .withIndex("by_platform_username", (q) =>
+        q.eq("platform", args.platform).eq("username", username),
+      )
       .unique();
     if (existing) {
       if (existing.hiddenAt === undefined) {

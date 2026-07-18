@@ -24,7 +24,13 @@ const tab: ChatViewTab = {
 describe("chat tabs", () => {
   it("round-trips valid tabs and converts them into show filters", () => {
     expect(parseChatTabs(serializeChatTabs([tab]))).toEqual([tab]);
-    expect(chatTabAsFilter(tab)).toEqual({ ...tab, action: "show" });
+    expect(chatTabAsFilter(tab)).toEqual({
+      id: tab.id,
+      name: tab.name,
+      action: "show",
+      match: tab.match,
+      rules: tab.rules,
+    });
   });
 
   it("drops malformed, duplicate, and invalid-regex tabs", () => {

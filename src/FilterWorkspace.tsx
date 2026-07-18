@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react";
-import type { ChatMessage } from "./api";
 import {
   filterRuleError,
-  matchesMessageFilter,
   type FilterAction,
   type MessageFilter,
 } from "./filters";
@@ -15,7 +13,7 @@ import {
 interface FilterWorkspaceProps {
   filters: MessageFilter[];
   activeIds: string[];
-  messages: ChatMessage[];
+  matchCounts: ReadonlyMap<string, number>;
   onSave: (filter: MessageFilter, apply: boolean) => void;
   onDelete: (id: string) => void;
   onToggle: (id: string) => void;
@@ -30,7 +28,7 @@ const actionCopy: Record<FilterAction, { label: string; description: string }> =
 export default function FilterWorkspace({
   filters,
   activeIds,
-  messages,
+  matchCounts,
   onSave,
   onDelete,
   onToggle,
@@ -41,13 +39,6 @@ export default function FilterWorkspace({
       : createEmptyFilter(),
   );
   const active = useMemo(() => new Set(activeIds), [activeIds]);
-  const matchCounts = useMemo(
-    () => new Map(filters.map((filter) => [
-      filter.id,
-      messages.filter((message) => matchesMessageFilter(message, filter)).length,
-    ])),
-    [filters, messages],
-  );
   const draftIsSaved = filters.some((filter) => filter.id === draft.id);
   const editorError = !draft.name.trim()
     ? "Give the filter a name."
@@ -98,7 +89,7 @@ export default function FilterWorkspace({
                   <span>
                     <strong>{filter.name}</strong>
                     <small>
-                      {filter.rules.length} rule{filter.rules.length === 1 ? "" : "s"} · {matchCounts.get(filter.id) ?? 0} matches
+                      {filter.rules.length} rule{filter.rules.length === 1 ? "" : "s"} · {matchCounts.get(filter.id) ?? 0} recent matches
                     </small>
                   </span>
                   <span className={`filter-action-chip ${filter.action}`}>

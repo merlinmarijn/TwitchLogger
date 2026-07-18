@@ -16,7 +16,13 @@ export interface ChatViewTab {
 export const CHAT_TABS_STORAGE_KEY = "twitch-logs.chat-tabs.v1";
 
 export function chatTabAsFilter(tab: ChatViewTab): MessageFilter {
-  return { ...tab, action: "show" };
+  return {
+    id: tab.id,
+    name: tab.name,
+    action: "show",
+    match: tab.match,
+    rules: tab.rules,
+  };
 }
 
 export function parseChatTabs(raw: string | null): ChatViewTab[] {

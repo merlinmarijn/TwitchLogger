@@ -4,6 +4,15 @@ import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./functions";
 import { toClientMessage } from "./lib/clientMessage";
 import { requireIngestionSecret } from "./lib/ingestionAuth";
+import {
+  countFilterMatches,
+  hasMessageSelection,
+  matchesCriteria,
+  messageCriteriaValidators,
+  messageFilterValidator,
+  validateMessageCriteria,
+  validateMessagePageSize,
+} from "./lib/messageFilters";
 import { extractImageUrls } from "../shared/imageUrls";
 
 const badgeValidator = v.object({
@@ -40,23 +49,33 @@ export const page = query({
   args: {
     channelId: v.optional(v.id("channels")),
     paginationOpts: paginationOptsValidator,
+    ...messageCriteriaValidators,
   },
   handler: async (ctx, args) => {
+    validateMessagePageSize(args.paginationOpts.numItems);
+    const criteria = validateMessageCriteria(args);
     const result = args.channelId
       ? await ctx.db
         .query("chatMessages")
         .withIndex("by_channel_timestamp", (q) =>
-          q.eq("channelId", args.channelId!),
+          criteria.afterTimestamp
+            ? q.eq("channelId", args.channelId!).gt("timestamp", criteria.afterTimestamp)
+            : q.eq("channelId", args.channelId!),
         )
         .order("desc")
         .paginate(args.paginationOpts)
       : await ctx.db
         .query("chatMessages")
-        .withIndex("by_timestamp")
+        .withIndex("by_timestamp", (q) => criteria.afterTimestamp
+          ? q.gt("timestamp", criteria.afterTimestamp)
+          : q)
         .order("desc")
         .paginate(args.paginationOpts);
 
-    return { ...result, page: result.page.map(toClientMessage) };
+    const page = hasMessageSelection(criteria)
+      ? result.page.filter((message) => matchesCriteria(message, criteria))
+      : result.page;
+    return { ...result, page: page.map(toClientMessage) };
   },
 });
 
@@ -64,29 +83,67 @@ export const pageImages = query({
   args: {
     channelId: v.optional(v.id("channels")),
     paginationOpts: paginationOptsValidator,
+    ...messageCriteriaValidators,
   },
   handler: async (ctx, args) => {
+    validateMessagePageSize(args.paginationOpts.numItems);
+    const criteria = validateMessageCriteria(args);
     const result = args.channelId
       ? await ctx.db
           .query("chatMessages")
           .withIndex("by_gallery_channel_timestamp", (q) =>
-            q.eq("galleryChannelId", args.channelId!),
+            criteria.afterTimestamp
+              ? q.eq("galleryChannelId", args.channelId!).gt("timestamp", criteria.afterTimestamp)
+              : q.eq("galleryChannelId", args.channelId!),
           )
           .order("desc")
           .paginate(args.paginationOpts)
       : await ctx.db
           .query("chatMessages")
-          .withIndex("by_has_images_timestamp", (q) => q.eq("hasImages", true))
+          .withIndex("by_has_images_timestamp", (q) => criteria.afterTimestamp
+            ? q.eq("hasImages", true).gt("timestamp", criteria.afterTimestamp)
+            : q.eq("hasImages", true))
           .order("desc")
           .paginate(args.paginationOpts);
 
+    const page = hasMessageSelection(criteria)
+      ? result.page.filter((message) => matchesCriteria(message, criteria))
+      : result.page;
     return {
       ...result,
-      page: result.page.map((message) => ({
+      page: page.map((message) => ({
         ...toClientMessage(message),
         imageUrls: message.imageUrls ?? [],
       })),
     };
+  },
+});
+
+export const filterMatchCounts = query({
+  args: {
+    channelId: v.optional(v.id("channels")),
+    filters: v.array(messageFilterValidator),
+    afterTimestamp: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const criteria = validateMessageCriteria(args);
+    const messages = args.channelId
+      ? await ctx.db
+          .query("chatMessages")
+          .withIndex("by_channel_timestamp", (q) => criteria.afterTimestamp
+            ? q.eq("channelId", args.channelId!).gt("timestamp", criteria.afterTimestamp)
+            : q.eq("channelId", args.channelId!))
+          .order("desc")
+          .take(500)
+      : await ctx.db
+          .query("chatMessages")
+          .withIndex("by_timestamp", (q) => criteria.afterTimestamp
+            ? q.gt("timestamp", criteria.afterTimestamp)
+            : q)
+          .order("desc")
+          .take(500);
+
+    return countFilterMatches(messages, criteria.filters);
   },
 });
 
@@ -143,7 +200,7 @@ export const search = query({
   handler: async (ctx, args) => {
     const text = args.text.trim();
     if (!text) return [];
-    return ctx.db
+    const messages = await ctx.db
       .query("chatMessages")
       .withSearchIndex("search_text", (q) => {
         let search = q.search("messageText", text).eq("platform", "twitch");
@@ -154,6 +211,7 @@ export const search = query({
         return search;
       })
       .take(Math.max(1, Math.min(args.limit ?? 100, 250)));
+    return messages.map(toClientMessage);
   },
 });
 

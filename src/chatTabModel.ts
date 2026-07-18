@@ -8,6 +8,7 @@ import {
 export interface ChatViewTab {
   id: string;
   name: string;
+  layout: "chat" | "gallery";
   match: FilterMatchMode;
   rules: FilterRule[];
 }
@@ -28,6 +29,7 @@ export function parseChatTabs(raw: string | null): ChatViewTab[] {
       return [{
         id: value.id,
         name: value.name,
+        layout: value.layout,
         action: "show",
         match: value.match,
         rules: value.rules,
@@ -45,6 +47,9 @@ export function parseChatTabs(raw: string | null): ChatViewTab[] {
       return [{
         id: filter.id,
         name: filter.name,
+        layout: candidateFilters.find((candidate) => candidate.id === filter.id)?.layout === "gallery"
+          ? "gallery"
+          : "chat",
         match: filter.match,
         rules: filter.rules,
       }];

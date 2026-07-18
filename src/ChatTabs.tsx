@@ -40,6 +40,15 @@ export function ChatTabBar({
             onClick={() => onSelect(tab.id)}
             role="tab"
           >
+            {tab.layout === "gallery" && (
+              <svg
+                aria-hidden="true"
+                className="tab-gallery-icon"
+                viewBox="0 0 16 16"
+              >
+                <path d="M2.5 2.5h11v11h-11zM4.5 10l2-2 1.5 1.5 2.5-3 2 2.5M5.5 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+              </svg>
+            )}
             {tab.name}
           </button>
         ))}
@@ -81,11 +90,12 @@ export function ChatTabDialog({
       setDraft((current) => ({
         ...current,
         name: current.name || "Images",
+        layout: "gallery",
         match: "any",
         rules: [{
           ...createFilterRule("message"),
           operator: "regex",
-          value: "/https?://\\S+\\.(jpg|jpeg|png|gif|webp|svg|bmp|avif|tiff?)(?:\\?\\S*)?/i",
+          value: "/https?:\\/\\/[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#][^\\s<>\"']*)?/i",
         }],
       }));
       return;
@@ -94,6 +104,7 @@ export function ChatTabDialog({
       setDraft((current) => ({
         ...current,
         name: current.name || "Mentions",
+        layout: "chat",
         match: "any",
         rules: [{ ...createFilterRule("message"), value: "@" }],
       }));
@@ -101,6 +112,7 @@ export function ChatTabDialog({
     }
     setDraft((current) => ({
       ...current,
+      layout: "chat",
       rules: [createFilterRule("message")],
     }));
   };
@@ -126,7 +138,7 @@ export function ChatTabDialog({
         {!tab && (
           <div className="chat-tab-templates">
             <span>Quick start</span>
-            <button onClick={() => applyTemplate("images")}>Image links</button>
+            <button onClick={() => applyTemplate("images")}>Image gallery</button>
             <button onClick={() => applyTemplate("mentions")}>Mentions</button>
             <button onClick={() => applyTemplate("custom")}>Custom</button>
           </div>
@@ -142,6 +154,32 @@ export function ChatTabDialog({
             value={draft.name}
           />
         </label>
+
+        <fieldset className="tab-layout-picker">
+          <legend>Display results as</legend>
+          <div>
+            <label className={draft.layout === "chat" ? "selected" : ""}>
+              <input
+                checked={draft.layout === "chat"}
+                name="tab-layout"
+                onChange={() => setDraft({ ...draft, layout: "chat" })}
+                type="radio"
+              />
+              <strong>Chat feed</strong>
+              <span>Keep each matching message in the live log.</span>
+            </label>
+            <label className={draft.layout === "gallery" ? "selected" : ""}>
+              <input
+                checked={draft.layout === "gallery"}
+                name="tab-layout"
+                onChange={() => setDraft({ ...draft, layout: "gallery" })}
+                type="radio"
+              />
+              <strong>Image gallery</strong>
+              <span>Pull direct image links into a visual wall.</span>
+            </label>
+          </div>
+        </fieldset>
 
         <FilterRuleEditor
           match={draft.match}
@@ -178,6 +216,7 @@ function createEmptyTab(): ChatViewTab {
   return {
     id: createClientId("chat-tab"),
     name: "",
+    layout: "chat",
     match: "all",
     rules: [createFilterRule("message")],
   };

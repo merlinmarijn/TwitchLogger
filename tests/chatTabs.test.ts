@@ -11,6 +11,7 @@ import { applyMessageFilters } from "../src/filters";
 const tab: ChatViewTab = {
   id: "images",
   name: "Images",
+  layout: "gallery",
   match: "any",
   rules: [{
     id: "image-rule",
@@ -38,6 +39,17 @@ describe("chat tabs", () => {
     });
     expect(parseChatTabs(raw)).toEqual([tab]);
     expect(parseChatTabs("not-json")).toEqual([]);
+  });
+
+  it("loads tabs saved before gallery layouts as chat feeds", () => {
+    const legacyTab = {
+      id: tab.id,
+      name: tab.name,
+      match: tab.match,
+      rules: tab.rules,
+    };
+    const raw = JSON.stringify({ version: 1, tabs: [legacyTab] });
+    expect(parseChatTabs(raw)).toEqual([{ ...legacyTab, layout: "chat" }]);
   });
 
   it("uses a tab as an additional show-only feed filter", () => {

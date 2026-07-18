@@ -28,6 +28,7 @@ import {
   type ThirdPartyEmote,
 } from "./emotes";
 import FilterWorkspace from "./FilterWorkspace";
+import { buildGalleryImages, type GalleryImage } from "./imageGallery";
 import {
   applyMessageFilters,
   FILTER_STORAGE_KEY,
@@ -236,14 +237,21 @@ export default function App() {
                   onEdit={setEditingChatTab}
                   onSelect={setActiveChatTabId}
                 />
-                <MessageFeed
-                  badgesByChannel={badgesByChannel}
-                  emotesByChannel={emotesByChannel}
-                  highlightedIds={filtered.highlightedIds}
-                  loading={queriedMessages === undefined}
-                  messages={filtered.messages}
-                  paused={paused}
-                />
+                {activeChatTab?.layout === "gallery" ? (
+                  <ImageGallery
+                    loading={queriedMessages === undefined}
+                    messages={filtered.messages}
+                  />
+                ) : (
+                  <MessageFeed
+                    badgesByChannel={badgesByChannel}
+                    emotesByChannel={emotesByChannel}
+                    highlightedIds={filtered.highlightedIds}
+                    loading={queriedMessages === undefined}
+                    messages={filtered.messages}
+                    paused={paused}
+                  />
+                )}
               </>
             ) : (
               <FilterWorkspace
@@ -501,6 +509,78 @@ function MessageFeed({
         </button>
       )}
     </div>
+  );
+}
+
+function ImageGallery({
+  messages,
+  loading,
+}: {
+  messages: ChatMessage[];
+  loading: boolean;
+}) {
+  const images = useMemo(() => buildGalleryImages(messages), [messages]);
+
+  return (
+    <div className="image-gallery-wrap">
+      {loading ? (
+        <div className="empty">Loading artwork…</div>
+      ) : images.length === 0 ? (
+        <div className="empty gallery-empty">
+          <span aria-hidden="true" className="empty-icon gallery-empty-icon">+</span>
+          <strong>No images found</strong>
+          <span>Direct links ending in JPG, PNG, GIF, WebP, SVG, AVIF, BMP, or TIFF will appear here.</span>
+        </div>
+      ) : (
+        <>
+          <div className="gallery-summary">
+            <strong>{images.length} {images.length === 1 ? "image" : "images"}</strong>
+            <span>Newest first</span>
+          </div>
+          <div className="image-gallery">
+            {images.map((image) => <GalleryCard image={image} key={image.id} />)}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function GalleryCard({ image }: { image: GalleryImage }) {
+  const [failed, setFailed] = useState(false);
+  const postedAt = new Date(image.message.timestamp);
+
+  return (
+    <article className="gallery-card">
+      <a
+        aria-label={`Open image posted by ${image.message.senderDisplayName}`}
+        href={image.url}
+        rel="noreferrer"
+        target="_blank"
+      >
+        {failed ? (
+          <span className="gallery-image-failed">Image unavailable</span>
+        ) : (
+          <img
+            alt={`Shared by ${image.message.senderDisplayName} in ${image.message.channelName}`}
+            decoding="async"
+            loading="lazy"
+            onError={() => setFailed(true)}
+            src={image.url}
+          />
+        )}
+        <span className="gallery-open-hint">Open original ↗</span>
+      </a>
+      <footer>
+        <span>
+          <strong>{image.message.senderDisplayName}</strong>
+          <small>#{image.message.channelName}</small>
+        </span>
+        <time dateTime={postedAt.toISOString()} title={postedAt.toLocaleString()}>
+          {postedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </time>
+      </footer>
+    </article>
   );
 }
 

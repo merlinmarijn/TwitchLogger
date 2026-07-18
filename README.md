@@ -6,7 +6,7 @@ The live feed renders native Twitch emotes from EventSub message fragments, reso
 
 The Filters tab provides reusable, browser-persisted filter presets. Each preset can match all or any sender, message, channel, role, badge, or message-type conditions and then show only, hide, or highlight matching messages. Text conditions support validated regular expressions, including `/pattern/flags` notation. Starter recipes make common filters available without configuring rules manually.
 
-The chat feed also has browser-persisted tabs. **All chat** is always available, while **Add tab** creates a named filtered view using the same condition editor. Quick starts are included for image links and mentions, and custom tabs can combine multiple rules with all/any matching.
+The chat feed also has browser-persisted tabs. **All chat** is always available, while **Add tab** creates a named filtered view using the same condition editor. The Image Gallery quick start turns direct image links from matching logs into a responsive, newest-first visual wall; any tab can switch between gallery and chat-feed presentation. Mentions and custom quick starts can combine multiple rules with all/any matching.
 
 ## Production container
 

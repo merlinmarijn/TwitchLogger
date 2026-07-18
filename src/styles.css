@@ -147,6 +147,8 @@ h2 { font-size: 18px; }
 .chat-tab-bar { min-width: 0; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding: 7px 14px; background: #151517; }
 .chat-tabs { min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
 .chat-tabs button, .edit-chat-tab { flex: none; border: 1px solid transparent; border-radius: 6px; padding: 6px 10px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; cursor: pointer; }
+.chat-tabs button { display: inline-flex; align-items: center; gap: 5px; }
+.tab-gallery-icon { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.25; }
 .chat-tabs button:hover, .edit-chat-tab:hover { background: #29292e; color: #fff; }
 .chat-tabs button.selected { border-color: #68499b; background: #30283b; color: #fff; }
 .chat-tabs .add-chat-tab { border-color: var(--border); color: #c7a7f8; }
@@ -158,11 +160,40 @@ h2 { font-size: 18px; }
 .chat-tab-templates > span { margin-right: 4px; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .chat-tab-templates button { border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; background: var(--surface-2); color: #dedee3; font-size: 11px; cursor: pointer; }
 .chat-tab-templates button:hover { border-color: #68499b; background: #27232e; }
+.tab-layout-picker { margin: 0; border: 0; padding: 0; }
+.tab-layout-picker legend { margin-bottom: 7px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.tab-layout-picker > div { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.tab-layout-picker label { position: relative; display: grid; gap: 4px; border: 1px solid var(--border); border-radius: 9px; padding: 11px 12px; background: #151517; cursor: pointer; }
+.tab-layout-picker label.selected { border-color: #7957ad; background: #27232e; }
+.tab-layout-picker input { position: absolute; opacity: 0; }
+.tab-layout-picker strong { font-size: 12px; }
+.tab-layout-picker span { color: var(--muted); font-size: 10px; line-height: 1.4; }
 .chat-tab-dialog .rule-heading { margin-top: 4px; }
 .chat-tab-dialog-actions { align-items: center; border-top: 1px solid var(--border); padding-top: 15px; }
 .chat-tab-dialog-actions > span { margin-right: auto; color: var(--muted); font-size: 10px; }
 .chat-tab-dialog-actions .danger-button { margin-right: auto; }
 .chat-tab-dialog-actions .danger-button + span { margin-left: 0; }
+.image-gallery-wrap { min-height: 0; flex: 1; overflow-y: auto; padding: clamp(14px, 2vw, 26px); background: #111113; }
+.gallery-summary { display: flex; align-items: baseline; justify-content: space-between; margin: 0 2px 16px; }
+.gallery-summary strong { font-size: 12px; letter-spacing: .02em; }
+.gallery-summary span { color: #777782; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
+.image-gallery { columns: 260px; column-gap: clamp(10px, 1.4vw, 18px); }
+.gallery-card { position: relative; break-inside: avoid; margin: 0 0 clamp(10px, 1.4vw, 18px); border: 1px solid #2b2b30; background: #18181b; overflow: hidden; content-visibility: auto; contain-intrinsic-size: 280px 260px; }
+.gallery-card > a { position: relative; min-height: 140px; display: grid; place-items: center; background: #202024; color: #d8d8dd; text-decoration: none; overflow: hidden; }
+.gallery-card img { width: 100%; height: auto; display: block; transition: transform 220ms cubic-bezier(.22, 1, .36, 1), filter 220ms ease; }
+.gallery-card:hover img { transform: scale(1.015); filter: brightness(.72); }
+.gallery-open-hint { position: absolute; right: 10px; bottom: 10px; border-radius: 5px; padding: 5px 7px; background: #101012e6; color: #f0edf5; font-size: 10px; font-weight: 750; opacity: 0; transform: translateY(4px); transition: opacity 160ms ease, transform 220ms cubic-bezier(.22, 1, .36, 1); }
+.gallery-card:hover .gallery-open-hint, .gallery-card > a:focus-visible .gallery-open-hint { opacity: 1; transform: translateY(0); }
+.gallery-image-failed { padding: 70px 16px; color: #898992; font-size: 11px; }
+.gallery-card footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; }
+.gallery-card footer > span { min-width: 0; display: flex; align-items: baseline; gap: 6px; }
+.gallery-card footer strong, .gallery-card footer small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gallery-card footer strong { font-size: 11px; }
+.gallery-card footer small { color: #a786d8; font-size: 9px; }
+.gallery-card footer time { flex: none; color: #777782; font-size: 9px; font-variant-numeric: tabular-nums; }
+.gallery-empty { max-width: 480px; margin: 0 auto; }
+.gallery-empty > span:last-child { line-height: 1.55; }
+.gallery-empty-icon { width: 44px; height: 44px; display: grid; place-items: center; border: 1px dashed #68499b; border-radius: 50%; font-size: 25px; }
 @container (max-width: 720px) {
   .chat-tab-dialog .rule-heading { align-items: flex-start; flex-wrap: wrap; }
   .chat-tab-dialog .rule-heading > div { flex-wrap: wrap; }
@@ -179,6 +210,7 @@ h2 { font-size: 18px; }
   .chat-tab-dialog .filter-rule label { grid-column: 2; }
   .chat-tab-dialog .filter-rule label:nth-of-type(3) { grid-column: 2; }
   .chat-tab-dialog .remove-rule { grid-column: 3; grid-row: 1; }
+  .tab-layout-picker > div { grid-template-columns: 1fr; }
 }
 .dialog-backdrop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 20px; background: #000b; backdrop-filter: blur(3px); }
 .dialog { width: min(460px, 100%); display: grid; gap: 17px; border: 1px solid #414148; border-radius: 13px; padding: 22px; background: #18181b; box-shadow: 0 24px 80px #000b; }
@@ -230,6 +262,7 @@ h2 { font-size: 18px; }
   .chat-tab-dialog { max-height: calc(100vh - 20px); padding: 16px; }
   .chat-tab-dialog-actions { flex-wrap: wrap; }
   .chat-tab-dialog-actions > span { width: 100%; order: -1; }
+  .image-gallery { columns: 180px; }
 }
 @media (max-width: 480px) {
   .chat-tab-templates { align-items: stretch; flex-direction: column; }

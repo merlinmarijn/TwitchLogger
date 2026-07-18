@@ -159,6 +159,15 @@ export default function App() {
       : activeFilters,
     [activeFilters, activeChatTab],
   );
+  const messageFeedKey = useMemo(
+    () => JSON.stringify({
+      channelId: selectedChannelId ?? null,
+      quickSearch,
+      filters: viewFilters,
+      clearBefore,
+    }),
+    [selectedChannelId, quickSearch, viewFilters, clearBefore],
+  );
   const filtered = useMemo(
     () => applyMessageFilters(sourceMessages, quickSearch, viewFilters),
     [sourceMessages, quickSearch, viewFilters],
@@ -282,6 +291,8 @@ export default function App() {
                     badgesByChannel={badgesByChannel}
                     emotesByChannel={emotesByChannel}
                     highlightedIds={filtered.highlightedIds}
+                    historyEnabled={clearBefore === 0}
+                    key={messageFeedKey}
                     loadMore={recentQuery.loadMore}
                     messages={filtered.messages}
                     paused={paused}
@@ -485,6 +496,7 @@ function MessageFeed({
   highlightedIds,
   emotesByChannel,
   badgesByChannel,
+  historyEnabled,
   loadMore,
   status,
 }: {
@@ -493,13 +505,17 @@ function MessageFeed({
   highlightedIds: ReadonlySet<string>;
   emotesByChannel: ReadonlyMap<string, ReadonlyMap<string, ThirdPartyEmote>>;
   badgesByChannel: ReadonlyMap<string, ReadonlyMap<string, ChatBadgeDefinition>>;
+  historyEnabled: boolean;
   loadMore: (numItems: number) => void;
   status: PaginationStatus;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLDivElement>(null);
   const previousScrollHeightRef = useRef<number | undefined>(undefined);
+  // A rare filter keeps the loader visible; only continue automatically while pages add matches.
+  const visibleCountBeforeLoadRef = useRef<number | undefined>(undefined);
   const [followNewest, setFollowNewest] = useState(true);
+  const [automaticSearchStopped, setAutomaticSearchStopped] = useState(false);
 
   useEffect(() => {
     if (followNewest && !paused) {
@@ -514,22 +530,36 @@ function MessageFeed({
       viewport.scrollTop += viewport.scrollHeight - previousScrollHeightRef.current;
     }
     previousScrollHeightRef.current = undefined;
+
+    const visibleCountBeforeLoad = visibleCountBeforeLoadRef.current;
+    if (visibleCountBeforeLoad !== undefined) {
+      setAutomaticSearchStopped(messages.length <= visibleCountBeforeLoad);
+      visibleCountBeforeLoadRef.current = undefined;
+    }
   }, [messages.length, status]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
     const trigger = historyTriggerRef.current;
-    if (!viewport || !trigger || paused || status !== "CanLoadMore") return;
+    if (!viewport || !trigger || paused || !historyEnabled || automaticSearchStopped ||
+        status !== "CanLoadMore") return;
 
     const observer = new IntersectionObserver((entries) => {
       if (!entries.some((entry) => entry.isIntersecting) ||
           previousScrollHeightRef.current !== undefined) return;
       previousScrollHeightRef.current = viewport.scrollHeight;
+      visibleCountBeforeLoadRef.current = messages.length;
       loadMore(HISTORY_PAGE_SIZE);
     }, { root: viewport, rootMargin: "120px 0px 0px" });
     observer.observe(trigger);
     return () => observer.disconnect();
-  }, [loadMore, paused, status]);
+  }, [automaticSearchStopped, historyEnabled, loadMore, messages.length, paused, status]);
+
+  const loadNextHistoryPage = () => {
+    previousScrollHeightRef.current = viewportRef.current?.scrollHeight;
+    visibleCountBeforeLoadRef.current = messages.length;
+    loadMore(HISTORY_PAGE_SIZE);
+  };
 
   const handleScroll = () => {
     const element = viewportRef.current;
@@ -545,15 +575,14 @@ function MessageFeed({
             <span>History loading paused</span>
           ) : status === "LoadingMore" ? (
             <span>Loading older messages…</span>
-          ) : status === "CanLoadMore" ? (
+          ) : historyEnabled && status === "CanLoadMore" ? (
             <button
               className="button"
-              onClick={() => {
-                previousScrollHeightRef.current = viewportRef.current?.scrollHeight;
-                loadMore(HISTORY_PAGE_SIZE);
-              }}
+              onClick={loadNextHistoryPage}
             >
-              Load older messages
+              {automaticSearchStopped
+                ? `Search next ${HISTORY_PAGE_SIZE} older messages`
+                : "Load older messages"}
             </button>
           ) : null}
         </div>
@@ -562,10 +591,20 @@ function MessageFeed({
         ) : messages.length === 0 ? (
           <div className="empty">
             <span className="empty-icon">⌁</span>
-            <strong>{status === "Exhausted" ? "No messages to show" : "Searching history…"}</strong>
-            <span>{status === "Exhausted"
-              ? "New public chat messages appear here after the connection starts."
-              : "Older messages are loading until a match is found."}</span>
+            <strong>{!historyEnabled
+              ? "No messages since clearing"
+              : status === "Exhausted"
+                ? "No messages to show"
+                : automaticSearchStopped
+                  ? "No matches in loaded history"
+                  : "Searching history…"}</strong>
+            <span>{!historyEnabled
+              ? "New public chat messages will appear here."
+              : status === "Exhausted"
+                ? "New public chat messages appear here after the connection starts."
+                : automaticSearchStopped
+                  ? `Search another ${HISTORY_PAGE_SIZE} older messages to look further back.`
+                  : "Checking one older page for a match."}</span>
           </div>
         ) : (
           messages.map((message) => (

@@ -8,6 +8,10 @@ import {
 } from "../convex/lib/messageFilters";
 import type { ChatMessage } from "../src/api";
 import type { MessageFilter } from "../shared/messageFilters";
+import {
+  FILTER_SCAN_ROW_LIMIT,
+  paginateMatching,
+} from "../convex/lib/messagePagination";
 
 const moderatorFilter: MessageFilter = {
   id: "moderators",
@@ -59,6 +63,59 @@ describe("server message filtering", () => {
       }],
     })).toThrow("invalid rule");
     expect(() => validateMessagePageSize(251)).toThrow("limited to 250");
+  });
+});
+
+describe("server filtered pagination", () => {
+  it("scans raw pages until it can return matching results", async () => {
+    const rawPages = [
+      [makeMessage({ _id: "one" })],
+      [makeMessage({ _id: "two" })],
+      [makeMessage({ _id: "match", isModerator: true })],
+    ];
+    let call = 0;
+
+    const result = await paginateMatching({
+      paginationOpts: { cursor: null, numItems: 1 },
+      selectionActive: true,
+      matches: (message) => message.isModerator,
+      loadPage: async () => {
+        const page = rawPages[call] ?? [];
+        call += 1;
+        return {
+          page,
+          continueCursor: `cursor-${call}`,
+          isDone: call >= rawPages.length,
+        };
+      },
+    });
+
+    expect(result.page.map((message) => message._id)).toEqual(["match"]);
+    expect(result.scannedRows).toBe(3);
+    expect(call).toBe(3);
+  });
+
+  it("stops an unproductive server scan at the safety limit", async () => {
+    let call = 0;
+    const result = await paginateMatching({
+      paginationOpts: { cursor: null, numItems: 100 },
+      selectionActive: true,
+      matches: () => false,
+      loadPage: async () => {
+        call += 1;
+        return {
+          page: Array.from({ length: 100 }, (_, index) =>
+            makeMessage({ _id: `${call}-${index}` })),
+          continueCursor: `cursor-${call}`,
+          isDone: false,
+        };
+      },
+    });
+
+    expect(result.page).toEqual([]);
+    expect(result.scannedRows).toBe(FILTER_SCAN_ROW_LIMIT);
+    expect(result.scanLimitReached).toBe(true);
+    expect(call).toBe(10);
   });
 });
 

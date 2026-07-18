@@ -1,4 +1,4 @@
-import { paginationOptsValidator } from "convex/server";
+import { paginationOptsValidator, type TransactionMetrics } from "convex/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./functions";
@@ -13,7 +13,11 @@ import {
   validateMessageCriteria,
   validateMessagePageSize,
 } from "./lib/messageFilters";
+import { paginateMatching } from "./lib/messagePagination";
 import { extractImageUrls } from "../shared/imageUrls";
+
+const FILTER_SCAN_MINIMUM_BYTES_REMAINING = 2 * 1024 * 1024;
+const FILTER_SCAN_MINIMUM_DOCUMENTS_REMAINING = 100;
 
 const badgeValidator = v.object({
   setId: v.string(),
@@ -54,8 +58,8 @@ export const page = query({
   handler: async (ctx, args) => {
     validateMessagePageSize(args.paginationOpts.numItems);
     const criteria = validateMessageCriteria(args);
-    const result = args.channelId
-      ? await ctx.db
+    const loadPage = (paginationOpts: typeof args.paginationOpts) => args.channelId
+      ? ctx.db
         .query("chatMessages")
         .withIndex("by_channel_timestamp", (q) =>
           criteria.afterTimestamp
@@ -63,19 +67,23 @@ export const page = query({
             : q.eq("channelId", args.channelId!),
         )
         .order("desc")
-        .paginate(args.paginationOpts)
-      : await ctx.db
+        .paginate(paginationOpts)
+      : ctx.db
         .query("chatMessages")
         .withIndex("by_timestamp", (q) => criteria.afterTimestamp
           ? q.gt("timestamp", criteria.afterTimestamp)
           : q)
         .order("desc")
-        .paginate(args.paginationOpts);
+        .paginate(paginationOpts);
+    const result = await paginateMatching({
+      paginationOpts: args.paginationOpts,
+      selectionActive: hasMessageSelection(criteria),
+      matches: (message) => matchesCriteria(message, criteria),
+      loadPage,
+      canContinue: () => hasFilterScanHeadroom(ctx.meta.getTransactionMetrics()),
+    });
 
-    const page = hasMessageSelection(criteria)
-      ? result.page.filter((message) => matchesCriteria(message, criteria))
-      : result.page;
-    return { ...result, page: page.map(toClientMessage) };
+    return { ...result, page: result.page.map(toClientMessage) };
   },
 });
 
@@ -88,8 +96,8 @@ export const pageImages = query({
   handler: async (ctx, args) => {
     validateMessagePageSize(args.paginationOpts.numItems);
     const criteria = validateMessageCriteria(args);
-    const result = args.channelId
-      ? await ctx.db
+    const loadPage = (paginationOpts: typeof args.paginationOpts) => args.channelId
+      ? ctx.db
           .query("chatMessages")
           .withIndex("by_gallery_channel_timestamp", (q) =>
             criteria.afterTimestamp
@@ -97,27 +105,40 @@ export const pageImages = query({
               : q.eq("galleryChannelId", args.channelId!),
           )
           .order("desc")
-          .paginate(args.paginationOpts)
-      : await ctx.db
+          .paginate(paginationOpts)
+      : ctx.db
           .query("chatMessages")
           .withIndex("by_has_images_timestamp", (q) => criteria.afterTimestamp
             ? q.eq("hasImages", true).gt("timestamp", criteria.afterTimestamp)
             : q.eq("hasImages", true))
           .order("desc")
-          .paginate(args.paginationOpts);
+          .paginate(paginationOpts);
+    const result = await paginateMatching({
+      paginationOpts: args.paginationOpts,
+      selectionActive: hasMessageSelection(criteria),
+      matches: (message) => matchesCriteria(message, criteria),
+      loadPage,
+      canContinue: () => hasFilterScanHeadroom(ctx.meta.getTransactionMetrics()),
+    });
 
-    const page = hasMessageSelection(criteria)
-      ? result.page.filter((message) => matchesCriteria(message, criteria))
-      : result.page;
     return {
       ...result,
-      page: page.map((message) => ({
+      page: result.page.map((message) => ({
         ...toClientMessage(message),
         imageUrls: message.imageUrls ?? [],
       })),
     };
   },
 });
+
+async function hasFilterScanHeadroom(
+  metricsPromise: Promise<TransactionMetrics>,
+) {
+  const metrics = await metricsPromise;
+  return metrics.bytesRead.remaining >= FILTER_SCAN_MINIMUM_BYTES_REMAINING &&
+    metrics.documentsRead.remaining >= FILTER_SCAN_MINIMUM_DOCUMENTS_REMAINING &&
+    metrics.databaseQueries.remaining > 1;
+}
 
 export const filterMatchCounts = query({
   args: {

@@ -14,6 +14,7 @@ import {
 
 export {
   applyMessageFilters,
+  FILTER_SCAN_ROW_LIMIT,
   filterRuleError,
   highlightedMessageIds,
   matchesMessageFilter,

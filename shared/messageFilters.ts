@@ -20,6 +20,7 @@ export const FILTER_OPERATORS = [
 ] as const;
 export const FILTER_ACTIONS = ["show", "hide", "highlight"] as const;
 export const FILTER_MATCH_MODES = ["all", "any"] as const;
+export const FILTER_SCAN_ROW_LIMIT = 1_000;
 
 export type FilterField = (typeof FILTER_FIELDS)[number];
 export type FilterOperator = (typeof FILTER_OPERATORS)[number];

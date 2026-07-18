@@ -74,6 +74,12 @@ const insertIncoming = makeFunctionReference<
   { inserted: boolean; id: string }
 >("messages:insertIncoming");
 
+const startImageIndexBackfill = makeFunctionReference<
+  "mutation",
+  { ingestionSecret: string },
+  { scheduled: boolean }
+>("messages:startImageIndexBackfill");
+
 export class ConvexChatRepository {
   private readonly realtime: ConvexClient;
   private readonly http: ConvexHttpClient;
@@ -121,6 +127,13 @@ export class ConvexChatRepository {
       status,
       ...(error ? { error } : {}),
     });
+  }
+
+  async startImageIndexBackfill() {
+    return this.http.mutation(
+      startImageIndexBackfill as FunctionReference<"mutation">,
+      { ingestionSecret: this.ingestionSecret },
+    ) as Promise<{ scheduled: boolean }>;
   }
 
   async insertMessage(channel: ResolvedChannel, message: TwitchChatMessage) {

@@ -113,8 +113,10 @@ export default function App() {
   );
   const ensureSeeded = useMutation(api.platforms.ensureSeeded);
   const visibleChannelIds = useMemo(
-    () => [...new Set(messages.map((message) => message.externalChannelId))],
-    [messages],
+    () => galleryActive
+      ? []
+      : [...new Set(messages.map((message) => message.externalChannelId))],
+    [galleryActive, messages],
   );
   const emotesByChannel = useThirdPartyEmotes(visibleChannelIds);
   const badgesByChannel = useTwitchBadges(visibleChannelIds);

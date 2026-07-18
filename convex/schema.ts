@@ -47,6 +47,10 @@ export default defineSchema({
     senderUsername: v.string(),
     senderDisplayName: v.string(),
     messageText: v.string(),
+    // Optional while existing deployments backfill older messages.
+    hasImages: v.optional(v.boolean()),
+    imageUrls: v.optional(v.array(v.string())),
+    galleryChannelId: v.optional(v.id("channels")),
     timestamp: v.number(),
     badges: v.array(
       v.object({
@@ -69,6 +73,8 @@ export default defineSchema({
     .index("by_platform_timestamp", ["platform", "timestamp"])
     .index("by_sender", ["senderUsername", "timestamp"])
     .index("by_timestamp", ["timestamp"])
+    .index("by_has_images_timestamp", ["hasImages", "timestamp"])
+    .index("by_gallery_channel_timestamp", ["galleryChannelId", "timestamp"])
     .index("by_external_message", ["externalMessageId"])
     .index("by_event_notification", ["eventNotificationId"])
     .searchIndex("search_text", {

@@ -1,6 +1,7 @@
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
-import { mutation, query } from "./functions";
+import { internal } from "./_generated/api";
+import { internalMutation, mutation, query } from "./functions";
 import { toClientMessage } from "./lib/clientMessage";
 import { requireIngestionSecret } from "./lib/ingestionAuth";
 import { extractImageUrls } from "../shared/imageUrls";
@@ -68,26 +69,67 @@ export const pageImages = query({
     const result = args.channelId
       ? await ctx.db
           .query("chatMessages")
-          .withIndex("by_channel_timestamp", (q) =>
-            q.eq("channelId", args.channelId!),
+          .withIndex("by_gallery_channel_timestamp", (q) =>
+            q.eq("galleryChannelId", args.channelId!),
           )
           .order("desc")
           .paginate(args.paginationOpts)
       : await ctx.db
           .query("chatMessages")
-          .withIndex("by_timestamp")
+          .withIndex("by_has_images_timestamp", (q) => q.eq("hasImages", true))
           .order("desc")
           .paginate(args.paginationOpts);
 
     return {
       ...result,
-      page: result.page.flatMap((message) => {
-        const imageUrls = extractImageUrls(message.messageText);
-        if (imageUrls.length === 0) return [];
-
-        return [{ ...toClientMessage(message), imageUrls }];
-      }),
+      page: result.page.map((message) => ({
+        ...toClientMessage(message),
+        imageUrls: message.imageUrls ?? [],
+      })),
     };
+  },
+});
+
+/**
+ * Starts an idempotent background migration for messages saved before image
+ * metadata was indexed. The worker invokes this once at startup.
+ */
+export const startImageIndexBackfill = mutation({
+  args: { ingestionSecret: v.string() },
+  handler: async (ctx, args): Promise<{ scheduled: boolean }> => {
+    requireIngestionSecret(args.ingestionSecret);
+    const unindexedMessage = await ctx.db
+      .query("chatMessages")
+      .withIndex("by_has_images_timestamp", (q) => q.eq("hasImages", undefined))
+      .first();
+    if (!unindexedMessage) return { scheduled: false };
+
+    await ctx.scheduler.runAfter(0, internal.messages.backfillImageIndexBatch, {});
+    return { scheduled: true };
+  },
+});
+
+export const backfillImageIndexBatch = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ processed: number; complete: boolean }> => {
+    const messages = await ctx.db
+      .query("chatMessages")
+      .withIndex("by_has_images_timestamp", (q) => q.eq("hasImages", undefined))
+      .take(100);
+
+    await Promise.all(messages.map(async (message) => {
+      const imageUrls = extractImageUrls(message.messageText);
+      await ctx.db.patch(message._id, {
+        hasImages: imageUrls.length > 0,
+        imageUrls,
+        galleryChannelId: imageUrls.length > 0 ? message.channelId : undefined,
+      });
+    }));
+
+    if (messages.length === 100) {
+      await ctx.scheduler.runAfter(0, internal.messages.backfillImageIndexBatch, {});
+    }
+    return { processed: messages.length, complete: messages.length < 100 };
   },
 });
 
@@ -151,8 +193,12 @@ export const insertIncoming = mutation({
 
     const { ingestionSecret, ...message } = args;
     void ingestionSecret;
+    const imageUrls = extractImageUrls(message.messageText);
     const id = await ctx.db.insert("chatMessages", {
       ...message,
+      hasImages: imageUrls.length > 0,
+      imageUrls,
+      galleryChannelId: imageUrls.length > 0 ? message.channelId : undefined,
       platform: "twitch",
       createdAt: Date.now(),
     });

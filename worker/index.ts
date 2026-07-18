@@ -48,6 +48,14 @@ if (configuration.options) {
       options.ingestionSecret,
       logger,
     );
+    void repository.startImageIndexBackfill()
+      .then(({ scheduled }) => {
+        if (scheduled) logger.info("Started the one-time gallery image index backfill");
+      })
+      .catch((error) => logger.warn(
+        { err: error },
+        "Could not start the gallery image index backfill",
+      ));
     chat = new TwitchChatService(auth, api, eventSub, repository, logger);
     await chat.start(abortController.signal);
   } catch (error) {

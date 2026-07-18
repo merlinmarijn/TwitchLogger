@@ -3,6 +3,7 @@ import { buildMessageParts, replaceThirdPartyEmotes } from "../src/emotes";
 import {
   parseBetterTtvChannel,
   parseFrankerFaceZ,
+  parseSevenTv,
 } from "../worker/emotes/ThirdPartyEmoteService";
 
 describe("message emotes", () => {
@@ -66,5 +67,47 @@ describe("third-party emote API parsing", () => {
         },
       },
     })).toEqual([{ name: "Visible", source: "ffz", url: "https://cdn.test/2" }]);
+  });
+
+  it("uses 7TV aliases and prefers animated-capable 2x WebP files", () => {
+    expect(parseSevenTv({
+      emote_set: {
+        emotes: [
+          {
+            name: "ChannelAlias",
+            data: {
+              name: "OriginalName",
+              host: {
+                url: "//cdn.7tv.app/emote/one",
+                files: [{ name: "1x.webp" }, { name: "2x.webp" }],
+              },
+            },
+          },
+          { name: "Unavailable", data: null },
+        ],
+      },
+    })).toEqual([{
+      name: "ChannelAlias",
+      source: "7tv",
+      url: "https://cdn.7tv.app/emote/one/2x.webp",
+    }]);
+  });
+
+  it("parses the root emote set used by the 7TV global endpoint", () => {
+    expect(parseSevenTv({
+      emotes: [{
+        name: "GlobalSevenTv",
+        data: {
+          host: {
+            url: "https://cdn.7tv.app/emote/two/",
+            files: [{ name: "1x.avif" }],
+          },
+        },
+      }],
+    })).toEqual([{
+      name: "GlobalSevenTv",
+      source: "7tv",
+      url: "https://cdn.7tv.app/emote/two/1x.avif",
+    }]);
   });
 });

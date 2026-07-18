@@ -3,7 +3,7 @@ import { createElement, type ReactNode } from "react";
 export interface ThirdPartyEmote {
   name: string;
   url: string;
-  source: "bttv" | "ffz";
+  source: "bttv" | "ffz" | "7tv";
 }
 
 export interface TwitchMessageFragment {
@@ -19,7 +19,7 @@ export interface MessagePart {
   type: "text" | "emote";
   text: string;
   url?: string;
-  source?: "twitch" | "bttv" | "ffz";
+  source?: "twitch" | "bttv" | "ffz" | "7tv";
 }
 
 export function buildMessageParts(

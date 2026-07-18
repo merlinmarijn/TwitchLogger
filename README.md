@@ -2,7 +2,7 @@
 
 A TypeScript chat-monitoring dashboard backed by Convex. Twitch messages arrive through the current `channel.chat.message` EventSub WebSocket subscription; the integration does not use IRC, deprecated chat APIs, or polling.
 
-The live feed renders native Twitch emotes from EventSub message fragments, resolves BTTV and FrankerFaceZ global/channel emotes, and displays each chatter's Twitch badges. Artwork catalogs are cached for 15 minutes; an unavailable provider falls back to the original message text or textual badge labels without interrupting ingestion or the feed.
+The live feed renders native Twitch emotes from EventSub message fragments, resolves BTTV, FrankerFaceZ, and 7TV global/channel emotes, and displays each chatter's Twitch badges. Artwork catalogs are cached for 15 minutes; an unavailable provider falls back to the original message text or textual badge labels without interrupting ingestion or the feed.
 
 The Filters tab provides reusable, browser-persisted filter presets. Each preset can match all or any sender, message, channel, role, badge, or message-type conditions and then show only, hide, or highlight matching messages. Text conditions support validated regular expressions, including `/pattern/flags` notation. Starter recipes make common filters available without configuring rules manually.
 

@@ -8,7 +8,6 @@ interface PaginateMatchingOptions<T> {
   selectionActive: boolean;
   matches: (value: T) => boolean;
   loadPage: (paginationOpts: PaginationOptions) => Promise<PaginationResult<T>>;
-  canContinue?: () => boolean | Promise<boolean>;
 }
 
 export interface MatchingPaginationResult<T> extends PaginationResult<T> {
@@ -26,7 +25,6 @@ export async function paginateMatching<T>({
   selectionActive,
   matches,
   loadPage,
-  canContinue = () => true,
 }: PaginateMatchingOptions<T>): Promise<MatchingPaginationResult<T>> {
   if (!selectionActive) {
     const result = await loadPage(paginationOpts);
@@ -56,7 +54,6 @@ export async function paginateMatching<T>({
 
     if (matchingPage.length >= targetItems || result.isDone || result.page.length === 0 ||
         result.pageStatus === "SplitRequired") break;
-    if (!(await canContinue())) break;
     cursor = result.continueCursor;
   }
 

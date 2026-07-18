@@ -1,4 +1,4 @@
-import { paginationOptsValidator, type TransactionMetrics } from "convex/server";
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./functions";
@@ -15,9 +15,6 @@ import {
 } from "./lib/messageFilters";
 import { paginateMatching } from "./lib/messagePagination";
 import { extractImageUrls } from "../shared/imageUrls";
-
-const FILTER_SCAN_MINIMUM_BYTES_REMAINING = 2 * 1024 * 1024;
-const FILTER_SCAN_MINIMUM_DOCUMENTS_REMAINING = 100;
 
 const badgeValidator = v.object({
   setId: v.string(),
@@ -80,7 +77,6 @@ export const page = query({
       selectionActive: hasMessageSelection(criteria),
       matches: (message) => matchesCriteria(message, criteria),
       loadPage,
-      canContinue: () => hasFilterScanHeadroom(ctx.meta.getTransactionMetrics()),
     });
 
     return { ...result, page: result.page.map(toClientMessage) };
@@ -118,7 +114,6 @@ export const pageImages = query({
       selectionActive: hasMessageSelection(criteria),
       matches: (message) => matchesCriteria(message, criteria),
       loadPage,
-      canContinue: () => hasFilterScanHeadroom(ctx.meta.getTransactionMetrics()),
     });
 
     return {
@@ -130,15 +125,6 @@ export const pageImages = query({
     };
   },
 });
-
-async function hasFilterScanHeadroom(
-  metricsPromise: Promise<TransactionMetrics>,
-) {
-  const metrics = await metricsPromise;
-  return metrics.bytesRead.remaining >= FILTER_SCAN_MINIMUM_BYTES_REMAINING &&
-    metrics.documentsRead.remaining >= FILTER_SCAN_MINIMUM_DOCUMENTS_REMAINING &&
-    metrics.databaseQueries.remaining > 1;
-}
 
 export const filterMatchCounts = query({
   args: {

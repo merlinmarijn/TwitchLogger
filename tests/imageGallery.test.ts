@@ -48,4 +48,17 @@ describe("image gallery", () => {
       "https://example.test/old.png",
     ]);
   });
+
+  it("uses image URLs precomputed by the gallery query", () => {
+    const message = {
+      _id: "indexed",
+      imageUrls: ["https://example.test/from-query.png"],
+      messageText: "This text no longer needs to be parsed in the browser",
+      timestamp: 1,
+    } as ChatMessage;
+
+    expect(buildGalleryImages([message]).map((image) => image.url)).toEqual([
+      "https://example.test/from-query.png",
+    ]);
+  });
 });

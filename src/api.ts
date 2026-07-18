@@ -1,4 +1,8 @@
-import { makeFunctionReference } from "convex/server";
+import {
+  makeFunctionReference,
+  type PaginationOptions,
+  type PaginationResult,
+} from "convex/server";
 
 export interface Channel {
   _id: string;
@@ -36,6 +40,7 @@ export interface ChatMessage {
   isSubscriber: boolean;
   isVip: boolean;
   messageType: string;
+  imageUrls?: string[];
   metadata?: {
     fragments?: unknown;
     [key: string]: unknown;
@@ -84,5 +89,15 @@ export const api = {
       { channelId?: string; limit?: number },
       ChatMessage[]
     >("messages:listRecent"),
+    page: makeFunctionReference<
+      "query",
+      { channelId?: string; paginationOpts: PaginationOptions },
+      PaginationResult<ChatMessage>
+    >("messages:page"),
+    pageImages: makeFunctionReference<
+      "query",
+      { channelId?: string; paginationOpts: PaginationOptions },
+      PaginationResult<ChatMessage>
+    >("messages:pageImages"),
   },
 };

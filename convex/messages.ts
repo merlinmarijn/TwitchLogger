@@ -2,6 +2,7 @@ import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { mutation, query } from "./functions";
 import { requireIngestionSecret } from "./lib/ingestionAuth";
+import { extractImageUrls } from "../shared/imageUrls";
 
 const badgeValidator = v.object({
   setId: v.string(),
@@ -53,6 +54,58 @@ export const page = query({
       .withIndex("by_timestamp")
       .order("desc")
       .paginate(args.paginationOpts);
+  },
+});
+
+export const pageImages = query({
+  args: {
+    channelId: v.optional(v.id("channels")),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const result = args.channelId
+      ? await ctx.db
+          .query("chatMessages")
+          .withIndex("by_channel_timestamp", (q) =>
+            q.eq("channelId", args.channelId!),
+          )
+          .order("desc")
+          .paginate(args.paginationOpts)
+      : await ctx.db
+          .query("chatMessages")
+          .withIndex("by_timestamp")
+          .order("desc")
+          .paginate(args.paginationOpts);
+
+    return {
+      ...result,
+      page: result.page.flatMap((message) => {
+        const imageUrls = extractImageUrls(message.messageText);
+        if (imageUrls.length === 0) return [];
+
+        return [{
+          _id: message._id,
+          channelId: message.channelId,
+          platform: message.platform,
+          externalMessageId: message.externalMessageId,
+          externalChannelId: message.externalChannelId,
+          channelName: message.channelName,
+          senderId: message.senderId,
+          senderUsername: message.senderUsername,
+          senderDisplayName: message.senderDisplayName,
+          messageText: message.messageText,
+          timestamp: message.timestamp,
+          badges: message.badges,
+          userColor: message.userColor,
+          isBroadcaster: message.isBroadcaster,
+          isModerator: message.isModerator,
+          isSubscriber: message.isSubscriber,
+          isVip: message.isVip,
+          messageType: message.messageType,
+          imageUrls,
+        }];
+      }),
+    };
   },
 });
 

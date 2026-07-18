@@ -3,11 +3,17 @@ import {
   type ErrorInfo,
   type ReactNode,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { useMutation, useQuery } from "convex/react";
+import {
+  useMutation,
+  usePaginatedQuery,
+  useQuery,
+  type PaginationStatus,
+} from "convex/react";
 import {
   api,
   type Channel,
@@ -65,13 +71,6 @@ function loadSavedChatTabs() {
 export default function App() {
   const channels = useQuery(api.channels.list, {}) ?? [];
   const [selectedChannelId, setSelectedChannelId] = useState<string>();
-  const selectedChannel = channels.find((channel) => channel._id === selectedChannelId);
-  const queriedMessages = useQuery(api.messages.listRecent, {
-    ...(selectedChannelId ? { channelId: selectedChannelId } : {}),
-    limit: 350,
-  });
-  const messages = useMemo(() => queriedMessages ?? [], [queriedMessages]);
-  const ensureSeeded = useMutation(api.platforms.ensureSeeded);
   const [view, setView] = useState<"chat" | "filters">("chat");
   const [quickSearch, setQuickSearch] = useState("");
   const [filterState, setFilterState] = useState<FilterState>(loadSavedFilterState);
@@ -84,6 +83,30 @@ export default function App() {
   const [auth, setAuth] = useState<AuthStatus>();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [notice, setNotice] = useState<string>();
+  const selectedChannel = channels.find((channel) => channel._id === selectedChannelId);
+  const activeChatTab = chatTabs.find((tab) => tab.id === activeChatTabId);
+  const galleryActive = view === "chat" && activeChatTab?.layout === "gallery";
+  const queryArgs = useMemo(
+    () => selectedChannelId ? { channelId: selectedChannelId } : {},
+    [selectedChannelId],
+  );
+  const recentQuery = usePaginatedQuery(
+    api.messages.page,
+    galleryActive ? "skip" : queryArgs,
+    { initialNumItems: 350 },
+  );
+  const galleryQuery = usePaginatedQuery(
+    api.messages.pageImages,
+    galleryActive ? queryArgs : "skip",
+    { initialNumItems: 200 },
+  );
+  const messages: ChatMessage[] = useMemo(
+    () => galleryActive
+      ? galleryQuery.results
+      : [...recentQuery.results].reverse(),
+    [galleryActive, galleryQuery.results, recentQuery.results],
+  );
+  const ensureSeeded = useMutation(api.platforms.ensureSeeded);
   const emotesByChannel = useThirdPartyEmotes(channels);
   const badgesByChannel = useTwitchBadges(channels);
 
@@ -119,7 +142,6 @@ export default function App() {
     const activeIds = new Set(filterState.activeIds);
     return filterState.filters.filter((filter) => activeIds.has(filter.id));
   }, [filterState]);
-  const activeChatTab = chatTabs.find((tab) => tab.id === activeChatTabId);
   const viewFilters = useMemo(
     () => activeChatTab
       ? [...activeFilters, chatTabAsFilter(activeChatTab)]
@@ -239,17 +261,20 @@ export default function App() {
                 />
                 {activeChatTab?.layout === "gallery" ? (
                   <ImageGallery
-                    loading={queriedMessages === undefined}
+                    loadMore={galleryQuery.loadMore}
                     messages={filtered.messages}
+                    paused={paused}
+                    status={galleryQuery.status}
                   />
                 ) : (
                   <MessageFeed
                     badgesByChannel={badgesByChannel}
                     emotesByChannel={emotesByChannel}
                     highlightedIds={filtered.highlightedIds}
-                    loading={queriedMessages === undefined}
+                    loadMore={recentQuery.loadMore}
                     messages={filtered.messages}
                     paused={paused}
+                    status={recentQuery.status}
                   />
                 )}
               </>
@@ -443,20 +468,24 @@ function FeedToolbar({
 
 function MessageFeed({
   messages,
-  loading,
   paused,
   highlightedIds,
   emotesByChannel,
   badgesByChannel,
+  loadMore,
+  status,
 }: {
   messages: ChatMessage[];
-  loading: boolean;
   paused: boolean;
   highlightedIds: ReadonlySet<string>;
   emotesByChannel: ReadonlyMap<string, ReadonlyMap<string, ThirdPartyEmote>>;
   badgesByChannel: ReadonlyMap<string, ReadonlyMap<string, ChatBadgeDefinition>>;
+  loadMore: (numItems: number) => void;
+  status: PaginationStatus;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const historyTriggerRef = useRef<HTMLDivElement>(null);
+  const previousScrollHeightRef = useRef<number | undefined>(undefined);
   const [followNewest, setFollowNewest] = useState(true);
 
   useEffect(() => {
@@ -464,6 +493,30 @@ function MessageFeed({
       viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight });
     }
   }, [messages, followNewest, paused]);
+
+  useLayoutEffect(() => {
+    if (status === "LoadingMore" || previousScrollHeightRef.current === undefined) return;
+    const viewport = viewportRef.current;
+    if (viewport) {
+      viewport.scrollTop += viewport.scrollHeight - previousScrollHeightRef.current;
+    }
+    previousScrollHeightRef.current = undefined;
+  }, [messages.length, status]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const trigger = historyTriggerRef.current;
+    if (!viewport || !trigger || paused || status !== "CanLoadMore") return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting) ||
+          previousScrollHeightRef.current !== undefined) return;
+      previousScrollHeightRef.current = viewport.scrollHeight;
+      loadMore(200);
+    }, { root: viewport, rootMargin: "120px 0px 0px" });
+    observer.observe(trigger);
+    return () => observer.disconnect();
+  }, [loadMore, paused, status]);
 
   const handleScroll = () => {
     const element = viewportRef.current;
@@ -474,13 +527,32 @@ function MessageFeed({
   return (
     <div className="feed-wrap">
       <div className="message-feed" ref={viewportRef} onScroll={handleScroll}>
-        {loading ? (
+        <div className="history-loader" ref={historyTriggerRef}>
+          {paused ? (
+            <span>History loading paused</span>
+          ) : status === "LoadingMore" ? (
+            <span>Loading older messages…</span>
+          ) : status === "CanLoadMore" ? (
+            <button
+              className="button"
+              onClick={() => {
+                previousScrollHeightRef.current = viewportRef.current?.scrollHeight;
+                loadMore(200);
+              }}
+            >
+              Load older messages
+            </button>
+          ) : null}
+        </div>
+        {status === "LoadingFirstPage" ? (
           <div className="empty">Loading messages…</div>
         ) : messages.length === 0 ? (
           <div className="empty">
             <span className="empty-icon">⌁</span>
-            <strong>No messages to show</strong>
-            <span>New public chat messages appear here after the connection starts.</span>
+            <strong>{status === "Exhausted" ? "No messages to show" : "Searching history…"}</strong>
+            <span>{status === "Exhausted"
+              ? "New public chat messages appear here after the connection starts."
+              : "Older messages are loading until a match is found."}</span>
           </div>
         ) : (
           messages.map((message) => (
@@ -514,18 +586,36 @@ function MessageFeed({
 
 function ImageGallery({
   messages,
-  loading,
+  loadMore,
+  paused,
+  status,
 }: {
   messages: ChatMessage[];
-  loading: boolean;
+  loadMore: (numItems: number) => void;
+  paused: boolean;
+  status: PaginationStatus;
 }) {
   const images = useMemo(() => buildGalleryImages(messages), [messages]);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const historyTriggerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const trigger = historyTriggerRef.current;
+    if (!viewport || !trigger || paused || status !== "CanLoadMore") return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadMore(200);
+    }, { root: viewport, rootMargin: "0px 0px 500px" });
+    observer.observe(trigger);
+    return () => observer.disconnect();
+  }, [loadMore, paused, status]);
 
   return (
-    <div className="image-gallery-wrap">
-      {loading ? (
+    <div className="image-gallery-wrap" ref={viewportRef}>
+      {status === "LoadingFirstPage" ? (
         <div className="empty">Loading artwork…</div>
-      ) : images.length === 0 ? (
+      ) : images.length === 0 && status === "Exhausted" ? (
         <div className="empty gallery-empty">
           <span aria-hidden="true" className="empty-icon gallery-empty-icon">+</span>
           <strong>No images found</strong>
@@ -535,13 +625,28 @@ function ImageGallery({
         <>
           <div className="gallery-summary">
             <strong>{images.length} {images.length === 1 ? "image" : "images"}</strong>
-            <span>Newest first</span>
+            <span>{paused
+              ? "Paused"
+              : status === "Exhausted"
+                ? "Complete history"
+                : "Newest first · loading history"}</span>
           </div>
           <div className="image-gallery">
             {images.map((image) => <GalleryCard image={image} key={image.id} />)}
           </div>
         </>
       )}
+      <div className="gallery-history-loader" ref={historyTriggerRef}>
+        {paused ? (
+          <span>History loading paused</span>
+        ) : status === "LoadingMore" ? (
+          <span>Loading older images…</span>
+        ) : status === "CanLoadMore" ? (
+          <button className="button" onClick={() => loadMore(200)}>Load older images</button>
+        ) : images.length > 0 ? (
+          <span>All saved images loaded</span>
+        ) : null}
+      </div>
     </div>
   );
 }

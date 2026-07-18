@@ -29,6 +29,7 @@ RUN npm ci --omit=dev --ignore-scripts=false \
     && npm cache clean --force
 
 COPY --from=build --chown=node:node /app/dist ./dist
+COPY --chown=node:node shared ./shared
 COPY --chown=node:node worker ./worker
 
 RUN mkdir -p /data \

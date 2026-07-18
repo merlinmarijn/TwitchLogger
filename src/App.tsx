@@ -1,5 +1,7 @@
 import {
   Component,
+  lazy,
+  Suspense,
   type ErrorInfo,
   type ReactNode,
   useEffect,
@@ -33,7 +35,6 @@ import {
   renderMessageParts,
   type ThirdPartyEmote,
 } from "./emotes";
-import FilterWorkspace from "./FilterWorkspace";
 import { buildGalleryImages, type GalleryImage } from "./imageGallery";
 import {
   applyMessageFilters,
@@ -44,6 +45,10 @@ import {
   type MessageFilter,
 } from "./filters";
 import { workerUrl } from "./runtimeConfig";
+
+const FilterWorkspace = lazy(() => import("./FilterWorkspace"));
+const INITIAL_MESSAGE_COUNT = 50;
+const HISTORY_PAGE_SIZE = 100;
 
 interface AuthStatus {
   configured?: boolean;
@@ -93,12 +98,12 @@ export default function App() {
   const recentQuery = usePaginatedQuery(
     api.messages.page,
     galleryActive ? "skip" : queryArgs,
-    { initialNumItems: 350 },
+    { initialNumItems: INITIAL_MESSAGE_COUNT },
   );
   const galleryQuery = usePaginatedQuery(
     api.messages.pageImages,
     galleryActive ? queryArgs : "skip",
-    { initialNumItems: 200 },
+    { initialNumItems: 50 },
   );
   const messages: ChatMessage[] = useMemo(
     () => galleryActive
@@ -107,8 +112,12 @@ export default function App() {
     [galleryActive, galleryQuery.results, recentQuery.results],
   );
   const ensureSeeded = useMutation(api.platforms.ensureSeeded);
-  const emotesByChannel = useThirdPartyEmotes(channels);
-  const badgesByChannel = useTwitchBadges(channels);
+  const visibleChannelIds = useMemo(
+    () => [...new Set(messages.map((message) => message.externalChannelId))],
+    [messages],
+  );
+  const emotesByChannel = useThirdPartyEmotes(visibleChannelIds);
+  const badgesByChannel = useTwitchBadges(visibleChannelIds);
 
   useEffect(() => {
     void ensureSeeded({});
@@ -279,14 +288,16 @@ export default function App() {
                 )}
               </>
             ) : (
-              <FilterWorkspace
-                activeIds={filterState.activeIds}
-                filters={filterState.filters}
-                messages={sourceMessages}
-                onDelete={deleteFilter}
-                onSave={saveFilter}
-                onToggle={toggleFilter}
-              />
+              <Suspense fallback={<div className="empty">Loading filter tools…</div>}>
+                <FilterWorkspace
+                  activeIds={filterState.activeIds}
+                  filters={filterState.filters}
+                  messages={sourceMessages}
+                  onDelete={deleteFilter}
+                  onSave={saveFilter}
+                  onToggle={toggleFilter}
+                />
+              </Suspense>
             )}
           </section>
         </main>
@@ -512,7 +523,7 @@ function MessageFeed({
       if (!entries.some((entry) => entry.isIntersecting) ||
           previousScrollHeightRef.current !== undefined) return;
       previousScrollHeightRef.current = viewport.scrollHeight;
-      loadMore(200);
+      loadMore(HISTORY_PAGE_SIZE);
     }, { root: viewport, rootMargin: "120px 0px 0px" });
     observer.observe(trigger);
     return () => observer.disconnect();
@@ -537,7 +548,7 @@ function MessageFeed({
               className="button"
               onClick={() => {
                 previousScrollHeightRef.current = viewportRef.current?.scrollHeight;
-                loadMore(200);
+                loadMore(HISTORY_PAGE_SIZE);
               }}
             >
               Load older messages
@@ -608,7 +619,7 @@ function ImageGallery({
     if (!viewport || !trigger || paused || status !== "CanLoadMore") return;
 
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) loadMore(200);
+      if (entries.some((entry) => entry.isIntersecting)) loadMore(HISTORY_PAGE_SIZE);
     }, { root: viewport, rootMargin: "0px 0px 500px" });
     observer.observe(trigger);
     return () => observer.disconnect();
@@ -645,7 +656,7 @@ function ImageGallery({
         ) : status === "LoadingMore" ? (
           <span>Loading older images…</span>
         ) : status === "CanLoadMore" ? (
-          <button className="button" onClick={() => loadMore(200)}>Load older images</button>
+          <button className="button" onClick={() => loadMore(HISTORY_PAGE_SIZE)}>Load older images</button>
         ) : images.length > 0 ? (
           <span>All saved images loaded</span>
         ) : null}
@@ -764,17 +775,14 @@ function badgeLabel(setId: string) {
   return labels[setId] ?? setId.replaceAll("-", " ");
 }
 
-function useThirdPartyEmotes(channels: Channel[]) {
+function useThirdPartyEmotes(channelIds: string[]) {
   const [catalogs, setCatalogs] = useState(
     () => new Map<string, ReadonlyMap<string, ThirdPartyEmote>>(),
   );
-  const channelIds = channels
-    .flatMap((channel) => channel.externalChannelId ?? [])
-    .sort()
-    .join(",");
+  const channelIdKey = [...channelIds].sort().join(",");
 
   useEffect(() => {
-    const ids = channelIds ? channelIds.split(",") : [];
+    const ids = channelIdKey ? channelIdKey.split(",") : [];
     if (ids.length === 0) return;
     const controller = new AbortController();
     void Promise.all(
@@ -787,29 +795,26 @@ function useThirdPartyEmotes(channels: Channel[]) {
         return [id, new Map((body.emotes ?? []).map((emote) => [emote.name, emote]))] as const;
       }),
     )
-      .then((entries) => setCatalogs(new Map(entries)))
+      .then((entries) => setCatalogs((current) => new Map([...current, ...entries])))
       .catch((error: unknown) => {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
           console.warn("Third-party emotes are unavailable; showing message text", error);
         }
       });
     return () => controller.abort();
-  }, [channelIds]);
+  }, [channelIdKey]);
 
   return catalogs;
 }
 
-function useTwitchBadges(channels: Channel[]) {
+function useTwitchBadges(channelIds: string[]) {
   const [catalogs, setCatalogs] = useState(
     () => new Map<string, ReadonlyMap<string, ChatBadgeDefinition>>(),
   );
-  const channelIds = channels
-    .flatMap((channel) => channel.externalChannelId ?? [])
-    .sort()
-    .join(",");
+  const channelIdKey = [...channelIds].sort().join(",");
 
   useEffect(() => {
-    const ids = channelIds ? channelIds.split(",") : [];
+    const ids = channelIdKey ? channelIdKey.split(",") : [];
     if (ids.length === 0) return;
     const controller = new AbortController();
     const load = async () => {
@@ -848,7 +853,7 @@ function useTwitchBadges(channels: Channel[]) {
       controller.abort();
       window.clearTimeout(retry);
     };
-  }, [channelIds]);
+  }, [channelIdKey]);
 
   return catalogs;
 }

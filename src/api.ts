@@ -23,12 +23,8 @@ export interface Channel {
 
 export interface ChatMessage {
   _id: string;
-  channelId: string;
-  platform: "twitch";
-  externalMessageId: string;
   externalChannelId: string;
   channelName: string;
-  senderId: string;
   senderUsername: string;
   senderDisplayName: string;
   messageText: string;

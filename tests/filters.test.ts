@@ -115,12 +115,8 @@ function makeFilter(overrides: Partial<MessageFilter>): MessageFilter {
 function makeMessage(overrides: Partial<ChatMessage>): ChatMessage {
   return {
     _id: "message",
-    channelId: "channel-id",
-    platform: "twitch",
-    externalMessageId: "external-message",
     externalChannelId: "100",
     channelName: "channel",
-    senderId: "sender-id",
     senderUsername: "viewer",
     senderDisplayName: "Viewer",
     messageText: "message",

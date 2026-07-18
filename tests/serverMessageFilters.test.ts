@@ -67,44 +67,73 @@ describe("server message filtering", () => {
 });
 
 describe("server filtered pagination", () => {
-  it("scans raw pages until it can return matching results", async () => {
-    const rawPages = [
-      [makeMessage({ _id: "one" })],
-      [makeMessage({ _id: "two" })],
-      [makeMessage({ _id: "match", isModerator: true })],
-    ];
+  it("filters one bounded raw page on the server", async () => {
     let call = 0;
+    let receivedOptions: { cursor: string | null; numItems: number } | undefined;
 
-    const result = await paginateMatching({
+    const result = await paginateMatching<ChatMessage>({
       paginationOpts: { cursor: null, numItems: 1 },
       selectionActive: true,
       matches: (message) => message.isModerator,
-      loadPage: async () => {
-        const page = rawPages[call] ?? [];
+      loadPage: async (options) => {
         call += 1;
+        receivedOptions = options;
         return {
-          page,
-          continueCursor: `cursor-${call}`,
-          isDone: call >= rawPages.length,
+          page: [
+            makeMessage({ _id: "one" }),
+            makeMessage({ _id: "two" }),
+            makeMessage({ _id: "match", isModerator: true }),
+          ],
+          continueCursor: "next-raw-page",
+          isDone: false,
         };
       },
     });
 
     expect(result.page.map((message) => message._id)).toEqual(["match"]);
     expect(result.scannedRows).toBe(3);
-    expect(call).toBe(3);
+    expect(result.scanLimitReached).toBe(true);
+    expect(receivedOptions).toEqual({
+      cursor: null,
+      numItems: FILTER_SCAN_ROW_LIMIT,
+    });
+    expect(call).toBe(1);
   });
 
-  it("stops an unproductive server scan at the safety limit", async () => {
+  it("returns every match before advancing the raw cursor", async () => {
+    const result = await paginateMatching<ChatMessage>({
+      paginationOpts: { cursor: null, numItems: 1 },
+      selectionActive: true,
+      matches: (message) => message.isModerator,
+      loadPage: async () => ({
+        page: [
+          makeMessage({ _id: "one", isModerator: true }),
+          makeMessage({ _id: "two", isModerator: true }),
+          makeMessage({ _id: "three", isModerator: true }),
+        ],
+        continueCursor: "after-all-three",
+        isDone: false,
+      }),
+    });
+
+    expect(result.page.map((message) => message._id)).toEqual([
+      "one",
+      "two",
+      "three",
+    ]);
+    expect(result.continueCursor).toBe("after-all-three");
+  });
+
+  it("returns an empty filtered page after one unproductive bounded scan", async () => {
     let call = 0;
-    const result = await paginateMatching({
+    const result = await paginateMatching<ChatMessage>({
       paginationOpts: { cursor: null, numItems: 100 },
       selectionActive: true,
       matches: () => false,
       loadPage: async () => {
         call += 1;
         return {
-          page: Array.from({ length: 100 }, (_, index) =>
+          page: Array.from({ length: FILTER_SCAN_ROW_LIMIT }, (_, index) =>
             makeMessage({ _id: `${call}-${index}` })),
           continueCursor: `cursor-${call}`,
           isDone: false,
@@ -115,7 +144,7 @@ describe("server filtered pagination", () => {
     expect(result.page).toEqual([]);
     expect(result.scannedRows).toBe(FILTER_SCAN_ROW_LIMIT);
     expect(result.scanLimitReached).toBe(true);
-    expect(call).toBe(10);
+    expect(call).toBe(1);
   });
 });
 

@@ -16,9 +16,9 @@ export interface MatchingPaginationResult<T> extends PaginationResult<T> {
 }
 
 /**
- * Fill a filtered page on the server without losing the raw continuation cursor.
- * Each raw batch is returned in full or discarded in full, so matching rows are
- * never skipped between calls.
+ * Scan one larger raw page and filter it on the server. Convex allows only one
+ * paginated query per function, so every match from the raw page must be
+ * returned before its continuation cursor advances.
  */
 export async function paginateMatching<T>({
   paginationOpts,
@@ -35,33 +35,14 @@ export async function paginateMatching<T>({
     };
   }
 
-  const targetItems = paginationOpts.numItems;
-  const batchSize = Math.min(targetItems, 100);
-  const matchingPage: T[] = [];
-  let scannedRows = 0;
-  let cursor = paginationOpts.cursor;
-  let lastResult: PaginationResult<T> | undefined;
-
-  while (scannedRows < FILTER_SCAN_ROW_LIMIT) {
-    const result = await loadPage({
-      ...paginationOpts,
-      cursor,
-      numItems: Math.min(batchSize, FILTER_SCAN_ROW_LIMIT - scannedRows),
-    });
-    lastResult = result;
-    scannedRows += result.page.length;
-    matchingPage.push(...result.page.filter(matches));
-
-    if (matchingPage.length >= targetItems || result.isDone || result.page.length === 0 ||
-        result.pageStatus === "SplitRequired") break;
-    cursor = result.continueCursor;
-  }
-
-  if (!lastResult) throw new Error("Filtered pagination did not read a page");
+  const result = await loadPage({
+    ...paginationOpts,
+    numItems: FILTER_SCAN_ROW_LIMIT,
+  });
   return {
-    ...lastResult,
-    page: matchingPage,
-    scannedRows,
-    scanLimitReached: !lastResult.isDone && matchingPage.length < targetItems,
+    ...result,
+    page: result.page.filter(matches),
+    scannedRows: result.page.length,
+    scanLimitReached: !result.isDone,
   };
 }

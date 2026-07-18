@@ -11,6 +11,9 @@ export interface ChatViewTab {
   layout: "chat" | "gallery";
   match: FilterMatchMode;
   rules: FilterRule[];
+  revision?: number;
+  indexedRevision?: number;
+  indexStatus?: "building" | "ready";
 }
 
 export const CHAT_TABS_STORAGE_KEY = "twitch-logs.chat-tabs.v1";

@@ -4,6 +4,7 @@ import {
   type PaginationResult,
 } from "convex/server";
 import type { MessageFilter } from "../shared/messageFilters";
+import type { ChatViewTab } from "./chatTabModel";
 
 export interface Channel {
   _id: string;
@@ -80,6 +81,22 @@ export const api = {
     ),
     remove: makeFunctionReference<"mutation", { id: string }, null>("channels:remove"),
   },
+  chatTabs: {
+    list: makeFunctionReference<"query", Record<string, never>, ChatViewTab[]>(
+      "chatTabs:list",
+    ),
+    save: makeFunctionReference<
+      "mutation",
+      { tab: Pick<ChatViewTab, "id" | "name" | "layout" | "match" | "rules"> },
+      null
+    >("chatTabs:save"),
+    importLocal: makeFunctionReference<
+      "mutation",
+      { tabs: Array<Pick<ChatViewTab, "id" | "name" | "layout" | "match" | "rules">> },
+      null
+    >("chatTabs:importLocal"),
+    remove: makeFunctionReference<"mutation", { id: string }, null>("chatTabs:remove"),
+  },
   messages: {
     listRecent: makeFunctionReference<
       "query",
@@ -90,6 +107,9 @@ export const api = {
       "query",
       {
         channelId?: string;
+        tabId?: string;
+        tabRevision?: number;
+        tabIndexRevision?: number;
         paginationOpts: PaginationOptions;
         quickSearch?: string;
         filters?: MessageFilter[];
@@ -101,6 +121,9 @@ export const api = {
       "query",
       {
         channelId?: string;
+        tabId?: string;
+        tabRevision?: number;
+        tabIndexRevision?: number;
         paginationOpts: PaginationOptions;
         quickSearch?: string;
         filters?: MessageFilter[];

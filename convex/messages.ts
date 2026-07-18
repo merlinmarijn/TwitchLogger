@@ -1,7 +1,13 @@
 import { paginationOptsValidator } from "convex/server";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./functions";
+import {
+  findTabByClientId,
+  indexMessageForTabs,
+  loadIndexedTabMessages,
+  tabAsMessageFilter,
+} from "./chatTabs";
 import { toClientMessage } from "./lib/clientMessage";
 import { requireIngestionSecret } from "./lib/ingestionAuth";
 import {
@@ -49,29 +55,49 @@ export const listRecent = query({
 export const page = query({
   args: {
     channelId: v.optional(v.id("channels")),
+    tabId: v.optional(v.string()),
+    tabRevision: v.optional(v.number()),
+    tabIndexRevision: v.optional(v.number()),
     paginationOpts: paginationOptsValidator,
     ...messageCriteriaValidators,
   },
   handler: async (ctx, args) => {
     validateMessagePageSize(args.paginationOpts.numItems);
-    const criteria = validateMessageCriteria(args);
-    const loadPage = (paginationOpts: typeof args.paginationOpts) => args.channelId
-      ? ctx.db
-        .query("chatMessages")
-        .withIndex("by_channel_timestamp", (q) =>
-          criteria.afterTimestamp
-            ? q.eq("channelId", args.channelId!).gt("timestamp", criteria.afterTimestamp)
-            : q.eq("channelId", args.channelId!),
-        )
-        .order("desc")
-        .paginate(paginationOpts)
-      : ctx.db
-        .query("chatMessages")
-        .withIndex("by_timestamp", (q) => criteria.afterTimestamp
-          ? q.gt("timestamp", criteria.afterTimestamp)
-          : q)
-        .order("desc")
-        .paginate(paginationOpts);
+    const baseCriteria = validateMessageCriteria(args);
+    const tab = args.tabId ? await findTabByClientId(ctx, args.tabId) : null;
+    if (args.tabId && !tab) throw new ConvexError("Unknown chat tab");
+    const indexedRevision = tab && (args.tabIndexRevision ?? 0) > 0
+      ? args.tabIndexRevision
+      : undefined;
+    const criteria = tab && indexedRevision === undefined
+      ? { ...baseCriteria, filters: [...baseCriteria.filters, tabAsMessageFilter(tab)] }
+      : baseCriteria;
+    const loadPage = indexedRevision !== undefined && tab
+      ? (paginationOpts: typeof args.paginationOpts) => loadIndexedTabMessages(ctx, {
+          tab,
+          revision: indexedRevision,
+          paginationOpts,
+          channelId: args.channelId,
+          afterTimestamp: criteria.afterTimestamp,
+          imagesOnly: false,
+        })
+      : (paginationOpts: typeof args.paginationOpts) => args.channelId
+        ? ctx.db
+          .query("chatMessages")
+          .withIndex("by_channel_timestamp", (q) =>
+            criteria.afterTimestamp
+              ? q.eq("channelId", args.channelId!).gt("timestamp", criteria.afterTimestamp)
+              : q.eq("channelId", args.channelId!),
+          )
+          .order("desc")
+          .paginate(paginationOpts)
+        : ctx.db
+          .query("chatMessages")
+          .withIndex("by_timestamp", (q) => criteria.afterTimestamp
+            ? q.gt("timestamp", criteria.afterTimestamp)
+            : q)
+          .order("desc")
+          .paginate(paginationOpts);
     const result = await paginateMatching({
       paginationOpts: args.paginationOpts,
       selectionActive: hasMessageSelection(criteria),
@@ -86,29 +112,49 @@ export const page = query({
 export const pageImages = query({
   args: {
     channelId: v.optional(v.id("channels")),
+    tabId: v.optional(v.string()),
+    tabRevision: v.optional(v.number()),
+    tabIndexRevision: v.optional(v.number()),
     paginationOpts: paginationOptsValidator,
     ...messageCriteriaValidators,
   },
   handler: async (ctx, args) => {
     validateMessagePageSize(args.paginationOpts.numItems);
-    const criteria = validateMessageCriteria(args);
-    const loadPage = (paginationOpts: typeof args.paginationOpts) => args.channelId
-      ? ctx.db
-          .query("chatMessages")
-          .withIndex("by_gallery_channel_timestamp", (q) =>
-            criteria.afterTimestamp
-              ? q.eq("galleryChannelId", args.channelId!).gt("timestamp", criteria.afterTimestamp)
-              : q.eq("galleryChannelId", args.channelId!),
-          )
-          .order("desc")
-          .paginate(paginationOpts)
-      : ctx.db
-          .query("chatMessages")
-          .withIndex("by_has_images_timestamp", (q) => criteria.afterTimestamp
-            ? q.eq("hasImages", true).gt("timestamp", criteria.afterTimestamp)
-            : q.eq("hasImages", true))
-          .order("desc")
-          .paginate(paginationOpts);
+    const baseCriteria = validateMessageCriteria(args);
+    const tab = args.tabId ? await findTabByClientId(ctx, args.tabId) : null;
+    if (args.tabId && !tab) throw new ConvexError("Unknown chat tab");
+    const indexedRevision = tab && (args.tabIndexRevision ?? 0) > 0
+      ? args.tabIndexRevision
+      : undefined;
+    const criteria = tab && indexedRevision === undefined
+      ? { ...baseCriteria, filters: [...baseCriteria.filters, tabAsMessageFilter(tab)] }
+      : baseCriteria;
+    const loadPage = indexedRevision !== undefined && tab
+      ? (paginationOpts: typeof args.paginationOpts) => loadIndexedTabMessages(ctx, {
+          tab,
+          revision: indexedRevision,
+          paginationOpts,
+          channelId: args.channelId,
+          afterTimestamp: criteria.afterTimestamp,
+          imagesOnly: true,
+        })
+      : (paginationOpts: typeof args.paginationOpts) => args.channelId
+        ? ctx.db
+            .query("chatMessages")
+            .withIndex("by_gallery_channel_timestamp", (q) =>
+              criteria.afterTimestamp
+                ? q.eq("galleryChannelId", args.channelId!).gt("timestamp", criteria.afterTimestamp)
+                : q.eq("galleryChannelId", args.channelId!),
+            )
+            .order("desc")
+            .paginate(paginationOpts)
+        : ctx.db
+            .query("chatMessages")
+            .withIndex("by_has_images_timestamp", (q) => criteria.afterTimestamp
+              ? q.eq("hasImages", true).gt("timestamp", criteria.afterTimestamp)
+              : q.eq("hasImages", true))
+            .order("desc")
+            .paginate(paginationOpts);
     const result = await paginateMatching({
       paginationOpts: args.paginationOpts,
       selectionActive: hasMessageSelection(criteria),
@@ -273,6 +319,8 @@ export const insertIncoming = mutation({
       connectionError: undefined,
       updatedAt: Date.now(),
     });
+    const insertedMessage = await ctx.db.get(id);
+    if (insertedMessage) await indexMessageForTabs(ctx, insertedMessage);
     return { inserted: true, id };
   },
 });

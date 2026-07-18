@@ -9,6 +9,31 @@ const connectionStatus = v.union(
   v.literal("authorization_required"),
 );
 
+const filterRule = v.object({
+  id: v.string(),
+  field: v.union(
+    v.literal("message"),
+    v.literal("sender"),
+    v.literal("channel"),
+    v.literal("role"),
+    v.literal("badge"),
+    v.literal("messageType"),
+  ),
+  operator: v.union(
+    v.literal("contains"),
+    v.literal("notContains"),
+    v.literal("equals"),
+    v.literal("notEquals"),
+    v.literal("startsWith"),
+    v.literal("endsWith"),
+    v.literal("wholeWord"),
+    v.literal("regex"),
+    v.literal("has"),
+    v.literal("notHas"),
+  ),
+  value: v.string(),
+});
+
 export default defineSchema({
   platforms: defineTable({
     name: v.string(),
@@ -35,6 +60,20 @@ export default defineSchema({
     .index("by_logging", ["loggingEnabled"])
     .index("by_last_message", ["lastMessageAt"])
     .index("by_external_id", ["externalChannelId"]),
+
+  chatTabs: defineTable({
+    clientId: v.string(),
+    name: v.string(),
+    layout: v.union(v.literal("chat"), v.literal("gallery")),
+    match: v.union(v.literal("all"), v.literal("any")),
+    rules: v.array(filterRule),
+    revision: v.number(),
+    indexedRevision: v.optional(v.number()),
+    indexStatus: v.union(v.literal("building"), v.literal("ready")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_client_id", ["clientId"]),
 
   chatMessages: defineTable({
     channelId: v.id("channels"),
@@ -81,4 +120,34 @@ export default defineSchema({
       searchField: "messageText",
       filterFields: ["channelId", "platform", "senderUsername"],
     }),
+
+  chatTabMatches: defineTable({
+    tabId: v.id("chatTabs"),
+    revision: v.number(),
+    messageId: v.id("chatMessages"),
+    channelId: v.id("channels"),
+    timestamp: v.number(),
+    hasImages: v.boolean(),
+  })
+    .index("by_tab_revision_timestamp", ["tabId", "revision", "timestamp"])
+    .index("by_tab_revision_channel_timestamp", [
+      "tabId",
+      "revision",
+      "channelId",
+      "timestamp",
+    ])
+    .index("by_tab_revision_images_timestamp", [
+      "tabId",
+      "revision",
+      "hasImages",
+      "timestamp",
+    ])
+    .index("by_tab_revision_channel_images_timestamp", [
+      "tabId",
+      "revision",
+      "channelId",
+      "hasImages",
+      "timestamp",
+    ])
+    .index("by_tab_revision_message", ["tabId", "revision", "messageId"]),
 });

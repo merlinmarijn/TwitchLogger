@@ -7,6 +7,7 @@ import {
   type ChatViewTab,
 } from "../src/chatTabModel";
 import { applyMessageFilters } from "../src/filters";
+import { tabConditionsKey, tabMatchesMessage } from "../convex/chatTabs";
 
 const tab: ChatViewTab = {
   id: "images",
@@ -66,5 +67,16 @@ describe("chat tabs", () => {
 
     expect(applyMessageFilters(messages, "", [chatTabAsFilter(tab)]).messages)
       .toEqual([messages[0]]);
+    expect(tabMatchesMessage(tab, messages[0])).toBe(true);
+    expect(tabMatchesMessage(tab, messages[1])).toBe(false);
+  });
+
+  it("rebuilds only when matching conditions change", () => {
+    const renamedAndRelayouted = { ...tab, name: "Renamed", layout: "chat" as const };
+    expect(tabConditionsKey(renamedAndRelayouted)).toBe(tabConditionsKey(tab));
+    expect(tabConditionsKey({
+      ...tab,
+      rules: [{ ...tab.rules[0], value: "\\.webp$" }],
+    })).not.toBe(tabConditionsKey(tab));
   });
 });

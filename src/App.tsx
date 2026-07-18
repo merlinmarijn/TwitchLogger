@@ -27,7 +27,6 @@ import {
   CHAT_TABS_STORAGE_KEY,
   chatTabAsFilter,
   parseChatTabs,
-  serializeChatTabs,
   type ChatViewTab,
 } from "./chatTabModel";
 import {
@@ -74,14 +73,26 @@ function loadSavedChatTabs() {
   }
 }
 
+function tabInput(tab: ChatViewTab) {
+  return {
+    id: tab.id,
+    name: tab.name,
+    layout: tab.layout,
+    match: tab.match,
+    rules: tab.rules,
+  };
+}
+
 export default function App() {
   const channels = useQuery(api.channels.list, {}) ?? [];
+  const serverChatTabs = useQuery(api.chatTabs.list, {});
   const [selectedChannelId, setSelectedChannelId] = useState<string>();
   const [view, setView] = useState<"chat" | "filters">("chat");
   const [quickSearch, setQuickSearch] = useState("");
   const [querySearch, setQuerySearch] = useState("");
   const [filterState, setFilterState] = useState<FilterState>(loadSavedFilterState);
-  const [chatTabs, setChatTabs] = useState<ChatViewTab[]>(loadSavedChatTabs);
+  const [legacyChatTabs, setLegacyChatTabs] = useState<ChatViewTab[]>(loadSavedChatTabs);
+  const chatTabMigrationStartedRef = useRef(false);
   const [activeChatTabId, setActiveChatTabId] = useState("all");
   const [editingChatTab, setEditingChatTab] = useState<ChatViewTab | "new">();
   const [paused, setPaused] = useState(false);
@@ -91,8 +102,15 @@ export default function App() {
   const [auth, setAuth] = useState<AuthStatus>();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [notice, setNotice] = useState<string>();
+  const chatTabs = serverChatTabs === undefined ||
+      (serverChatTabs.length === 0 && legacyChatTabs.length > 0)
+    ? legacyChatTabs
+    : serverChatTabs;
   const selectedChannel = channels.find((channel) => channel._id === selectedChannelId);
   const activeChatTab = chatTabs.find((tab) => tab.id === activeChatTabId);
+  const activeTabIndexRevision = activeChatTab?.indexStatus === "ready"
+    ? activeChatTab.indexedRevision ?? 0
+    : 0;
   const activeFilters = useMemo(() => {
     const activeIds = new Set(filterState.activeIds);
     return filterState.filters.filter((filter) => activeIds.has(filter.id));
@@ -104,19 +122,32 @@ export default function App() {
     [activeFilters, activeChatTab],
   );
   const selectionFilters = useMemo(
-    () => viewFilters.filter((filter) => filter.action !== "highlight"),
-    [viewFilters],
+    () => activeFilters.filter((filter) => filter.action !== "highlight"),
+    [activeFilters],
   );
-  const serverFiltering = Boolean(querySearch.trim()) || selectionFilters.length > 0;
+  const serverFiltering = Boolean(activeChatTab) || Boolean(querySearch.trim()) ||
+    selectionFilters.length > 0;
   const galleryActive = view === "chat" && activeChatTab?.layout === "gallery";
   const queryArgs = useMemo(
     () => ({
       ...(selectedChannelId ? { channelId: selectedChannelId } : {}),
+      ...(activeChatTab ? {
+        tabId: activeChatTab.id,
+        tabRevision: activeChatTab.revision ?? 0,
+        tabIndexRevision: activeTabIndexRevision,
+      } : {}),
       ...(querySearch.trim() ? { quickSearch: querySearch } : {}),
       ...(selectionFilters.length > 0 ? { filters: selectionFilters } : {}),
       ...(clearBefore > 0 ? { afterTimestamp: clearBefore } : {}),
     }),
-    [selectedChannelId, querySearch, selectionFilters, clearBefore],
+    [
+      activeChatTab,
+      activeTabIndexRevision,
+      selectedChannelId,
+      querySearch,
+      selectionFilters,
+      clearBefore,
+    ],
   );
   const messageFeedKey = useMemo(() => JSON.stringify(queryArgs), [queryArgs]);
   const recentQuery = usePaginatedQuery(
@@ -157,6 +188,9 @@ export default function App() {
     [filterMatchCountResults],
   );
   const ensureSeeded = useMutation(api.platforms.ensureSeeded);
+  const importLocalChatTabs = useMutation(api.chatTabs.importLocal);
+  const saveChatTabMutation = useMutation(api.chatTabs.save);
+  const removeChatTabMutation = useMutation(api.chatTabs.remove);
   const visibleChannelIds = useMemo(
     () => galleryActive
       ? []
@@ -188,12 +222,19 @@ export default function App() {
   }, [filterState]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(CHAT_TABS_STORAGE_KEY, serializeChatTabs(chatTabs));
-    } catch (error) {
-      console.warn("Could not persist chat tabs", error);
-    }
-  }, [chatTabs]);
+    if (serverChatTabs === undefined || legacyChatTabs.length === 0 ||
+        chatTabMigrationStartedRef.current) return;
+    chatTabMigrationStartedRef.current = true;
+    void importLocalChatTabs({ tabs: legacyChatTabs.map(tabInput) })
+      .then(() => {
+        setLegacyChatTabs([]);
+        localStorage.removeItem(CHAT_TABS_STORAGE_KEY);
+      })
+      .catch((error: Error) => {
+        chatTabMigrationStartedRef.current = false;
+        setNotice(`Could not migrate chat tabs: ${error.message}`);
+      });
+  }, [importLocalChatTabs, legacyChatTabs, serverChatTabs]);
 
   const saveFilter = (filter: MessageFilter, apply: boolean) => {
     setFilterState((current) => {
@@ -225,17 +266,17 @@ export default function App() {
   };
 
   const saveChatTab = (tab: ChatViewTab) => {
-    setChatTabs((current) => current.some((candidate) => candidate.id === tab.id)
-      ? current.map((candidate) => candidate.id === tab.id ? tab : candidate)
-      : [...current, tab]);
     setActiveChatTabId(tab.id);
     setEditingChatTab(undefined);
+    void saveChatTabMutation({ tab: tabInput(tab) })
+      .catch((error: Error) => setNotice(`Could not save chat tab: ${error.message}`));
   };
 
   const deleteChatTab = (id: string) => {
-    setChatTabs((current) => current.filter((tab) => tab.id !== id));
     if (activeChatTabId === id) setActiveChatTabId("all");
     setEditingChatTab(undefined);
+    void removeChatTabMutation({ id })
+      .catch((error: Error) => setNotice(`Could not delete chat tab: ${error.message}`));
   };
 
   return (
@@ -298,7 +339,7 @@ export default function App() {
             {view === "chat" ? (
               <>
                 <ChatTabBar
-                  activeId={activeChatTabId}
+                  activeId={activeChatTab?.id ?? "all"}
                   tabs={chatTabs}
                   onAdd={() => setEditingChatTab("new")}
                   onEdit={setEditingChatTab}

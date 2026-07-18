@@ -8,7 +8,7 @@ import {
   type MessageFilter,
 } from "../../shared/messageFilters";
 
-const filterFieldValidator = v.union(
+export const filterFieldValidator = v.union(
   v.literal("message"),
   v.literal("sender"),
   v.literal("channel"),
@@ -16,7 +16,7 @@ const filterFieldValidator = v.union(
   v.literal("badge"),
   v.literal("messageType"),
 );
-const filterOperatorValidator = v.union(
+export const filterOperatorValidator = v.union(
   v.literal("contains"),
   v.literal("notContains"),
   v.literal("equals"),
@@ -29,17 +29,19 @@ const filterOperatorValidator = v.union(
   v.literal("notHas"),
 );
 
+export const filterRuleValidator = v.object({
+  id: v.string(),
+  field: filterFieldValidator,
+  operator: filterOperatorValidator,
+  value: v.string(),
+});
+
 export const messageFilterValidator = v.object({
   id: v.string(),
   name: v.string(),
   action: v.union(v.literal("show"), v.literal("hide"), v.literal("highlight")),
   match: v.union(v.literal("all"), v.literal("any")),
-  rules: v.array(v.object({
-    id: v.string(),
-    field: filterFieldValidator,
-    operator: filterOperatorValidator,
-    value: v.string(),
-  })),
+  rules: v.array(filterRuleValidator),
 });
 
 export const messageCriteriaValidators = {

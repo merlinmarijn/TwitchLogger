@@ -69,6 +69,11 @@ export class ThirdPartyEmoteService {
     return request;
   }
 
+  hasFreshCatalog(twitchChannelId: string) {
+    const cached = this.catalogs.get(twitchChannelId);
+    return Boolean(cached && cached.expiresAt > Date.now());
+  }
+
   private async loadCatalog(twitchChannelId: string): Promise<ThirdPartyEmote[]> {
     const requests = await Promise.all([
       this.fetchJson(`${BETTER_TTV_API}/emotes/global`),

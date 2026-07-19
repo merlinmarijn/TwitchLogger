@@ -1,13 +1,26 @@
-import { StrictMode } from "react";
+import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { ConvexProvider, ConvexReactClient } from "convex/react";
-import App from "./App";
 import { configurationIssues, convexUrl } from "./runtimeConfig";
 import "./styles.css";
 
 const root = createRoot(document.getElementById("root")!);
+// eslint-disable-next-line react-refresh/only-export-components
+const App = lazy(() => import("./App"));
+// eslint-disable-next-line react-refresh/only-export-components
+const AdminApp = lazy(() => import("./AdminApp"));
+const isAdminRoute = window.location.pathname === "/admin" ||
+  window.location.pathname.startsWith("/admin/");
 
-if (!convexUrl) {
+if (isAdminRoute) {
+  root.render(
+    <StrictMode>
+      <Suspense fallback={<main className="route-loader">Opening admin console…</main>}>
+        <AdminApp />
+      </Suspense>
+    </StrictMode>,
+  );
+} else if (!convexUrl) {
   root.render(
     <StrictMode>
       <main className="setup-required">
@@ -38,7 +51,9 @@ if (!convexUrl) {
   root.render(
     <StrictMode>
       <ConvexProvider client={convex}>
-        <App />
+        <Suspense fallback={<main className="route-loader">Opening Twitch Logs…</main>}>
+          <App />
+        </Suspense>
       </ConvexProvider>
     </StrictMode>,
   );

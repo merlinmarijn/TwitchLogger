@@ -6,6 +6,11 @@ type Environment = Record<string, string | undefined>;
 
 export interface LoadedConfiguration {
   options?: WorkerOptions;
+  adminOptions?: {
+    convexUrl: string;
+    ingestionSecret: string;
+    encryptionKey: Buffer;
+  };
   issues: string[];
   warnings: string[];
   port: number;
@@ -110,8 +115,13 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
         }
       : undefined;
 
+  const adminOptions = convexUrl && ingestionSecret && tokenEncryptionKey
+    ? { convexUrl, ingestionSecret, encryptionKey: tokenEncryptionKey }
+    : undefined;
+
   return {
     options,
+    adminOptions,
     issues,
     warnings,
     port,

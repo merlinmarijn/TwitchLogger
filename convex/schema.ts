@@ -34,6 +34,22 @@ const filterRule = v.object({
   value: v.string(),
 });
 
+const adminJobKind = v.union(
+  v.literal("image_reindex"),
+  v.literal("view_reindex"),
+  v.literal("integrity_scan"),
+  v.literal("database_measurement"),
+);
+
+const adminJobStatus = v.union(
+  v.literal("queued"),
+  v.literal("running"),
+  v.literal("cancelling"),
+  v.literal("cancelled"),
+  v.literal("completed"),
+  v.literal("failed"),
+);
+
 export default defineSchema({
   platforms: defineTable({
     name: v.string(),
@@ -152,4 +168,66 @@ export default defineSchema({
       "timestamp",
     ])
     .index("by_tab_revision_message", ["tabId", "revision", "messageId"]),
+
+  adminSettings: defineTable({
+    key: v.string(),
+    passwordHash: v.string(),
+    passwordSalt: v.string(),
+    passwordCost: v.number(),
+    totpSecretEncrypted: v.optional(v.string()),
+    totpEnabled: v.boolean(),
+    authRevision: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  adminJobs: defineTable({
+    kind: adminJobKind,
+    status: adminJobStatus,
+    title: v.string(),
+    detail: v.string(),
+    current: v.number(),
+    total: v.optional(v.number()),
+    unit: v.string(),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    metadata: v.optional(v.any()),
+    error: v.optional(v.string()),
+    requestedBy: v.string(),
+    createdAt: v.number(),
+    startedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+  })
+    .index("by_status", ["status"])
+    .index("by_created_at", ["createdAt"]),
+
+  adminMetrics: defineTable({
+    key: v.string(),
+    functionCalls: v.number(),
+    errorCount: v.number(),
+    totalExecutionMs: v.number(),
+    cacheHits: v.number(),
+    cacheMisses: v.number(),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  adminDatabaseStats: defineTable({
+    key: v.string(),
+    generatedAt: v.number(),
+    documentCount: v.number(),
+    documentBytes: v.number(),
+    tables: v.array(v.object({
+      name: v.string(),
+      count: v.number(),
+      bytes: v.number(),
+    })),
+    scope: v.string(),
+  }).index("by_key", ["key"]),
+
+  adminAuditLog: defineTable({
+    event: v.string(),
+    detail: v.string(),
+    actor: v.string(),
+    createdAt: v.number(),
+  }).index("by_created_at", ["createdAt"]),
 });

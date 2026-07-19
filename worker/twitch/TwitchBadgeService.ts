@@ -40,6 +40,16 @@ export class TwitchBadgeService {
     return [...catalog.values()];
   }
 
+  hasFreshCatalog(twitchChannelId: string) {
+    const channel = this.channels.get(twitchChannelId);
+    return Boolean(
+      this.global &&
+      this.global.expiresAt > Date.now() &&
+      channel &&
+      channel.expiresAt > Date.now(),
+    );
+  }
+
   private async getGlobalBadges(): Promise<TwitchChatBadgeDefinition[]> {
     if (this.global && this.global.expiresAt > Date.now()) return this.global.badges;
     if (this.globalPending) return this.globalPending;

@@ -334,7 +334,7 @@ async function scheduleRebuild(
   });
 }
 
-async function ensureTabMatch(
+export async function ensureTabMatch(
   ctx: MutationCtx,
   tab: Doc<"chatTabs">,
   message: Doc<"chatMessages">,

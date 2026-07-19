@@ -8,6 +8,11 @@ import type { Logger } from "./logger";
 import type { ThirdPartyEmoteService } from "./emotes/ThirdPartyEmoteService";
 import type { TwitchBadgeService } from "./twitch/TwitchBadgeService";
 import type { TwitchAuthService } from "./twitch/TwitchAuthService";
+import {
+  AdminAuthError,
+  AdminService,
+  type AdminJobKind,
+} from "./AdminService";
 import { isImgurPost, isTouhouWikiImage } from "../shared/imageUrls";
 import { resolveImgurImageUrl } from "./imgurImage";
 import {
@@ -34,8 +39,195 @@ export function createHttpServer(
   dependencies: HttpServerDependencies = {},
 ): Promise<Server> {
   const app = express();
+  const admin = configuration.adminOptions
+    ? new AdminService(
+        configuration.adminOptions.convexUrl,
+        configuration.adminOptions.ingestionSecret,
+        configuration.adminOptions.encryptionKey,
+      )
+    : undefined;
+  const failedAdminAttempts = new Map<string, { count: number; resetsAt: number }>();
   app.disable("x-powered-by");
-  app.use(cors({ origin: configuration.frontendUrl, methods: ["GET"] }));
+  app.use(cors({
+    origin: configuration.frontendUrl,
+    methods: ["GET", "POST"],
+    credentials: true,
+  }));
+  app.use(express.json({ limit: "32kb" }));
+  if (admin) {
+    app.use((request, response, next) => {
+      const startedAt = performance.now();
+      response.once("finish", () => {
+        const cacheHeader = response.getHeader("X-Cache");
+        const cache = cacheHeader === "HIT" ? "hit" : cacheHeader === "MISS" ? "miss" : undefined;
+        void admin.recordMetric(performance.now() - startedAt, response.statusCode >= 400, cache)
+          .catch((error) => logger.debug({ err: error }, "Could not persist request metric"));
+      });
+      next();
+    });
+  }
+
+  app.use("/api/admin", (request, response, next) => {
+    response.set("Cache-Control", "no-store");
+    if (request.method === "POST") {
+      const origin = request.get("origin");
+      if (origin && origin !== configuration.frontendUrl) {
+        response.status(403).json({ error: "This admin request came from an untrusted origin" });
+        return;
+      }
+    }
+    next();
+  });
+
+  app.get("/api/admin/auth/status", async (request, response) => {
+    if (!admin) {
+      response.status(503).json({
+        configured: false,
+        authenticated: false,
+        totpEnabled: false,
+        error: "Admin storage is unavailable until Convex and encryption settings are configured",
+      });
+      return;
+    }
+    try {
+      response.json(await admin.status(readAdminCookie(request.headers.cookie)));
+    } catch (error) {
+      sendAdminError(response, error, logger);
+    }
+  });
+
+  app.post("/api/admin/auth/setup", async (request, response) => {
+    if (!admin) return sendAdminUnavailable(response);
+    if (!allowAdminAttempt(failedAdminAttempts, request.ip)) {
+      response.status(429).json({ error: "Too many attempts; wait fifteen minutes and try again" });
+      return;
+    }
+    try {
+      const password = typeof request.body?.password === "string" ? request.body.password : "";
+      const session = await admin.setup(password);
+      clearAdminAttempts(failedAdminAttempts, request.ip);
+      setAdminCookie(response, session, configuration);
+      response.status(201).json({ authenticated: true });
+    } catch (error) {
+      registerAdminFailure(failedAdminAttempts, request.ip);
+      sendAdminError(response, error, logger);
+    }
+  });
+
+  app.post("/api/admin/auth/login", async (request, response) => {
+    if (!admin) return sendAdminUnavailable(response);
+    if (!allowAdminAttempt(failedAdminAttempts, request.ip)) {
+      response.status(429).json({ error: "Too many attempts; wait fifteen minutes and try again" });
+      return;
+    }
+    try {
+      const password = typeof request.body?.password === "string" ? request.body.password : undefined;
+      const code = typeof request.body?.code === "string" ? request.body.code.replace(/\s/g, "") : undefined;
+      const session = password !== undefined
+        ? await admin.loginWithPassword(password)
+        : await admin.loginWithTotp(code ?? "");
+      clearAdminAttempts(failedAdminAttempts, request.ip);
+      setAdminCookie(response, session, configuration);
+      response.json({ authenticated: true });
+    } catch (error) {
+      registerAdminFailure(failedAdminAttempts, request.ip);
+      sendAdminError(response, error, logger);
+    }
+  });
+
+  app.post("/api/admin/auth/logout", (_request, response) => {
+    response.clearCookie("twitch_admin_session", { path: "/" });
+    response.json({ authenticated: false });
+  });
+
+  app.post("/api/admin/auth/totp/begin", async (request, response) => {
+    if (!admin) return sendAdminUnavailable(response);
+    try {
+      response.json(await admin.beginTotp(readAdminCookie(request.headers.cookie)));
+    } catch (error) {
+      sendAdminError(response, error, logger);
+    }
+  });
+
+  app.post("/api/admin/auth/totp/confirm", async (request, response) => {
+    if (!admin) return sendAdminUnavailable(response);
+    try {
+      const enrollmentToken = typeof request.body?.enrollmentToken === "string"
+        ? request.body.enrollmentToken
+        : "";
+      const code = typeof request.body?.code === "string" ? request.body.code.replace(/\s/g, "") : "";
+      const session = await admin.confirmTotp(
+        readAdminCookie(request.headers.cookie),
+        enrollmentToken,
+        code,
+      );
+      setAdminCookie(response, session, configuration);
+      response.json({ enabled: true });
+    } catch (error) {
+      sendAdminError(response, error, logger);
+    }
+  });
+
+  app.post("/api/admin/auth/password", async (request, response) => {
+    if (!admin) return sendAdminUnavailable(response);
+    try {
+      const currentPassword = typeof request.body?.currentPassword === "string"
+        ? request.body.currentPassword
+        : "";
+      const newPassword = typeof request.body?.newPassword === "string"
+        ? request.body.newPassword
+        : "";
+      const session = await admin.changePassword(
+        readAdminCookie(request.headers.cookie),
+        currentPassword,
+        newPassword,
+      );
+      setAdminCookie(response, session, configuration);
+      response.json({ changed: true });
+    } catch (error) {
+      sendAdminError(response, error, logger);
+    }
+  });
+
+  app.get("/api/admin/dashboard", async (request, response) => {
+    if (!admin) return sendAdminUnavailable(response);
+    try {
+      response.json(await admin.dashboard(readAdminCookie(request.headers.cookie)));
+    } catch (error) {
+      sendAdminError(response, error, logger);
+    }
+  });
+
+  app.post("/api/admin/jobs", async (request, response) => {
+    if (!admin) return sendAdminUnavailable(response);
+    const validKinds = new Set<AdminJobKind>([
+      "image_reindex",
+      "view_reindex",
+      "integrity_scan",
+      "database_measurement",
+    ]);
+    const kind = request.body?.kind as AdminJobKind;
+    if (!validKinds.has(kind)) {
+      response.status(400).json({ error: "Unknown maintenance operation" });
+      return;
+    }
+    try {
+      const jobId = await admin.startJob(readAdminCookie(request.headers.cookie), kind);
+      response.status(202).json({ jobId });
+    } catch (error) {
+      sendAdminError(response, error, logger);
+    }
+  });
+
+  app.post("/api/admin/jobs/:jobId/cancel", async (request, response) => {
+    if (!admin) return sendAdminUnavailable(response);
+    try {
+      await admin.cancelJob(readAdminCookie(request.headers.cookie), request.params.jobId);
+      response.status(202).json({ cancelling: true });
+    } catch (error) {
+      sendAdminError(response, error, logger);
+    }
+  });
 
   app.get("/health", (_request, response) => {
     response.json({
@@ -82,7 +274,9 @@ export function createHttpServer(
       response.status(503).json({ error: "Third-party emotes are unavailable" });
       return;
     }
+    const cacheHit = runtime.emotes.hasFreshCatalog(request.params.channelId);
     const emotes = await runtime.emotes.getCatalog(request.params.channelId);
+    response.set("X-Cache", cacheHit ? "HIT" : "MISS");
     response.set("Cache-Control", "public, max-age=300").json({ emotes });
   });
 
@@ -96,7 +290,9 @@ export function createHttpServer(
       return;
     }
     try {
+      const cacheHit = runtime.badges.hasFreshCatalog(request.params.channelId);
       const badges = await runtime.badges.getCatalog(request.params.channelId);
+      response.set("X-Cache", cacheHit ? "HIT" : "MISS");
       response.set("Cache-Control", "public, max-age=300").json({ badges });
     } catch (cause) {
       logger.warn(
@@ -248,4 +444,79 @@ export function createHttpServer(
     });
     server.once("error", reject);
   });
+}
+
+function readAdminCookie(header?: string) {
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const [name, ...value] = part.trim().split("=");
+    if (name === "twitch_admin_session") return decodeURIComponent(value.join("="));
+  }
+  return undefined;
+}
+
+function setAdminCookie(
+  response: express.Response,
+  token: string,
+  configuration: LoadedConfiguration,
+) {
+  let crossOriginHttps = false;
+  try {
+    crossOriginHttps = configuration.publicWorkerUrl.startsWith("https://") &&
+      new URL(configuration.publicWorkerUrl).origin !== new URL(configuration.frontendUrl).origin;
+  } catch {
+    // Invalid public URLs are reported by the surrounding configuration flow.
+  }
+  response.cookie("twitch_admin_session", token, {
+    httpOnly: true,
+    sameSite: crossOriginHttps ? "none" : "strict",
+    secure: crossOriginHttps || configuration.frontendUrl.startsWith("https://"),
+    path: "/",
+    maxAge: 12 * 60 * 60 * 1_000,
+  });
+}
+
+function sendAdminUnavailable(response: express.Response) {
+  response.status(503).json({ error: "Admin storage is unavailable" });
+}
+
+function sendAdminError(response: express.Response, error: unknown, logger: Logger) {
+  if (error instanceof AdminAuthError) {
+    response.status(error.status).json({ error: error.message });
+    return;
+  }
+  const message = error instanceof Error && /already active|already configured/i.test(error.message)
+    ? error.message.replace(/^.*?:\s*/, "")
+    : "The admin request could not be completed";
+  logger.warn({ err: error }, "Admin request failed");
+  response.status(/already active|already configured/i.test(message) ? 409 : 500).json({ error: message });
+}
+
+function allowAdminAttempt(
+  attempts: Map<string, { count: number; resetsAt: number }>,
+  address: string | undefined,
+) {
+  const key = address ?? "unknown";
+  const entry = attempts.get(key);
+  if (!entry || entry.resetsAt <= Date.now()) return true;
+  return entry.count < 8;
+}
+
+function registerAdminFailure(
+  attempts: Map<string, { count: number; resetsAt: number }>,
+  address: string | undefined,
+) {
+  const key = address ?? "unknown";
+  const current = attempts.get(key);
+  attempts.set(key, {
+    count: current && current.resetsAt > Date.now() ? current.count + 1 : 1,
+    resetsAt: Date.now() + 15 * 60 * 1_000,
+  });
+}
+
+function clearAdminAttempts(
+  attempts: Map<string, { count: number; resetsAt: number }>,
+  address: string | undefined,
+) {
+  attempts.delete(address ?? "unknown");
 }

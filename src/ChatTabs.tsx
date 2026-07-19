@@ -6,6 +6,7 @@ import {
   createFilterRule,
 } from "./filterRuleFactory";
 import { filterRuleError } from "./filters";
+import { IMAGE_GALLERY_FILTER_PATTERN } from "../shared/imageUrls";
 
 export function ChatTabBar({
   tabs,
@@ -95,7 +96,7 @@ export function ChatTabDialog({
         rules: [{
           ...createFilterRule("message"),
           operator: "regex",
-          value: "/https?:\\/\\/[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#][^\\s<>\"']*)?/i",
+          value: IMAGE_GALLERY_FILTER_PATTERN,
         }],
       }));
       return;

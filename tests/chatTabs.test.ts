@@ -8,6 +8,7 @@ import {
 } from "../src/chatTabModel";
 import { applyMessageFilters } from "../src/filters";
 import { tabConditionsKey, tabMatchesMessage } from "../convex/chatTabs";
+import { LEGACY_IMAGE_GALLERY_FILTER_PATTERN } from "../shared/imageUrls";
 
 const tab: ChatViewTab = {
   id: "images",
@@ -69,6 +70,18 @@ describe("chat tabs", () => {
       .toEqual([messages[0]]);
     expect(tabMatchesMessage(tab, messages[0])).toBe(true);
     expect(tabMatchesMessage(tab, messages[1])).toBe(false);
+  });
+
+  it("upgrades legacy image gallery rules to match Imgur albums", () => {
+    const legacyGallery = {
+      ...tab,
+      rules: [{ ...tab.rules[0], value: LEGACY_IMAGE_GALLERY_FILTER_PATTERN }],
+    };
+    const album = { _id: "imgur", messageText: "https://imgur.com/a/I5kYHtp" } as ChatMessage;
+
+    expect(tabMatchesMessage(legacyGallery, album)).toBe(true);
+    expect(applyMessageFilters([album], "", [chatTabAsFilter(legacyGallery)]).messages)
+      .toEqual([album]);
   });
 
   it("rebuilds only when matching conditions change", () => {

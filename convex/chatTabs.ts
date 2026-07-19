@@ -18,7 +18,7 @@ import {
   type FilterableMessage,
   type MessageFilter,
 } from "../shared/messageFilters";
-import { extractImageUrls } from "../shared/imageUrls";
+import { extractImageUrls, upgradeGalleryFilterPattern } from "../shared/imageUrls";
 
 const MAX_CHAT_TABS = 20;
 const TAB_INDEX_BATCH_SIZE = 100;
@@ -299,14 +299,16 @@ function validateTab(tab: ChatTabInput): ChatTabInput {
 }
 
 export function tabAsMessageFilter(
-  tab: Pick<ChatTabInput, "id" | "name" | "match" | "rules"> | Doc<"chatTabs">,
+  tab: Pick<ChatTabInput, "id" | "name" | "layout" | "match" | "rules"> | Doc<"chatTabs">,
 ): MessageFilter {
   return {
     id: "clientId" in tab ? tab.clientId : tab.id,
     name: tab.name,
     action: "show",
     match: tab.match,
-    rules: tab.rules,
+    rules: tab.layout === "gallery"
+      ? tab.rules.map((rule) => ({ ...rule, value: upgradeGalleryFilterPattern(rule.value) }))
+      : tab.rules,
   };
 }
 
@@ -344,14 +346,18 @@ async function ensureTabMatch(
       .eq("revision", tab.revision)
       .eq("messageId", message._id))
     .unique();
-  if (existing) return;
+  const hasImages = message.hasImages ?? extractImageUrls(message.messageText).length > 0;
+  if (existing) {
+    if (existing.hasImages !== hasImages) await ctx.db.patch(existing._id, { hasImages });
+    return;
+  }
   await ctx.db.insert("chatTabMatches", {
     tabId: tab._id,
     revision: tab.revision,
     messageId: message._id,
     channelId: message.channelId,
     timestamp: message.timestamp,
-    hasImages: message.hasImages ?? extractImageUrls(message.messageText).length > 0,
+    hasImages,
   });
 }
 

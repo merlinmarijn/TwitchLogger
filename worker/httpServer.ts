@@ -8,7 +8,8 @@ import type { Logger } from "./logger";
 import type { ThirdPartyEmoteService } from "./emotes/ThirdPartyEmoteService";
 import type { TwitchBadgeService } from "./twitch/TwitchBadgeService";
 import type { TwitchAuthService } from "./twitch/TwitchAuthService";
-import { isTouhouWikiImage } from "../shared/imageUrls";
+import { isImgurPost, isTouhouWikiImage } from "../shared/imageUrls";
+import { resolveImgurImageUrl } from "./imgurImage";
 import {
   fetchTouhouWikiImage,
   type ProxiedImage,
@@ -23,6 +24,7 @@ export interface ApplicationRuntimeState {
 
 export interface HttpServerDependencies {
   fetchTouhouWikiImage?: (url: URL) => Promise<ProxiedImage>;
+  resolveImgurImageUrl?: (url: URL) => Promise<URL>;
 }
 
 export function createHttpServer(
@@ -129,6 +131,31 @@ export function createHttpServer(
     } catch (cause) {
       logger.warn({ err: cause, url: imageUrl.href }, "Could not proxy TouhouWiki image");
       response.status(502).json({ error: "TouhouWiki image is temporarily unavailable" });
+    }
+  });
+
+  app.get("/images/imgur", async (request, response) => {
+    const rawUrl = typeof request.query.url === "string" ? request.query.url : "";
+    let pageUrl: URL;
+    try {
+      pageUrl = new URL(rawUrl);
+    } catch {
+      response.status(400).json({ error: "A valid Imgur page URL is required" });
+      return;
+    }
+    if (!isImgurPost(pageUrl) || pageUrl.protocol !== "https:") {
+      response.status(400).json({ error: "Only HTTPS imgur.com post URLs are supported" });
+      return;
+    }
+
+    try {
+      const imageUrl = await (dependencies.resolveImgurImageUrl ?? resolveImgurImageUrl)(pageUrl);
+      response
+        .set("Cache-Control", "public, max-age=86400")
+        .redirect(302, imageUrl.href);
+    } catch (cause) {
+      logger.warn({ err: cause, url: pageUrl.href }, "Could not resolve Imgur image");
+      response.status(502).json({ error: "Imgur image is temporarily unavailable" });
     }
   });
 

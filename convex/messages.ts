@@ -22,6 +22,8 @@ import {
 import { paginateMatching } from "./lib/messagePagination";
 import { extractImageUrls } from "../shared/imageUrls";
 
+const IMAGE_INDEX_VERSION = 2;
+
 const badgeValidator = v.object({
   setId: v.string(),
   id: v.string(),
@@ -202,7 +204,8 @@ export const filterMatchCounts = query({
 
 /**
  * Starts an idempotent background migration for messages saved before image
- * metadata was indexed. The worker invokes this once at startup.
+ * metadata was indexed with the current URL support. The worker invokes this
+ * once at startup and each document records the version it has completed.
  */
 export const startImageIndexBackfill = mutation({
   args: { ingestionSecret: v.string() },
@@ -210,7 +213,7 @@ export const startImageIndexBackfill = mutation({
     requireIngestionSecret(args.ingestionSecret);
     const unindexedMessage = await ctx.db
       .query("chatMessages")
-      .withIndex("by_has_images_timestamp", (q) => q.eq("hasImages", undefined))
+      .withIndex("by_image_index_version", (q) => q.eq("imageIndexVersion", undefined))
       .first();
     if (!unindexedMessage) return { scheduled: false };
 
@@ -224,7 +227,7 @@ export const backfillImageIndexBatch = internalMutation({
   handler: async (ctx): Promise<{ processed: number; complete: boolean }> => {
     const messages = await ctx.db
       .query("chatMessages")
-      .withIndex("by_has_images_timestamp", (q) => q.eq("hasImages", undefined))
+      .withIndex("by_image_index_version", (q) => q.eq("imageIndexVersion", undefined))
       .take(100);
 
     await Promise.all(messages.map(async (message) => {
@@ -232,6 +235,14 @@ export const backfillImageIndexBatch = internalMutation({
       await ctx.db.patch(message._id, {
         hasImages: imageUrls.length > 0,
         imageUrls,
+        imageIndexVersion: IMAGE_INDEX_VERSION,
+        galleryChannelId: imageUrls.length > 0 ? message.channelId : undefined,
+      });
+      await indexMessageForTabs(ctx, {
+        ...message,
+        hasImages: imageUrls.length > 0,
+        imageUrls,
+        imageIndexVersion: IMAGE_INDEX_VERSION,
         galleryChannelId: imageUrls.length > 0 ? message.channelId : undefined,
       });
     }));
@@ -309,6 +320,7 @@ export const insertIncoming = mutation({
       ...message,
       hasImages: imageUrls.length > 0,
       imageUrls,
+      imageIndexVersion: IMAGE_INDEX_VERSION,
       galleryChannelId: imageUrls.length > 0 ? message.channelId : undefined,
       platform: "twitch",
       createdAt: Date.now(),

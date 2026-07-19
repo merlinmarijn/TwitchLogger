@@ -49,6 +49,29 @@ describe("image gallery", () => {
     ]);
   });
 
+  it("extracts Imgur album and post pages without treating other Imgur pages as images", () => {
+    expect(extractImageUrls(
+      "Album: https://imgur.com/a/I5kYHtp post: https://imgur.com/Fb1IWtG search: https://imgur.com/search?q=cards",
+    )).toEqual([
+      "https://imgur.com/a/I5kYHtp",
+      "https://imgur.com/Fb1IWtG",
+    ]);
+  });
+
+  it("routes Imgur page previews through the worker and keeps the post as the link", () => {
+    const url = "https://imgur.com/a/I5kYHtp";
+    const message = {
+      _id: "imgur",
+      messageText: url,
+      timestamp: 1,
+    } as ChatMessage;
+
+    expect(buildGalleryImages([message], "https://worker.example/")[0]).toMatchObject({
+      url,
+      previewUrl: `https://worker.example/images/imgur?url=${encodeURIComponent(url)}`,
+    });
+  });
+
   it("routes TouhouWiki previews through the HTTP/2 worker endpoint", () => {
     const url = "https://en.touhouwiki.net/images/7/78/Th11SC159.jpg?20191126144715";
     const message = {

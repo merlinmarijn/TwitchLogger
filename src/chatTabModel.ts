@@ -4,6 +4,7 @@ import {
   type FilterRule,
   type MessageFilter,
 } from "./filters";
+import { upgradeGalleryFilterPattern } from "../shared/imageUrls";
 
 export interface ChatViewTab {
   id: string;
@@ -24,7 +25,9 @@ export function chatTabAsFilter(tab: ChatViewTab): MessageFilter {
     name: tab.name,
     action: "show",
     match: tab.match,
-    rules: tab.rules,
+    rules: tab.layout === "gallery"
+      ? tab.rules.map((rule) => ({ ...rule, value: upgradeGalleryFilterPattern(rule.value) }))
+      : tab.rules,
   };
 }
 

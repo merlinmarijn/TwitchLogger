@@ -1,6 +1,7 @@
 import type { ChatMessage } from "./api";
 import {
   extractImageUrls,
+  isImgurPost,
   isTouhouWikiImage,
   pixivArtworkId,
 } from "../shared/imageUrls";
@@ -17,6 +18,10 @@ export interface GalleryImage {
 function galleryPreviewUrl(url: string, workerBaseUrl: string): string {
   const parsed = new URL(url);
   const artworkId = pixivArtworkId(parsed);
+  if (isImgurPost(parsed)) {
+    const baseUrl = workerBaseUrl.replace(/\/$/, "");
+    return `${baseUrl}/images/imgur?url=${encodeURIComponent(parsed.href)}`;
+  }
   if (isTouhouWikiImage(parsed)) {
     const baseUrl = workerBaseUrl.replace(/\/$/, "");
     return `${baseUrl}/images/touhouwiki?url=${encodeURIComponent(parsed.href)}`;

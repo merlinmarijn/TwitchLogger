@@ -89,4 +89,32 @@ describe("setup-mode HTTP server", () => {
     expect(response.status).toBe(400);
     expect(fetched).toBe(false);
   });
+
+  it("resolves an allowed Imgur album to its CDN preview", async () => {
+    const configuration = { ...loadConfiguration({}), port: 0 };
+    const requestedUrls: string[] = [];
+    const server = await createHttpServer(
+      configuration,
+      {},
+      createLogger("silent"),
+      {
+        resolveImgurImageUrl: async (url) => {
+          requestedUrls.push(url.href);
+          return new URL("https://i.imgur.com/Fb1IWtG.png?fb");
+        },
+      },
+    );
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+    const albumUrl = "https://imgur.com/a/I5kYHtp";
+
+    const response = await fetch(
+      `http://127.0.0.1:${port}/images/imgur?url=${encodeURIComponent(albumUrl)}`,
+      { redirect: "manual" },
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("https://i.imgur.com/Fb1IWtG.png?fb");
+    expect(requestedUrls).toEqual([albumUrl]);
+  });
 });

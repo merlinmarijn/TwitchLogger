@@ -224,6 +224,12 @@ export default defineSchema({
     scope: v.string(),
   }).index("by_key", ["key"]),
 
+  maintenanceThrottle: defineTable({
+    key: v.string(),
+    nextBatchAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   adminAuditLog: defineTable({
     event: v.string(),
     detail: v.string(),

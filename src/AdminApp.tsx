@@ -305,6 +305,7 @@ function DashboardScreen({
   const [working, setWorking] = useState<string>();
   const [securityOpen, setSecurityOpen] = useState(false);
   const activeJobs = data?.jobs.filter((job) => ["queued", "running", "cancelling"].includes(job.status)) ?? [];
+  const maintenanceBusy = activeJobs.length > 0;
 
   const run = async (kind: JobKind) => {
     setWorking(kind);
@@ -373,7 +374,7 @@ function DashboardScreen({
         <section className="admin-section" id="operations">
           <div className="section-heading">
             <div><div className="section-kicker"><span>02</span> OPERATIONS</div><h2>Maintenance, on demand</h2></div>
-            <p>Every operation is resumable in the interface and checks for cancellation between bounded batches.</p>
+            <p>Operations run one at a time in paced, bounded batches so live logging and browsing stay responsive.</p>
           </div>
           <div className="operation-ledger">
             {operations.map((operation) => {
@@ -382,8 +383,8 @@ function DashboardScreen({
                 <article className="operation-row" key={operation.kind}>
                   <span className="operation-number">{operation.number}</span>
                   <div><h3>{operation.title}</h3><p>{operation.description}</p><small>{operation.impact}</small></div>
-                  <button className="run-button" disabled={Boolean(active) || working === operation.kind} onClick={() => void run(operation.kind)}>
-                    {active ? "In progress" : working === operation.kind ? "Starting…" : "Run"}<ArrowIcon />
+                  <button className="run-button" disabled={maintenanceBusy || Boolean(working)} onClick={() => void run(operation.kind)}>
+                    {active ? "In progress" : maintenanceBusy ? "Maintenance busy" : working === operation.kind ? "Starting…" : "Run"}<ArrowIcon />
                   </button>
                 </article>
               );
@@ -391,7 +392,12 @@ function DashboardScreen({
           </div>
         </section>
 
-        <DatabaseSection data={data} onMeasure={() => void run("database_measurement")} disabled={Boolean(activeJobs.find((job) => job.kind === "database_measurement"))} />
+        <DatabaseSection
+          data={data}
+          onMeasure={() => void run("database_measurement")}
+          disabled={maintenanceBusy || Boolean(working)}
+          measuring={Boolean(activeJobs.find((job) => job.kind === "database_measurement"))}
+        />
         <JobHistory jobs={data?.jobs ?? []} />
         <AuditTrail entries={data?.auditLog ?? []} />
       </main>
@@ -435,14 +441,24 @@ function ActiveJobLedger({ activeJobs, onCancel, working }: { activeJobs: AdminJ
   );
 }
 
-function DatabaseSection({ data, onMeasure, disabled }: { data?: Dashboard; onMeasure: () => void; disabled: boolean }) {
+function DatabaseSection({
+  data,
+  onMeasure,
+  disabled,
+  measuring,
+}: {
+  data?: Dashboard;
+  onMeasure: () => void;
+  disabled: boolean;
+  measuring: boolean;
+}) {
   const stats = data?.databaseStats;
   const maxBytes = Math.max(1, ...(stats?.tables.map((table) => table.bytes) ?? [1]));
   return (
     <section className="admin-section database-section" id="database">
       <div className="section-heading">
         <div><div className="section-kicker"><span>03</span> DATABASE</div><h2>What the archive weighs</h2></div>
-        <button className="text-action" disabled={disabled} onClick={onMeasure}>{disabled ? "Measuring…" : "Refresh measurement"}<ArrowIcon /></button>
+        <button className="text-action" disabled={disabled} onClick={onMeasure}>{disabled ? measuring ? "Measuring…" : "Maintenance busy" : "Refresh measurement"}<ArrowIcon /></button>
       </div>
       {stats ? (
         <div className="database-layout">

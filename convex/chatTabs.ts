@@ -19,9 +19,13 @@ import {
   type MessageFilter,
 } from "../shared/messageFilters";
 import { extractImageUrls, upgradeGalleryFilterPattern } from "../shared/imageUrls";
+import {
+  claimMaintenanceSlot,
+  MAINTENANCE_BATCH_DELAY_MS,
+  MAINTENANCE_WRITE_BATCH_SIZE,
+} from "./lib/maintenancePacing";
 
 const MAX_CHAT_TABS = 20;
-const TAB_INDEX_BATCH_SIZE = 100;
 
 const chatTabInputValidator = v.object({
   id: v.string(),
@@ -129,7 +133,7 @@ export const remove = mutation({
     const tab = await findTab(ctx, id);
     if (!tab) return null;
     await ctx.db.delete(tab._id);
-    await ctx.scheduler.runAfter(0, anyApi.chatTabs.cleanupIndexBatch, {
+    await ctx.scheduler.runAfter(MAINTENANCE_BATCH_DELAY_MS, anyApi.chatTabs.cleanupIndexBatch, {
       tabId: tab._id,
     });
     return null;
@@ -145,25 +149,31 @@ export const rebuildIndexBatch = internalMutation({
   handler: async (ctx, args) => {
     const tab = await ctx.db.get(args.tabId);
     if (!tab) {
-      await ctx.scheduler.runAfter(0, anyApi.chatTabs.cleanupIndexBatch, {
+      await ctx.scheduler.runAfter(MAINTENANCE_BATCH_DELAY_MS, anyApi.chatTabs.cleanupIndexBatch, {
         tabId: args.tabId,
       });
       return null;
     }
     if (tab.revision !== args.revision) return null;
 
+    const waitMs = await claimMaintenanceSlot(ctx);
+    if (waitMs > 0) {
+      await ctx.scheduler.runAfter(waitMs, anyApi.chatTabs.rebuildIndexBatch, args);
+      return null;
+    }
+
     const page = await ctx.db
       .query("chatMessages")
       .withIndex("by_timestamp")
       .order("asc")
-      .paginate({ cursor: args.cursor, numItems: TAB_INDEX_BATCH_SIZE });
+      .paginate({ cursor: args.cursor, numItems: MAINTENANCE_WRITE_BATCH_SIZE });
     const filter = tabAsMessageFilter(tab);
     await Promise.all(page.page
       .filter((message) => matchesMessageFilter(message, filter))
       .map((message) => ensureTabMatch(ctx, tab, message)));
 
     if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, anyApi.chatTabs.rebuildIndexBatch, {
+      await ctx.scheduler.runAfter(MAINTENANCE_BATCH_DELAY_MS, anyApi.chatTabs.rebuildIndexBatch, {
         tabId: tab._id,
         revision: args.revision,
         cursor: page.continueCursor,
@@ -176,7 +186,7 @@ export const rebuildIndexBatch = internalMutation({
       indexStatus: "ready",
       updatedAt: Date.now(),
     });
-    await ctx.scheduler.runAfter(0, anyApi.chatTabs.cleanupIndexBatch, {
+    await ctx.scheduler.runAfter(MAINTENANCE_BATCH_DELAY_MS, anyApi.chatTabs.cleanupIndexBatch, {
       tabId: tab._id,
       keepRevision: args.revision,
     });
@@ -190,17 +200,22 @@ export const cleanupIndexBatch = internalMutation({
     keepRevision: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const waitMs = await claimMaintenanceSlot(ctx);
+    if (waitMs > 0) {
+      await ctx.scheduler.runAfter(waitMs, anyApi.chatTabs.cleanupIndexBatch, args);
+      return null;
+    }
     const rows = await ctx.db
       .query("chatTabMatches")
       .withIndex("by_tab_revision_timestamp", (q) => q.eq("tabId", args.tabId))
       .order("asc")
-      .take(TAB_INDEX_BATCH_SIZE);
+      .take(MAINTENANCE_WRITE_BATCH_SIZE);
     const obsolete = args.keepRevision === undefined
       ? rows
       : rows.filter((row) => row.revision !== args.keepRevision);
     await Promise.all(obsolete.map((row) => ctx.db.delete(row._id)));
     if (obsolete.length > 0) {
-      await ctx.scheduler.runAfter(0, anyApi.chatTabs.cleanupIndexBatch, args);
+      await ctx.scheduler.runAfter(MAINTENANCE_BATCH_DELAY_MS, anyApi.chatTabs.cleanupIndexBatch, args);
     }
     return null;
   },
@@ -327,7 +342,7 @@ async function scheduleRebuild(
   tabId: Id<"chatTabs">,
   revision: number,
 ) {
-  await ctx.scheduler.runAfter(0, anyApi.chatTabs.rebuildIndexBatch, {
+  await ctx.scheduler.runAfter(MAINTENANCE_BATCH_DELAY_MS, anyApi.chatTabs.rebuildIndexBatch, {
     tabId,
     revision,
     cursor: null,

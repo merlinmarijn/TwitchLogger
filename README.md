@@ -105,6 +105,24 @@ Main components:
 
 One WebSocket is shared by all configured channels. The service already models channels as a collection, so adding more channels does not require a new architecture. Twitch currently allows many subscriptions per socket; capacity sharding can be added inside `TwitchEventSubClient` later without changing the UI or database model.
 
+## Admin control room
+
+Open `/admin` on the frontend origin. The first visit creates the single super admin password; later visits can use that password or a six-digit code from a paired authenticator app. Passwords are scrypt-hashed in the worker before storage. The TOTP secret is AES-256-GCM encrypted with `TWITCH_TOKEN_ENCRYPTION_KEY`, and admin sessions use signed, HttpOnly, SameSite cookies.
+
+The control room provides persistent, cancellable operations for rebuilding image metadata, rebuilding saved-view indexes, scanning message references, and measuring application document payloads. Each operation runs in bounded Convex batches and stores its cursor, progress, result, and audit events in the database, so refreshing the browser does not lose its state. Database measurements exclude Convex indexes, backups, file storage, logs, and platform overhead because those values are not exposed to database functions.
+
+Deploy the updated `convex/` schema and functions before using the route. In development, run the full `npm run dev` command so `/admin` can reach both Vite and the worker. No additional secret is required: admin storage uses the existing `CONVEX_URL`, `INGESTION_SECRET`, and `TWITCH_TOKEN_ENCRYPTION_KEY` worker settings.
+
+## Database diagnostics
+
+The `debug` Convex module exposes read-only, `INGESTION_SECRET`-protected functions for operational troubleshooting:
+
+- `debug:databaseStats` scans all application tables in globally paced read batches and reports document counts, Convex-calculated payload bytes, averages, largest documents, and creation-time ranges per table. Its total excludes indexes, backups, logs, and other Convex platform overhead because those values are not available to database functions.
+- `debug:health` reports platform and channel state, channels that are unresolved, stale, or errored, and the latest ingested message. Pass `staleAfterMs` to change the default 15-minute activity threshold.
+- `debug:findMessage` looks up an `externalMessageId`, an `eventNotificationId`, or both through their indexes and flags duplicate matches.
+
+These can be run from the Convex dashboard or with `npx convex run`. Pass the deployment's existing `INGESTION_SECRET` as `ingestionSecret`; `debug:databaseStats` also accepts a `pageSize` from 1 to 100 for tuning a large scan.
+
 ## Twitch developer application setup
 
 1. Sign in to the [Twitch Developer Console](https://dev.twitch.tv/console/apps) and register an application.

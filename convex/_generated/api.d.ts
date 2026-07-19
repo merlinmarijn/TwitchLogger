@@ -8,9 +8,16 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
 import type * as channels from "../channels.js";
+import type * as chatTabs from "../chatTabs.js";
+import type * as debug from "../debug.js";
 import type * as functions from "../functions.js";
+import type * as lib_clientMessage from "../lib/clientMessage.js";
 import type * as lib_ingestionAuth from "../lib/ingestionAuth.js";
+import type * as lib_maintenancePacing from "../lib/maintenancePacing.js";
+import type * as lib_messageFilters from "../lib/messageFilters.js";
+import type * as lib_messagePagination from "../lib/messagePagination.js";
 import type * as messages from "../messages.js";
 import type * as platforms from "../platforms.js";
 
@@ -21,9 +28,16 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
   channels: typeof channels;
+  chatTabs: typeof chatTabs;
+  debug: typeof debug;
   functions: typeof functions;
+  "lib/clientMessage": typeof lib_clientMessage;
   "lib/ingestionAuth": typeof lib_ingestionAuth;
+  "lib/maintenancePacing": typeof lib_maintenancePacing;
+  "lib/messageFilters": typeof lib_messageFilters;
+  "lib/messagePagination": typeof lib_messagePagination;
   messages: typeof messages;
   platforms: typeof platforms;
 }>;

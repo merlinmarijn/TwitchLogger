@@ -7,11 +7,16 @@ import { requireIngestionSecret } from "./lib/ingestionAuth";
 import { extractImageUrls } from "../shared/imageUrls";
 import { ensureTabMatch, indexMessageForTabs, tabAsMessageFilter } from "./chatTabs";
 import { matchesMessageFilter } from "../shared/messageFilters";
+import {
+  claimMaintenanceSlot,
+  MAINTENANCE_BATCH_DELAY_MS,
+  MAINTENANCE_READ_BATCH_SIZE,
+  MAINTENANCE_WRITE_BATCH_SIZE,
+} from "./lib/maintenancePacing";
 
 const SETTINGS_KEY = "super-admin";
 const METRICS_KEY = "global";
 const STATS_KEY = "latest";
-const BATCH_SIZE = 100;
 
 const jobKindValidator = v.union(
   v.literal("image_reindex"),
@@ -220,16 +225,13 @@ export const startJob = mutation({
   args: { ingestionSecret: v.string(), kind: jobKindValidator, requestedBy: v.string() },
   handler: async (ctx, args) => {
     requireIngestionSecret(args.ingestionSecret);
-    const active = await ctx.db
-      .query("adminJobs")
-      .withIndex("by_status", (q) => q.eq("status", "running"))
-      .collect();
-    const [queued, cancelling] = await Promise.all([
-      ctx.db.query("adminJobs").withIndex("by_status", (q) => q.eq("status", "queued")).collect(),
-      ctx.db.query("adminJobs").withIndex("by_status", (q) => q.eq("status", "cancelling")).collect(),
+    const [running, queued, cancelling] = await Promise.all([
+      ctx.db.query("adminJobs").withIndex("by_status", (q) => q.eq("status", "running")).take(1),
+      ctx.db.query("adminJobs").withIndex("by_status", (q) => q.eq("status", "queued")).take(1),
+      ctx.db.query("adminJobs").withIndex("by_status", (q) => q.eq("status", "cancelling")).take(1),
     ]);
-    if ([...active, ...queued, ...cancelling].some((job) => job.kind === args.kind)) {
-      throw new ConvexError("This operation is already active");
+    if (running.length > 0 || queued.length > 0 || cancelling.length > 0) {
+      throw new ConvexError("Wait for the active maintenance operation to finish");
     }
 
     const definition = jobDefinitions[args.kind];
@@ -250,7 +252,7 @@ export const startJob = mutation({
       updatedAt: now,
     });
     await writeAudit(ctx, "job.started", definition.title, args.requestedBy);
-    await ctx.scheduler.runAfter(0, anyApi.admin.runJobBatch, { jobId: id });
+    await ctx.scheduler.runAfter(MAINTENANCE_BATCH_DELAY_MS, anyApi.admin.runJobBatch, { jobId: id });
     return id;
   },
 });
@@ -278,6 +280,11 @@ export const runJobBatch = internalMutation({
       await recordJobMetric(ctx, Date.now() - started, false);
       return null;
     }
+    const waitMs = await claimMaintenanceSlot(ctx);
+    if (waitMs > 0) {
+      await ctx.scheduler.runAfter(waitMs, anyApi.admin.runJobBatch, { jobId: job._id });
+      return null;
+    }
     if (job.status === "queued") {
       await ctx.db.patch(job._id, { status: "running", startedAt: Date.now(), updatedAt: Date.now() });
     }
@@ -289,7 +296,13 @@ export const runJobBatch = internalMutation({
           : job.kind === "integrity_scan"
             ? await runIntegrityBatch(ctx, job)
             : await runMeasurementBatch(ctx, job);
-      if (!complete) await ctx.scheduler.runAfter(0, anyApi.admin.runJobBatch, { jobId: job._id });
+      if (!complete) {
+        await ctx.scheduler.runAfter(
+          MAINTENANCE_BATCH_DELAY_MS,
+          anyApi.admin.runJobBatch,
+          { jobId: job._id },
+        );
+      }
       await recordJobMetric(ctx, Date.now() - started, false);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Unknown maintenance error";
@@ -322,7 +335,7 @@ async function runImageBatch(ctx: MutationCtx, job: Doc<"adminJobs">) {
   }
   const page = await ctx.db.query("chatMessages").withIndex("by_timestamp").order("asc").paginate({
     cursor: job.cursor ?? null,
-    numItems: BATCH_SIZE,
+    numItems: MAINTENANCE_WRITE_BATCH_SIZE,
   });
   for (const message of page.page) {
     const imageUrls = extractImageUrls(message.messageText);
@@ -386,7 +399,7 @@ async function runViewBatch(ctx: MutationCtx, job: Doc<"adminJobs">) {
   }
   const page = await ctx.db.query("chatMessages").withIndex("by_timestamp").order("asc").paginate({
     cursor: job.cursor ?? null,
-    numItems: BATCH_SIZE,
+    numItems: MAINTENANCE_WRITE_BATCH_SIZE,
   });
   const filter = tabAsMessageFilter(tab);
   for (const message of page.page) {
@@ -402,7 +415,7 @@ async function runViewBatch(ctx: MutationCtx, job: Doc<"adminJobs">) {
     indexStatus: "ready",
     updatedAt: Date.now(),
   });
-  await ctx.scheduler.runAfter(0, anyApi.chatTabs.cleanupIndexBatch, {
+  await ctx.scheduler.runAfter(MAINTENANCE_BATCH_DELAY_MS, anyApi.chatTabs.cleanupIndexBatch, {
     tabId: tab._id,
     keepRevision: tab.revision,
   });
@@ -438,7 +451,7 @@ async function runIntegrityBatch(ctx: MutationCtx, job: Doc<"adminJobs">) {
   }
   const page = await ctx.db.query("chatMessages").withIndex("by_timestamp").order("asc").paginate({
     cursor: job.cursor ?? null,
-    numItems: BATCH_SIZE,
+    numItems: MAINTENANCE_READ_BATCH_SIZE,
   });
   let issues = metadata.issues;
   const samples = [...metadata.samples];
@@ -495,7 +508,7 @@ async function runMeasurementBatch(ctx: MutationCtx, job: Doc<"adminJobs">) {
 }
 
 async function queryMeasuredTable(ctx: MutationCtx, table: typeof measuredTables[number], cursor: string | null) {
-  const options = { cursor, numItems: BATCH_SIZE };
+  const options = { cursor, numItems: MAINTENANCE_READ_BATCH_SIZE };
   switch (table) {
     case "platforms": return ctx.db.query("platforms").paginate(options);
     case "channels": return ctx.db.query("channels").paginate(options);
@@ -551,7 +564,7 @@ async function runMessageCountBatch(
 ) {
   const page = await ctx.db.query("chatMessages").withIndex("by_timestamp").order("asc").paginate({
     cursor: job.cursor ?? null,
-    numItems: BATCH_SIZE,
+    numItems: MAINTENANCE_READ_BATCH_SIZE,
   });
   const count = previousCount + page.page.length;
   if (page.isDone) {

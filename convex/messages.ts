@@ -21,6 +21,11 @@ import {
 } from "./lib/messageFilters";
 import { paginateMatching } from "./lib/messagePagination";
 import { extractImageUrls } from "../shared/imageUrls";
+import {
+  claimMaintenanceSlot,
+  MAINTENANCE_BATCH_DELAY_MS,
+  MAINTENANCE_WRITE_BATCH_SIZE,
+} from "./lib/maintenancePacing";
 
 const IMAGE_INDEX_VERSION = 2;
 
@@ -217,7 +222,11 @@ export const startImageIndexBackfill = mutation({
       .first();
     if (!unindexedMessage) return { scheduled: false };
 
-    await ctx.scheduler.runAfter(0, internal.messages.backfillImageIndexBatch, {});
+    await ctx.scheduler.runAfter(
+      MAINTENANCE_BATCH_DELAY_MS,
+      internal.messages.backfillImageIndexBatch,
+      {},
+    );
     return { scheduled: true };
   },
 });
@@ -225,10 +234,15 @@ export const startImageIndexBackfill = mutation({
 export const backfillImageIndexBatch = internalMutation({
   args: {},
   handler: async (ctx): Promise<{ processed: number; complete: boolean }> => {
+    const waitMs = await claimMaintenanceSlot(ctx);
+    if (waitMs > 0) {
+      await ctx.scheduler.runAfter(waitMs, internal.messages.backfillImageIndexBatch, {});
+      return { processed: 0, complete: false };
+    }
     const messages = await ctx.db
       .query("chatMessages")
       .withIndex("by_image_index_version", (q) => q.eq("imageIndexVersion", undefined))
-      .take(100);
+      .take(MAINTENANCE_WRITE_BATCH_SIZE);
 
     await Promise.all(messages.map(async (message) => {
       const imageUrls = extractImageUrls(message.messageText);
@@ -247,10 +261,17 @@ export const backfillImageIndexBatch = internalMutation({
       });
     }));
 
-    if (messages.length === 100) {
-      await ctx.scheduler.runAfter(0, internal.messages.backfillImageIndexBatch, {});
+    if (messages.length === MAINTENANCE_WRITE_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(
+        MAINTENANCE_BATCH_DELAY_MS,
+        internal.messages.backfillImageIndexBatch,
+        {},
+      );
     }
-    return { processed: messages.length, complete: messages.length < 100 };
+    return {
+      processed: messages.length,
+      complete: messages.length < MAINTENANCE_WRITE_BATCH_SIZE,
+    };
   },
 });
 

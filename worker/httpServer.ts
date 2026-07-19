@@ -39,6 +39,11 @@ export function createHttpServer(
   dependencies: HttpServerDependencies = {},
 ): Promise<Server> {
   const app = express();
+  const frontendOrigin = normalizeOrigin(configuration.frontendUrl);
+  const trustedAdminOrigins = new Set([
+    frontendOrigin,
+    normalizeOrigin(configuration.publicWorkerUrl),
+  ].filter((origin): origin is string => Boolean(origin)));
   const admin = configuration.adminOptions
     ? new AdminService(
         configuration.adminOptions.convexUrl,
@@ -49,7 +54,7 @@ export function createHttpServer(
   const failedAdminAttempts = new Map<string, { count: number; resetsAt: number }>();
   app.disable("x-powered-by");
   app.use(cors({
-    origin: configuration.frontendUrl,
+    origin: frontendOrigin ?? configuration.frontendUrl,
     methods: ["GET", "POST"],
     credentials: true,
   }));
@@ -71,7 +76,7 @@ export function createHttpServer(
     response.set("Cache-Control", "no-store");
     if (request.method === "POST") {
       const origin = request.get("origin");
-      if (origin && origin !== configuration.frontendUrl) {
+      if (origin && !trustedAdminOrigins.has(origin)) {
         response.status(403).json({ error: "This admin request came from an untrusted origin" });
         return;
       }
@@ -455,18 +460,25 @@ function readAdminCookie(header?: string) {
   return undefined;
 }
 
+function normalizeOrigin(value: string) {
+  if (!value) return undefined;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 function setAdminCookie(
   response: express.Response,
   token: string,
   configuration: LoadedConfiguration,
 ) {
-  let crossOriginHttps = false;
-  try {
-    crossOriginHttps = configuration.publicWorkerUrl.startsWith("https://") &&
-      new URL(configuration.publicWorkerUrl).origin !== new URL(configuration.frontendUrl).origin;
-  } catch {
-    // Invalid public URLs are reported by the surrounding configuration flow.
-  }
+  const frontendOrigin = normalizeOrigin(configuration.frontendUrl);
+  const workerOrigin = normalizeOrigin(configuration.publicWorkerUrl);
+  const crossOriginHttps = Boolean(
+    workerOrigin?.startsWith("https://") && frontendOrigin && workerOrigin !== frontendOrigin,
+  );
   response.cookie("twitch_admin_session", token, {
     httpOnly: true,
     sameSite: crossOriginHttps ? "none" : "strict",

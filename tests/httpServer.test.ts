@@ -15,6 +15,41 @@ afterEach(async () => {
 });
 
 describe("setup-mode HTTP server", () => {
+  it("accepts the configured frontend origin when its URL has a trailing slash", async () => {
+    const configuration = {
+      ...loadConfiguration({ TWITCH_FRONTEND_URL: "http://localhost:5173/" }),
+      port: 0,
+    };
+    const server = await createHttpServer(configuration, {}, createLogger("silent"));
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/admin/auth/logout`, {
+      method: "POST",
+      headers: { Origin: "http://localhost:5173" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
+  });
+
+  it("continues to reject admin writes from an untrusted origin", async () => {
+    const configuration = {
+      ...loadConfiguration({ TWITCH_FRONTEND_URL: "http://localhost:5173/" }),
+      port: 0,
+    };
+    const server = await createHttpServer(configuration, {}, createLogger("silent"));
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/admin/auth/logout`, {
+      method: "POST",
+      headers: { Origin: "https://attacker.example" },
+    });
+
+    expect(response.status).toBe(403);
+  });
+
   it("stays live and reports not-ready when configuration is missing", async () => {
     const configuration = { ...loadConfiguration({}), port: 0 };
     const server = await createHttpServer(configuration, {}, createLogger("silent"));

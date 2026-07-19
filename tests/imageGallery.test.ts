@@ -58,6 +58,12 @@ describe("image gallery", () => {
     ]);
   });
 
+  it("extracts extensionless kappa.lol image links", () => {
+    expect(extractImageUrls(
+      "Image: https://kappa.lol/SlNGUz, homepage: https://kappa.lol/",
+    )).toEqual(["https://kappa.lol/SlNGUz"]);
+  });
+
   it("routes Imgur page previews through the worker and keeps the post as the link", () => {
     const url = "https://imgur.com/a/I5kYHtp";
     const message = {

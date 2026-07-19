@@ -40,14 +40,14 @@ const fields = new Set<FilterField>(FILTER_FIELDS);
 const actions = new Set<FilterAction>(FILTER_ACTIONS);
 const matchModes = new Set<FilterMatchMode>(FILTER_MATCH_MODES);
 
-export function parseFilterState(raw: string | null): FilterState {
+export function parseFilterState(raw: string | null, allowEmpty = false): FilterState {
   if (!raw) return { filters: [], activeIds: [] };
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.filters)) {
       return { filters: [], activeIds: [] };
     }
-    const filters = parsed.filters.slice(0, 100).flatMap(parseFilter);
+    const filters = parsed.filters.slice(0, 100).flatMap((value) => parseFilter(value, allowEmpty));
     const validIds = new Set(filters.map((filter) => filter.id));
     const activeIds = Array.isArray(parsed.activeIds)
       ? parsed.activeIds.filter(
@@ -64,7 +64,7 @@ export function serializeFilterState(state: FilterState) {
   return JSON.stringify({ version: 1, ...state });
 }
 
-function parseFilter(value: unknown): MessageFilter[] {
+function parseFilter(value: unknown, allowEmpty: boolean): MessageFilter[] {
   if (
     !isRecord(value) ||
     typeof value.id !== "string" ||
@@ -74,8 +74,13 @@ function parseFilter(value: unknown): MessageFilter[] {
     !Array.isArray(value.rules)
   ) return [];
 
-  const rules = value.rules.slice(0, 20).flatMap(parseRule);
-  if (!value.id || !value.name.trim() || rules.length === 0) return [];
+  const candidateRules = value.rules.slice(0, 20);
+  const rules = candidateRules.flatMap(parseRule);
+  if (!value.id || !value.name.trim() ||
+      (!allowEmpty && rules.length === 0) ||
+      (candidateRules.length > 0 && rules.length === 0)) {
+    return [];
+  }
   return [{
     id: value.id.slice(0, 100),
     name: value.name.trim().slice(0, 80),

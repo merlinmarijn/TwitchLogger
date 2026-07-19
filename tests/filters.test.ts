@@ -24,6 +24,11 @@ const messages = [
 ];
 
 describe("message filters", () => {
+  it("treats a filter without conditions as matching every message", () => {
+    const filter = makeFilter({ rules: [] });
+    expect(messages.every((message) => matchesMessageFilter(message, filter))).toBe(true);
+  });
+
   it("supports all/any conditions across message metadata", () => {
     const filter = makeFilter({
       match: "all",
@@ -98,6 +103,11 @@ describe("message filters", () => {
       filters: [],
       activeIds: [],
     });
+    expect(parseFilterState(JSON.stringify({
+      version: 1,
+      filters: [makeFilter({ rules: [] })],
+      activeIds: ["filter"],
+    }))).toEqual({ filters: [], activeIds: [] });
   });
 });
 

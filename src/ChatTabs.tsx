@@ -6,7 +6,6 @@ import {
   createFilterRule,
 } from "./filterRuleFactory";
 import { filterRuleError } from "./filters";
-import { IMAGE_GALLERY_FILTER_PATTERN } from "../shared/imageUrls";
 
 export function ChatTabBar({
   tabs,
@@ -82,9 +81,7 @@ export function ChatTabDialog({
     : createEmptyTab());
   const editorError = !draft.name.trim()
     ? "Give the tab a name."
-    : draft.rules.length === 0
-      ? "Add at least one condition."
-      : draft.rules.map(filterRuleError).find(Boolean);
+    : draft.rules.map(filterRuleError).find(Boolean);
 
   const applyTemplate = (template: "images" | "mentions" | "custom") => {
     if (template === "images") {
@@ -93,11 +90,7 @@ export function ChatTabDialog({
         name: current.name || "Images",
         layout: "gallery",
         match: "any",
-        rules: [{
-          ...createFilterRule("message"),
-          operator: "regex",
-          value: IMAGE_GALLERY_FILTER_PATTERN,
-        }],
+        rules: [],
       }));
       return;
     }
@@ -183,6 +176,10 @@ export function ChatTabDialog({
         </fieldset>
 
         <FilterRuleEditor
+          allowEmpty
+          emptyMessage={draft.layout === "gallery"
+            ? "No conditions. This gallery shows every image in the selected channel."
+            : "No conditions. This tab shows every message in the selected channel."}
           match={draft.match}
           rules={draft.rules}
           onMatchChange={(match) => setDraft({ ...draft, match })}
@@ -219,6 +216,6 @@ function createEmptyTab(): ChatViewTab {
     name: "",
     layout: "chat",
     match: "all",
-    rules: [createFilterRule("message")],
+    rules: [],
   };
 }

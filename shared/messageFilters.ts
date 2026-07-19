@@ -85,7 +85,7 @@ export function filterRuleError(rule: FilterRule): string | undefined {
 }
 
 export function matchesMessageFilter(message: FilterableMessage, filter: MessageFilter) {
-  if (filter.rules.length === 0) return false;
+  if (filter.rules.length === 0) return true;
   const matches = filter.rules.map((rule) => matchesRule(message, rule));
   return filter.match === "all" ? matches.every(Boolean) : matches.some(Boolean);
 }

@@ -305,7 +305,7 @@ export function tabConditionsKey(tab: Pick<ChatTabInput, "match" | "rules">) {
 
 function validateTab(tab: ChatTabInput): ChatTabInput {
   const name = tab.name.trim();
-  if (!tab.id || tab.id.length > 100 || !name || name.length > 40 || tab.rules.length === 0) {
+  if (!tab.id || tab.id.length > 100 || !name || name.length > 40) {
     throw new ConvexError("Invalid chat tab");
   }
   const filter = tabAsMessageFilter({ ...tab, name });

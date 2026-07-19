@@ -137,6 +137,7 @@ h2 { font-size: 18px; }
 .rule-heading select { border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; background: var(--surface-2); color: #fff; }
 .rule-list { display: grid; gap: 8px; margin-top: 10px; }
 .filter-rule { display: grid; grid-template-columns: 26px minmax(130px, .9fr) minmax(145px, 1fr) minmax(170px, 1.3fr) 30px; align-items: end; gap: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 11px; background: var(--surface); }
+.rule-list-empty { border: 1px dashed #46464e; border-radius: 10px; padding: 14px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .rule-number { align-self: center; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: #323239; color: var(--muted); font-size: 10px; font-weight: 800; }
 .filter-rule label { min-width: 0; display: grid; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
 .filter-rule input, .filter-rule select { min-width: 0; width: 100%; height: 34px; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; background: var(--surface-2); color: #fff; font-size: 11px; text-transform: none; letter-spacing: normal; }

@@ -51,7 +51,7 @@ export function parseChatTabs(raw: string | null): ChatViewTab[] {
       version: 1,
       filters: candidateFilters,
       activeIds: [],
-    })).filters;
+    }), true).filters;
     const seen = new Set<string>();
     return filters.flatMap((filter) => {
       if (seen.has(filter.id)) return [];

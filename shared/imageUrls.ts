@@ -14,16 +14,23 @@ const IMGUR_RESERVED_PATHS = new Set([
   "t",
   "upload",
 ]);
+const KAPPA_LOL_HOSTS = new Set(["kappa.lol", "www.kappa.lol"]);
+const KAPPA_LOL_IMAGE_PATH_PATTERN = /^\/[a-z\d]+\/?$/i;
 const TOUHOU_WIKI_IMAGE_HOSTS = new Set(["en.touhouwiki.net"]);
 const TRAILING_PUNCTUATION = /[),.!;:\]}]+$/;
 
+export const IMAGE_INDEX_VERSION = 3;
+
 export const LEGACY_IMAGE_GALLERY_FILTER_PATTERN =
   "/https?:\\/\\/[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#][^\\s<>\"']*)?/i";
-export const IMAGE_GALLERY_FILTER_PATTERN =
+const PREVIOUS_IMAGE_GALLERY_FILTER_PATTERN =
   "/(?:https?:\\/\\/[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#][^\\s<>\"']*)?|https?:\\/\\/(?:www\\.)?imgur\\.com\\/(?:a|gallery)\\/[a-z\\d]+(?:[?#][^\\s<>\"']*)?)/i";
+export const IMAGE_GALLERY_FILTER_PATTERN =
+  "/https?:\\/\\/(?:[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#][^\\s<>\"']*)?|(?:www\\.)?(?:imgur\\.com\\/(?:a|gallery)\\/|kappa\\.lol\\/)[a-z\\d]+(?:[?#][^\\s<>\"']*)?)/i";
 
 export function upgradeGalleryFilterPattern(value: string): string {
-  return value === LEGACY_IMAGE_GALLERY_FILTER_PATTERN
+  return value === LEGACY_IMAGE_GALLERY_FILTER_PATTERN ||
+      value === PREVIOUS_IMAGE_GALLERY_FILTER_PATTERN
     ? IMAGE_GALLERY_FILTER_PATTERN
     : value;
 }
@@ -41,6 +48,12 @@ export function isImgurPost(url: URL): boolean {
   return pathParts.length > 1 || !IMGUR_RESERVED_PATHS.has(pathParts[0]);
 }
 
+export function isKappaLolImage(url: URL): boolean {
+  return (url.protocol === "http:" || url.protocol === "https:") &&
+    KAPPA_LOL_HOSTS.has(url.hostname.toLowerCase()) &&
+    KAPPA_LOL_IMAGE_PATH_PATTERN.test(url.pathname);
+}
+
 export function isTouhouWikiImage(url: URL): boolean {
   return url.protocol === "https:" &&
     TOUHOU_WIKI_IMAGE_HOSTS.has(url.hostname.toLowerCase()) &&
@@ -55,7 +68,8 @@ export function extractImageUrls(messageText: string): string[] {
     try {
       const parsed = new URL(candidate);
       if ((parsed.protocol === "http:" || parsed.protocol === "https:") &&
-          (IMAGE_PATH_PATTERN.test(parsed.pathname) || pixivArtworkId(parsed) || isImgurPost(parsed))) {
+          (IMAGE_PATH_PATTERN.test(parsed.pathname) || pixivArtworkId(parsed) ||
+            isImgurPost(parsed) || isKappaLolImage(parsed))) {
         urls.add(parsed.href);
       }
     } catch {

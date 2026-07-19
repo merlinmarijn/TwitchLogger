@@ -33,11 +33,15 @@ const operatorLabels: Record<FilterOperator, string> = {
 export default function FilterRuleEditor({
   match,
   rules,
+  allowEmpty = false,
+  emptyMessage = "No conditions.",
   onMatchChange,
   onRulesChange,
 }: {
   match: FilterMatchMode;
   rules: FilterRule[];
+  allowEmpty?: boolean;
+  emptyMessage?: string;
   onMatchChange: (match: FilterMatchMode) => void;
   onRulesChange: (rules: FilterRule[]) => void;
 }) {
@@ -73,6 +77,9 @@ export default function FilterRuleEditor({
       </div>
 
       <div className="rule-list">
+        {allowEmpty && rules.length === 0 && (
+          <div className="rule-list-empty">{emptyMessage}</div>
+        )}
         {rules.map((rule, index) => (
           <div className="filter-rule" key={rule.id}>
             <span className="rule-number">{index + 1}</span>
@@ -111,11 +118,13 @@ export default function FilterRuleEditor({
             <button
               aria-label={`Remove condition ${index + 1}`}
               className="remove-rule"
-              disabled={rules.length === 1}
+              disabled={!allowEmpty && rules.length === 1}
               onClick={() => onRulesChange(
                 rules.filter((candidate) => candidate.id !== rule.id),
               )}
-              title={rules.length === 1 ? "A filter needs at least one condition" : "Remove condition"}
+              title={!allowEmpty && rules.length === 1
+                ? "A filter needs at least one condition"
+                : "Remove condition"}
               type="button"
             >
               {"\u00d7"}

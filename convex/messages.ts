@@ -20,14 +20,12 @@ import {
   validateMessagePageSize,
 } from "./lib/messageFilters";
 import { paginateMatching } from "./lib/messagePagination";
-import { extractImageUrls } from "../shared/imageUrls";
+import { extractImageUrls, IMAGE_INDEX_VERSION } from "../shared/imageUrls";
 import {
   claimMaintenanceSlot,
   MAINTENANCE_BATCH_DELAY_MS,
   MAINTENANCE_WRITE_BATCH_SIZE,
 } from "./lib/maintenancePacing";
-
-const IMAGE_INDEX_VERSION = 2;
 
 const badgeValidator = v.object({
   setId: v.string(),
@@ -218,7 +216,7 @@ export const startImageIndexBackfill = mutation({
     requireIngestionSecret(args.ingestionSecret);
     const unindexedMessage = await ctx.db
       .query("chatMessages")
-      .withIndex("by_image_index_version", (q) => q.eq("imageIndexVersion", undefined))
+      .withIndex("by_image_index_version", (q) => q.lt("imageIndexVersion", IMAGE_INDEX_VERSION))
       .first();
     if (!unindexedMessage) return { scheduled: false };
 
@@ -241,7 +239,7 @@ export const backfillImageIndexBatch = internalMutation({
     }
     const messages = await ctx.db
       .query("chatMessages")
-      .withIndex("by_image_index_version", (q) => q.eq("imageIndexVersion", undefined))
+      .withIndex("by_image_index_version", (q) => q.lt("imageIndexVersion", IMAGE_INDEX_VERSION))
       .take(MAINTENANCE_WRITE_BATCH_SIZE);
 
     await Promise.all(messages.map(async (message) => {

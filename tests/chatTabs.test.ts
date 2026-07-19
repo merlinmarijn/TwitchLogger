@@ -49,6 +49,14 @@ describe("chat tabs", () => {
     expect(parseChatTabs("not-json")).toEqual([]);
   });
 
+  it("round-trips a conditionless tab and matches every message", () => {
+    const allImages = { ...tab, rules: [] };
+    const message = { _id: "anything", messageText: "anything" } as ChatMessage;
+
+    expect(parseChatTabs(serializeChatTabs([allImages]))).toEqual([allImages]);
+    expect(tabMatchesMessage(allImages, message)).toBe(true);
+  });
+
   it("loads tabs saved before gallery layouts as chat feeds", () => {
     const legacyTab = {
       id: tab.id,

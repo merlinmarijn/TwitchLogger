@@ -4,7 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./functions";
 import { requireIngestionSecret } from "./lib/ingestionAuth";
-import { extractImageUrls } from "../shared/imageUrls";
+import { extractImageUrls, IMAGE_INDEX_VERSION } from "../shared/imageUrls";
 import { ensureTabMatch, indexMessageForTabs, tabAsMessageFilter } from "./chatTabs";
 import { matchesMessageFilter } from "../shared/messageFilters";
 import {
@@ -343,13 +343,13 @@ async function runImageBatch(ctx: MutationCtx, job: Doc<"adminJobs">) {
       ...message,
       hasImages: imageUrls.length > 0,
       imageUrls,
-      imageIndexVersion: 2,
+      imageIndexVersion: IMAGE_INDEX_VERSION,
       galleryChannelId: imageUrls.length > 0 ? message.channelId : undefined,
     };
     await ctx.db.patch(message._id, {
       hasImages: patched.hasImages,
       imageUrls,
-      imageIndexVersion: 2,
+      imageIndexVersion: IMAGE_INDEX_VERSION,
       galleryChannelId: patched.galleryChannelId,
     });
     await indexMessageForTabs(ctx, patched);

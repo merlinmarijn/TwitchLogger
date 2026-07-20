@@ -21,7 +21,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .topbar { min-height: 64px; flex: 0 0 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--border); background: #121214; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
 .brand { display: flex; align-items: center; gap: 11px; }
-.brand-mark { width: 34px; height: 34px; display: block; border-radius: 9px; background: #101014; object-fit: cover; }
+.brand-mark { width: 34px; height: 34px; display: block; object-fit: contain; }
 .brand div { display: grid; }
 .brand small { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .dashboard { min-height: 0; flex: 1; display: grid; grid-template-columns: 270px minmax(420px, 1fr); }

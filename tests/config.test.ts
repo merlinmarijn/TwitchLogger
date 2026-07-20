@@ -3,7 +3,6 @@ import { loadConfiguration } from "../worker/config";
 
 const completeEnvironment = {
   DATABASE_URL: "postgresql://twitch_logs:secret@postgres:5432/twitch_logs",
-  CONVEX_URL: "https://convex.example.com",
   INGESTION_SECRET: "0123456789abcdef0123456789abcdef",
   TWITCH_CLIENT_ID: "real-client-id",
   TWITCH_CLIENT_SECRET: "real-client-secret",
@@ -26,6 +25,7 @@ describe("loadConfiguration", () => {
         expect.stringContaining("TWITCH_CLIENT_SECRET"),
         expect.stringContaining("TWITCH_REDIRECT_URI"),
         expect.stringContaining("TWITCH_TOKEN_ENCRYPTION_KEY"),
+        expect.stringContaining("INGESTION_SECRET"),
       ]),
     );
   });
@@ -52,6 +52,9 @@ describe("loadConfiguration", () => {
         clientId: completeEnvironment.TWITCH_CLIENT_ID,
         redirectUri: completeEnvironment.TWITCH_REDIRECT_URI,
       },
+    });
+    expect(configuration.adminOptions).toMatchObject({
+      setupSecret: completeEnvironment.INGESTION_SECRET,
     });
   });
 

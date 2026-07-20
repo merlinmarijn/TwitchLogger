@@ -31,15 +31,28 @@ if (configuration.issues.length > 0) {
   );
 }
 
-const server = await createHttpServer(configuration, runtime, logger);
-
-if (configuration.options) {
-  const options = configuration.options;
+if (configuration.databaseUrl) {
   try {
-    database = new PostgresDatabase(options.databaseUrl);
+    database = new PostgresDatabase(configuration.databaseUrl);
     await database.migrate();
     const repository = new PostgresStore(database, logger);
+    runtime.database = database;
     runtime.store = repository;
+  } catch (error) {
+    runtime.integrationError = "PostgreSQL failed to initialize; inspect server logs";
+    runtime.store = undefined;
+    runtime.database = undefined;
+    await database?.close().catch(() => undefined);
+    database = undefined;
+    logger.error({ err: error }, "PostgreSQL initialization failed; server remains online");
+  }
+}
+
+const server = await createHttpServer(configuration, runtime, logger);
+
+if (configuration.options && runtime.store) {
+  const options = configuration.options;
+  try {
     const tokenStore = new EncryptedTokenStore(
       options.twitch.tokenStorePath,
       options.twitch.tokenEncryptionKey,
@@ -49,16 +62,13 @@ if (configuration.options) {
     const api = new TwitchApiClient(options.twitch.clientId, auth, logger);
     runtime.badges = new TwitchBadgeService(api, logger);
     const eventSub = new TwitchEventSubClient(options.twitch.eventSubUrl, api, logger);
-    chat = new TwitchChatService(auth, api, eventSub, repository, logger);
+    chat = new TwitchChatService(auth, api, eventSub, runtime.store, logger);
     await chat.start(abortController.signal);
   } catch (error) {
     runtime.integrationError = "Twitch integration failed to initialize; inspect server logs";
     runtime.auth = undefined;
     chat?.stop();
-    runtime.store = undefined;
-    await database?.close();
-    database = undefined;
-    logger.error({ err: error }, "Twitch integration initialization failed; server remains online");
+    logger.error({ err: error }, "Twitch integration initialization failed; database remains online");
   }
 }
 

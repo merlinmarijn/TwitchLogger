@@ -16,7 +16,6 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "convex": "latest",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
@@ -36,6 +35,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@types/ws": "^8.18.1",
+    "convex": "latest",
     "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
     "eslint": "latest",

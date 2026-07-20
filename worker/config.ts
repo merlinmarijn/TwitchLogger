@@ -7,15 +7,14 @@ type Environment = Record<string, string | undefined>;
 export interface LoadedConfiguration {
   options?: WorkerOptions;
   adminOptions?: {
-    convexUrl: string;
-    ingestionSecret: string;
+    setupSecret: string;
     encryptionKey: Buffer;
   };
+  databaseUrl?: string;
   issues: string[];
   warnings: string[];
   port: number;
   logLevel: string;
-  convexUrl?: string;
   publicWorkerUrl: string;
   frontendUrl: string;
 }
@@ -62,8 +61,7 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
   }
 
   const databaseUrl = required(env, "DATABASE_URL", issues);
-  const convexUrl = optional(env, "CONVEX_URL");
-  const ingestionSecret = optional(env, "INGESTION_SECRET");
+  const ingestionSecret = required(env, "INGESTION_SECRET", issues);
   const clientId = required(env, "TWITCH_CLIENT_ID", issues);
   const clientSecret = required(env, "TWITCH_CLIENT_SECRET", issues);
   const redirectUri = required(env, "TWITCH_REDIRECT_URI", issues);
@@ -81,6 +79,7 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
 
   const options =
     databaseUrl &&
+    ingestionSecret &&
     clientId &&
     clientSecret &&
     redirectUri &&
@@ -114,26 +113,19 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
         }
       : undefined;
 
-  const adminOptions = convexUrl && ingestionSecret && tokenEncryptionKey
-    ? { convexUrl, ingestionSecret, encryptionKey: tokenEncryptionKey }
+  const adminOptions = ingestionSecret && tokenEncryptionKey
+    ? { setupSecret: ingestionSecret, encryptionKey: tokenEncryptionKey }
     : undefined;
 
   return {
     options,
     adminOptions,
+    databaseUrl,
     issues,
     warnings,
     port,
     logLevel: env.LOG_LEVEL ?? "info",
-    convexUrl,
     publicWorkerUrl,
     frontendUrl,
   };
-}
-
-function optional(env: Environment, name: string) {
-  const value = env[name]?.trim();
-  return value && !placeholderPatterns.some((pattern) => pattern.test(value))
-    ? value
-    : undefined;
 }

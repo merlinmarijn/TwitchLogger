@@ -70,8 +70,8 @@ const operations: Array<{
     kind: "view_reindex",
     number: "02",
     title: "Rebuild saved views",
-    description: "Recompute every persistent chat and gallery filter index against the complete archive.",
-    impact: "Replaces derived indexes",
+    description: "Refresh every saved chat and gallery view revision and clear obsolete legacy matches.",
+    impact: "Refreshes saved-view state",
   },
   {
     kind: "integrity_scan",
@@ -84,7 +84,7 @@ const operations: Array<{
     kind: "database_measurement",
     number: "04",
     title: "Measure database",
-    description: "Count and size every application table to refresh the stored capacity report.",
+    description: "Count rows and measure PostgreSQL relations to refresh the stored capacity report.",
     impact: "Read-only",
   },
 ];
@@ -199,7 +199,7 @@ function SetupScreen({ unavailable, onComplete }: { unavailable?: string; onComp
         <p className="auth-index">CONTROL / 01</p>
         <h1>Establish the<br /><em>control room.</em></h1>
         <p className="auth-lede">
-          Create the only super admin credential. It is slow-hashed before storage and never sent to the transitional Convex admin store in plain text.
+          Create the only super admin credential. It is slow-hashed by the worker and stored only in PostgreSQL.
         </p>
         <div className="auth-assurance"><SignalIcon /><span>Credential material stays behind the worker security boundary.</span></div>
       </section>
@@ -352,7 +352,7 @@ function DashboardScreen({
         </nav>
         <div className="rail-status">
           <span className={data?.channels.problems ? "attention" : ""} />
-          <div><strong>{data?.channels.problems ? "Attention needed" : "Systems nominal"}</strong><small>Worker + transitional admin store</small></div>
+          <div><strong>{data?.channels.problems ? "Attention needed" : "Systems nominal"}</strong><small>Worker + PostgreSQL</small></div>
         </div>
         <button className="rail-logout" onClick={logout}>Sign out <ArrowIcon /></button>
       </aside>

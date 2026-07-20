@@ -4,6 +4,7 @@ import { loadConfiguration } from "../worker/config";
 import { createHttpServer } from "../worker/httpServer";
 import { AdminAuthError, AdminService } from "../worker/AdminService";
 import { createLogger } from "../worker/logger";
+import type { PostgresDatabase } from "../worker/database";
 import type { PostgresStore } from "../worker/PostgresStore";
 
 const servers: Array<ReturnType<typeof createHttpServer> extends Promise<infer T> ? T : never> = [];
@@ -58,14 +59,14 @@ describe("setup-mode HTTP server", () => {
       ...loadConfiguration({ TWITCH_FRONTEND_URL: "http://localhost:5173" }),
       port: 0,
       adminOptions: {
-        convexUrl: "https://admin.example",
-        ingestionSecret: "test-secret",
+        setupSecret: "test-secret",
         encryptionKey: Buffer.alloc(32, 1),
       },
     };
     const server = await createHttpServer(
       configuration,
       {
+        database: {} as PostgresDatabase,
         store: {
           addChannel: async () => {
             channelAdded = true;

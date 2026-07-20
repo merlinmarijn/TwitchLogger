@@ -9,9 +9,10 @@ PostgreSQL is now the live store for:
 - channels and logging state;
 - chat messages, image metadata, and deduplication;
 - saved chat/gallery tabs;
-- dashboard queries, search, filtering, and pagination.
+- dashboard queries, search, filtering, and pagination;
+- `/admin` authentication, sessions, metrics, audit events, and maintenance jobs.
 
-Convex is intentionally still present as a temporary compatibility dependency. The `/admin` control room continues to use Convex while its maintenance jobs are ported, and `convex/migration.ts` remains available so the migration can be rerun before the final decommission. All Convex tables, including admin data, are represented in PostgreSQL and copied by the migration command.
+Convex is no longer used by the live application. `convex/migration.ts` and `scripts/migrate-convex-to-postgres.ts` remain isolated as optional one-time import tooling until every deployment has completed its historical data transfer. All Convex tables, including admin data, are represented in PostgreSQL and copied by the migration command.
 
 ## Can this version be deployed before PostgreSQL is ready?
 
@@ -120,8 +121,8 @@ The importer does not delete PostgreSQL rows that no longer exist in Convex. Dur
 8. Deploy this PostgreSQL-backed application version.
 9. Verify `/health`, channels, recent history, filters, and a newly received Twitch message.
 10. If verification fails, stop the new deployment and restart the old Convex-backed release; the migration does not delete Convex data.
-11. Keep `CONVEX_URL` and `INGESTION_SECRET` while `/admin` still uses Convex.
-12. After the admin service is ported, take a final Convex backup and remove the Convex dependency and environment values.
+11. Verify `/admin` login, dashboard metrics, and one PostgreSQL maintenance operation.
+12. Take a final Convex backup, remove `CONVEX_URL` from the live deployment, and retire the old deployment when rollback is no longer required.
 
 The brief ingestion pause between steps 5 and 8 prevents messages from arriving in Convex after the final copy. If avoiding any pause is mandatory, implement temporary dual-writing and reconciliation before attempting the production cutover.
 
@@ -132,7 +133,7 @@ Prerequisites:
 - Node.js 22 or newer;
 - PostgreSQL 18 (the SQL is intentionally conventional and may also work on recent older versions, but 18 is the supported target);
 - a Twitch application;
-- the existing Convex deployment only while migrating or using `/admin`.
+- the existing Convex deployment only while running the optional historical importer.
 
 Install dependencies and configure the environment:
 
@@ -143,7 +144,7 @@ npm run db:migrate
 npm run dev
 ```
 
-`npm run dev` starts Vite and the Node worker. It no longer starts `convex dev`. Use `npm run dev:convex` only when changing/deploying the temporary Convex migration or admin functions.
+`npm run dev` starts Vite and the PostgreSQL-backed Node worker. Use `npm run dev:convex` only when preparing the optional historical export function.
 
 Important environment variables:
 
@@ -153,7 +154,8 @@ Important environment variables:
 - `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_REDIRECT_URI`: Twitch OAuth application settings.
 - `TWITCH_TOKEN_ENCRYPTION_KEY`: base64-encoded 32-byte key for the local encrypted OAuth-token store.
 - `TWITCH_TOKEN_STORE_PATH`: encrypted token file location.
-- `CONVEX_URL`, `INGESTION_SECRET`: temporary server-side values used by the Convex importer and the transitional admin console.
+- `INGESTION_SECRET`: server-side one-time `/admin` setup key; the historical importer also uses it to authenticate to its source.
+- `CONVEX_URL`: used only by the optional historical importer, never by the live application.
 
 Never prefix secrets with `VITE_`; Vite exposes those variables to browser code.
 
@@ -169,9 +171,9 @@ Twitch EventSub WebSocket
       -> PostgresStore
           -> PostgreSQL 18
 
-/admin (temporary compatibility path)
+/admin
   -> AdminService
-      -> Convex
+      -> PostgreSQL 18
 
 Convex migration source
   -> migration:exportPage

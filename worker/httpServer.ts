@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
 import type { LoadedConfiguration } from "./config";
+import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
 import type { ThirdPartyEmoteService } from "./emotes/ThirdPartyEmoteService";
 import type { TwitchBadgeService } from "./twitch/TwitchBadgeService";
@@ -32,14 +33,15 @@ export interface ApplicationRuntimeState {
   emotes?: ThirdPartyEmoteService;
   integrationError?: string;
   store?: PostgresStore;
+  database?: PostgresDatabase;
 }
 
 export interface HttpServerDependencies {
   fetchTouhouWikiImage?: (url: URL) => Promise<ProxiedImage>;
   resolveImgurImageUrl?: (url: URL) => Promise<URL>;
   createAdminService?: (
-    convexUrl: string,
-    ingestionSecret: string,
+    database: PostgresDatabase,
+    setupSecret: string,
     encryptionKey: Buffer,
   ) => AdminService;
 }
@@ -56,11 +58,11 @@ export function createHttpServer(
     frontendOrigin,
     normalizeOrigin(configuration.publicWorkerUrl),
   ].filter((origin): origin is string => Boolean(origin)));
-  const admin = configuration.adminOptions
-    ? (dependencies.createAdminService ?? ((convexUrl, ingestionSecret, encryptionKey) =>
-        new AdminService(convexUrl, ingestionSecret, encryptionKey)))(
-        configuration.adminOptions.convexUrl,
-        configuration.adminOptions.ingestionSecret,
+  const admin = configuration.adminOptions && runtime.database
+    ? (dependencies.createAdminService ?? ((database, setupSecret, encryptionKey) =>
+        new AdminService(database, setupSecret, encryptionKey)))(
+        runtime.database,
+        configuration.adminOptions.setupSecret,
         configuration.adminOptions.encryptionKey,
       )
     : undefined;
@@ -122,7 +124,7 @@ export function createHttpServer(
         configured: false,
         authenticated: false,
         totpEnabled: false,
-        error: "Admin storage is unavailable until the transitional Convex settings and encryption key are configured",
+        error: "Admin storage is unavailable until PostgreSQL, INGESTION_SECRET, and the encryption key are configured",
       });
       return;
     }

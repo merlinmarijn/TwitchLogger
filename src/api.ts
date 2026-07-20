@@ -1,8 +1,3 @@
-import {
-  makeFunctionReference,
-  type PaginationOptions,
-  type PaginationResult,
-} from "convex/server";
 import type { MessageFilter } from "../shared/messageFilters";
 import type { ChatViewTab } from "./chatTabModel";
 
@@ -13,12 +8,7 @@ export interface Channel {
   username: string;
   displayName: string;
   loggingEnabled: boolean;
-  connectionStatus:
-    | "disconnected"
-    | "connecting"
-    | "connected"
-    | "error"
-    | "authorization_required";
+  connectionStatus: "disconnected" | "connecting" | "connected" | "error" | "authorization_required";
   connectionError?: string;
   lastMessageAt?: number;
 }
@@ -39,10 +29,7 @@ export interface ChatMessage {
   isVip: boolean;
   messageType: string;
   imageUrls?: string[];
-  metadata?: {
-    fragments?: unknown;
-    [key: string]: unknown;
-  };
+  metadata?: { fragments?: unknown; [key: string]: unknown };
 }
 
 export interface ChatBadgeDefinition {
@@ -53,88 +40,55 @@ export interface ChatBadgeDefinition {
   description: string;
 }
 
+export interface ApiOperation<Args, Result> {
+  path: string;
+  method: "GET" | "POST";
+  poll?: boolean;
+  _args?: Args;
+  _result?: Result;
+}
+
+export interface PaginationResult<T> {
+  page: T[];
+  isDone: boolean;
+  continueCursor: string;
+}
+
+function operation<Args, Result>(path: string, method: "GET" | "POST", poll = false) {
+  return { path, method, poll } as ApiOperation<Args, Result>;
+}
+
+type MessagePageArgs = {
+  channelId?: string;
+  tabId?: string;
+  tabRevision?: number;
+  tabIndexRevision?: number;
+  paginationOpts: { numItems: number; cursor?: string | null };
+  quickSearch?: string;
+  filters?: MessageFilter[];
+  afterTimestamp?: number;
+};
+
 export const api = {
   platforms: {
-    ensureSeeded: makeFunctionReference<"mutation", Record<string, never>, null>(
-      "platforms:ensureSeeded",
-    ),
+    ensureSeeded: operation<Record<string, never>, null>("/api/data/platforms/ensure-seeded", "POST"),
   },
   channels: {
-    list: makeFunctionReference<"query", Record<string, never>, Channel[]>("channels:list"),
-    add: makeFunctionReference<
-      "mutation",
-      {
-        platform: "twitch";
-        username: string;
-        displayName?: string;
-        loggingEnabled: boolean;
-      },
-      string
-    >("channels:add"),
-    setLogging: makeFunctionReference<
-      "mutation",
-      { id: string; enabled: boolean },
-      null
-    >("channels:setLogging"),
-    reconnect: makeFunctionReference<"mutation", { id: string }, null>(
-      "channels:reconnect",
-    ),
-    remove: makeFunctionReference<"mutation", { id: string }, null>("channels:remove"),
+    list: operation<Record<string, never>, Channel[]>("/api/data/channels", "GET", true),
+    add: operation<{ platform: "twitch"; username: string; displayName?: string; loggingEnabled: boolean }, string>("/api/data/channels/add", "POST"),
+    setLogging: operation<{ id: string; enabled: boolean }, null>("/api/data/channels/set-logging", "POST"),
+    reconnect: operation<{ id: string }, null>("/api/data/channels/reconnect", "POST"),
+    remove: operation<{ id: string }, null>("/api/data/channels/remove", "POST"),
   },
   chatTabs: {
-    list: makeFunctionReference<"query", Record<string, never>, ChatViewTab[]>(
-      "chatTabs:list",
-    ),
-    save: makeFunctionReference<
-      "mutation",
-      { tab: Pick<ChatViewTab, "id" | "name" | "layout" | "match" | "rules"> },
-      null
-    >("chatTabs:save"),
-    importLocal: makeFunctionReference<
-      "mutation",
-      { tabs: Array<Pick<ChatViewTab, "id" | "name" | "layout" | "match" | "rules">> },
-      null
-    >("chatTabs:importLocal"),
-    remove: makeFunctionReference<"mutation", { id: string }, null>("chatTabs:remove"),
+    list: operation<Record<string, never>, ChatViewTab[]>("/api/data/chat-tabs", "GET", true),
+    save: operation<{ tab: Pick<ChatViewTab, "id" | "name" | "layout" | "match" | "rules"> }, null>("/api/data/chat-tabs/save", "POST"),
+    importLocal: operation<{ tabs: Array<Pick<ChatViewTab, "id" | "name" | "layout" | "match" | "rules">> }, null>("/api/data/chat-tabs/import", "POST"),
+    remove: operation<{ id: string }, null>("/api/data/chat-tabs/remove", "POST"),
   },
   messages: {
-    listRecent: makeFunctionReference<
-      "query",
-      { channelId?: string; limit?: number },
-      ChatMessage[]
-    >("messages:listRecent"),
-    page: makeFunctionReference<
-      "query",
-      {
-        channelId?: string;
-        tabId?: string;
-        tabRevision?: number;
-        tabIndexRevision?: number;
-        paginationOpts: PaginationOptions;
-        quickSearch?: string;
-        filters?: MessageFilter[];
-        afterTimestamp?: number;
-      },
-      PaginationResult<ChatMessage>
-    >("messages:page"),
-    pageImages: makeFunctionReference<
-      "query",
-      {
-        channelId?: string;
-        tabId?: string;
-        tabRevision?: number;
-        tabIndexRevision?: number;
-        paginationOpts: PaginationOptions;
-        quickSearch?: string;
-        filters?: MessageFilter[];
-        afterTimestamp?: number;
-      },
-      PaginationResult<ChatMessage>
-    >("messages:pageImages"),
-    filterMatchCounts: makeFunctionReference<
-      "query",
-      { channelId?: string; filters: MessageFilter[]; afterTimestamp?: number },
-      Array<{ id: string; count: number }>
-    >("messages:filterMatchCounts"),
+    page: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page", "POST", true),
+    pageImages: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page-images", "POST", true),
+    filterMatchCounts: operation<{ channelId?: string; filters: MessageFilter[]; afterTimestamp?: number }, Array<{ id: string; count: number }>>("/api/data/messages/filter-counts", "POST", true),
   },
 };

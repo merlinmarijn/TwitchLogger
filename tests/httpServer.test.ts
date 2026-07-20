@@ -68,7 +68,7 @@ describe("setup-mode HTTP server", () => {
     expect(body.ok).toBe(true);
     expect(body.ready).toBe(false);
     expect(body.configured).toBe(false);
-    expect(body.configurationIssues.some((issue) => issue.includes("CONVEX_URL"))).toBe(
+    expect(body.configurationIssues.some((issue) => issue.includes("DATABASE_URL"))).toBe(
       true,
     );
   });

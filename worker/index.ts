@@ -1,11 +1,12 @@
-import { ConvexChatRepository } from "./ConvexChatRepository";
 import { loadConfiguration } from "./config";
+import { PostgresDatabase } from "./database";
 import { ThirdPartyEmoteService } from "./emotes/ThirdPartyEmoteService";
 import {
   createHttpServer,
   type ApplicationRuntimeState,
 } from "./httpServer";
 import { createLogger } from "./logger";
+import { PostgresStore } from "./PostgresStore";
 import { EncryptedTokenStore } from "./twitch/EncryptedTokenStore";
 import { TwitchApiClient } from "./twitch/TwitchApiClient";
 import { TwitchAuthService } from "./twitch/TwitchAuthService";
@@ -20,6 +21,7 @@ const runtime: ApplicationRuntimeState = {
   emotes: new ThirdPartyEmoteService(logger),
 };
 let chat: TwitchChatService | undefined;
+let database: PostgresDatabase | undefined;
 
 for (const warning of configuration.warnings) logger.warn({ warning }, "Configuration warning");
 if (configuration.issues.length > 0) {
@@ -34,6 +36,10 @@ const server = await createHttpServer(configuration, runtime, logger);
 if (configuration.options) {
   const options = configuration.options;
   try {
+    database = new PostgresDatabase(options.databaseUrl);
+    await database.migrate();
+    const repository = new PostgresStore(database, logger);
+    runtime.store = repository;
     const tokenStore = new EncryptedTokenStore(
       options.twitch.tokenStorePath,
       options.twitch.tokenEncryptionKey,
@@ -43,25 +49,15 @@ if (configuration.options) {
     const api = new TwitchApiClient(options.twitch.clientId, auth, logger);
     runtime.badges = new TwitchBadgeService(api, logger);
     const eventSub = new TwitchEventSubClient(options.twitch.eventSubUrl, api, logger);
-    const repository = new ConvexChatRepository(
-      options.convexUrl,
-      options.ingestionSecret,
-      logger,
-    );
-    void repository.startImageIndexBackfill()
-      .then(({ scheduled }) => {
-        if (scheduled) logger.info("Started the one-time gallery image index backfill");
-      })
-      .catch((error) => logger.warn(
-        { err: error },
-        "Could not start the gallery image index backfill",
-      ));
     chat = new TwitchChatService(auth, api, eventSub, repository, logger);
     await chat.start(abortController.signal);
   } catch (error) {
     runtime.integrationError = "Twitch integration failed to initialize; inspect server logs";
     runtime.auth = undefined;
     chat?.stop();
+    runtime.store = undefined;
+    await database?.close();
+    database = undefined;
     logger.error({ err: error }, "Twitch integration initialization failed; server remains online");
   }
 }
@@ -70,6 +66,7 @@ async function shutdown(signal: string) {
   logger.info({ signal }, "Shutting down Twitch worker");
   abortController.abort();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await database?.close();
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));

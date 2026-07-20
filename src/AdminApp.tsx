@@ -198,7 +198,7 @@ function SetupScreen({ unavailable, onComplete }: { unavailable?: string; onComp
         <p className="auth-index">CONTROL / 01</p>
         <h1>Establish the<br /><em>control room.</em></h1>
         <p className="auth-lede">
-          Create the only super admin credential. It is slow-hashed before storage and never sent to Convex in plain text.
+          Create the only super admin credential. It is slow-hashed before storage and never sent to the transitional Convex admin store in plain text.
         </p>
         <div className="auth-assurance"><SignalIcon /><span>Credential material stays behind the worker security boundary.</span></div>
       </section>
@@ -348,7 +348,7 @@ function DashboardScreen({
         </nav>
         <div className="rail-status">
           <span className={data?.channels.problems ? "attention" : ""} />
-          <div><strong>{data?.channels.problems ? "Attention needed" : "Systems nominal"}</strong><small>Worker + Convex</small></div>
+          <div><strong>{data?.channels.problems ? "Attention needed" : "Systems nominal"}</strong><small>Worker + transitional admin store</small></div>
         </div>
         <button className="rail-logout" onClick={logout}>Sign out <ArrowIcon /></button>
       </aside>

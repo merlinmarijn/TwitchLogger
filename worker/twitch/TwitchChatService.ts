@@ -5,7 +5,7 @@ import type {
   TwitchAuthorization,
   TwitchChatMessage,
 } from "../types";
-import type { ConvexChatRepository } from "../ConvexChatRepository";
+import type { ChatRepository } from "../ChatRepository";
 import type { TwitchApiClient } from "./TwitchApiClient";
 import type { TwitchAuthService } from "./TwitchAuthService";
 import type {
@@ -29,7 +29,7 @@ export class TwitchChatService {
     private readonly auth: TwitchAuthService,
     private readonly api: TwitchApiClient,
     private readonly eventSub: TwitchEventSubClient,
-    private readonly repository: ConvexChatRepository,
+    private readonly repository: ChatRepository,
     private readonly logger: Logger,
   ) {
     this.eventSub.onNotification((notification) => {
@@ -57,7 +57,7 @@ export class TwitchChatService {
           .then(() => this.synchronizeChannels(channels))
           .catch((error) => this.logger.error({ err: error }, "Channel synchronization failed"));
       },
-      (error) => this.logger.error({ err: error }, "Convex channel subscription failed"),
+      (error) => this.logger.error({ err: error }, "PostgreSQL channel polling failed"),
     );
     signal.addEventListener("abort", () => this.stop(), { once: true });
   }
@@ -92,7 +92,7 @@ export class TwitchChatService {
           username = user.login;
           displayName = user.displayName;
           await this.repository.saveResolvedChannel({
-            convexId: channel._id,
+            storageId: channel._id,
             twitchId,
             username,
             displayName,
@@ -103,7 +103,7 @@ export class TwitchChatService {
           );
         }
         resolved.push({
-          convexId: channel._id,
+          storageId: channel._id,
           twitchId,
           username,
           displayName,
@@ -157,7 +157,7 @@ export class TwitchChatService {
       await Promise.all(
         [...this.channelsByTwitchId.values()].map((channel) =>
           this.repository.setConnectionStatus(
-            channel.convexId,
+            channel.storageId,
             "authorization_required",
             authorization.reason ?? "Connect Twitch to start logging",
           ),
@@ -180,7 +180,7 @@ export class TwitchChatService {
     await Promise.all(
       [...this.channelsByTwitchId.values()].map((channel) =>
         this.repository
-          .setConnectionStatus(channel.convexId, status, error)
+          .setConnectionStatus(channel.storageId, status, error)
           .catch((cause) =>
             this.logger.warn(
               { err: cause, channel: channel.username },

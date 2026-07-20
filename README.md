@@ -1,223 +1,194 @@
 # Twitch Logs
 
-A TypeScript chat-monitoring dashboard backed by Convex. Twitch messages arrive through the current `channel.chat.message` EventSub WebSocket subscription; the integration does not use IRC, deprecated chat APIs, or polling.
+A TypeScript Twitch chat dashboard backed by PostgreSQL 18. Twitch messages arrive through Twitch EventSub WebSockets and are stored by the Node worker; the browser reads and mutates application data through the worker API.
 
-The live feed renders native Twitch emotes from EventSub message fragments, resolves BTTV, FrankerFaceZ, and 7TV global/channel emotes, and displays each chatter's Twitch badges. Artwork catalogs are cached for 15 minutes; an unavailable provider falls back to the original message text or textual badge labels without interrupting ingestion or the feed.
+## Storage cutover status
 
-The Filters tab provides reusable, browser-persisted filter presets. Each preset can match all or any sender, message, channel, role, badge, or message-type conditions and then show only, hide, or highlight matching messages. Text conditions support validated regular expressions, including `/pattern/flags` notation. Starter recipes make common filters available without configuring rules manually.
+PostgreSQL is now the live store for:
 
-The chat feed also has browser-persisted tabs. **All chat** is always available, while **Add tab** creates a named filtered view using the same condition editor. The Image Gallery quick start turns direct image links from matching logs into a responsive, newest-first visual wall; any tab can switch between gallery and chat-feed presentation. Mentions and custom quick starts can combine multiple rules with all/any matching.
+- channels and logging state;
+- chat messages, image metadata, and deduplication;
+- saved chat/gallery tabs;
+- dashboard queries, search, filtering, and pagination.
 
-## Production container
+Convex is intentionally still present as a temporary compatibility dependency. The `/admin` control room continues to use Convex while its maintenance jobs are ported, and `convex/migration.ts` remains available so the migration can be rerun before the final decommission. All Convex tables, including admin data, are represented in PostgreSQL and copied by the migration command.
 
-The supplied image contains only the compiled dashboard and the always-on Node ingestion worker. It does **not** contain, start, provision, or emulate a Convex database. At runtime it connects to the existing deployment supplied through `CONVEX_URL`.
+## Can this version be deployed before PostgreSQL is ready?
 
-The same image can move between environments without rebuilding: `/runtime-config.js` exposes only the public Convex deployment URL and optional public worker URL to the browser at container startup. Twitch secrets, OAuth tokens, the ingestion secret, and the token-encryption key remain server-side.
+No. Committing and pushing the code is harmless by itself, but if merging or pushing to `main` automatically deploys this version, the production deployment will expect `DATABASE_URL` immediately.
 
-Create the production environment file:
+Without a usable PostgreSQL connection:
 
-```powershell
-Copy-Item .env.production.example .env.production
+- the HTTP process remains online so `/health` can report the configuration problem;
+- the normal dashboard shows the setup-required screen;
+- Twitch EventSub ingestion does not start;
+- no new chat messages are written to Convex as a fallback;
+- the existing Convex data is not deleted or changed.
+
+In other words, deploying before PostgreSQL is prepared causes an ingestion outage even though the old data remains safe in Convex. This release does not automatically fall back to Convex for normal application traffic.
+
+Use one of these approaches:
+
+1. Commit and push to a feature branch, but do not merge to an auto-deployed production branch yet.
+2. Provision PostgreSQL, migrate the Convex data, and configure `DATABASE_URL` in production before merging.
+3. If production must receive intermediate commits, first add and test an explicit Convex/PostgreSQL backend feature flag. Do not rely on the presence or absence of `DATABASE_URL` as an implicit cutover switch.
+
+The recommended approach for this repository is option 2. It has fewer moving parts and prevents the two databases from accepting competing writes during the cutover.
+
+## Production with PostgreSQL 18
+
+Copy the examples and change every placeholder:
+
+```sh
+cp .env.production.example .env.production
+cp compose.example.yaml compose.yaml
+docker compose up -d --build
 ```
 
-Set these values in `.env.production`:
+The example Compose stack starts:
 
-- `CONVEX_URL`: your existing `https://*.convex.cloud` deployment.
-- `INGESTION_SECRET`: the same value already configured for the Convex `channels:updateResolved`, `channels:updateConnectionStatus`, and `messages:insertIncoming` functions.
-- `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`: your confidential Twitch application.
-- `TWITCH_REDIRECT_URI`: the public callback, such as `https://chatlogs.example.com/auth/twitch/callback`.
-- `TWITCH_FRONTEND_URL`: the public application origin, without a trailing slash.
-- `TWITCH_TOKEN_ENCRYPTION_KEY`: a base64-encoded 32-byte random key.
-- `PUBLIC_WORKER_URL`: leave empty when one container serves both UI and worker. Set it only if a proxy exposes worker routes on another origin.
+- `postgres:18-bookworm` with a persistent `postgres_data` volume;
+- the Twitch Logs application with a persistent OAuth-token volume.
 
-Build and tag the image when you are ready:
+Keep the password in `DATABASE_URL` synchronized with `POSTGRES_PASSWORD`. For an existing PostgreSQL server, point `DATABASE_URL` at that server and remove the example `postgres` service if desired.
 
-```powershell
-docker build -t your-registry.example.com/twitch-logs:latest .
-docker push your-registry.example.com/twitch-logs:latest
+The application runs SQL migrations automatically at startup. They can also be applied explicitly:
+
+```sh
+npm run db:migrate
 ```
 
-Example production launch:
+The first migration is [db/migrations/001_initial.sql](db/migrations/001_initial.sql). Migration execution is serialized with a PostgreSQL advisory lock and recorded in `schema_migrations`.
 
-```powershell
-docker run -d --name twitch-logs `
-  --init `
-  --restart unless-stopped `
-  --read-only `
-  --tmpfs /tmp:size=64m,mode=1777 `
-  --cap-drop ALL `
-  --security-opt no-new-privileges:true `
-  --env-file .env.production `
-  -p 8787:8787 `
-  -v twitch-logs-tokens:/data `
-  your-registry.example.com/twitch-logs:latest
-```
+## Migrating all Convex data
 
-Or copy `compose.example.yaml` to `compose.yaml` and change the image/build settings for your registry. The Compose file intentionally contains no Convex service.
+Do the initial copy before opening the new dashboard or starting ingestion against an empty PostgreSQL database. This avoids creating rows that conflict with IDs from Convex.
 
-The image:
+1. Deploy the current `convex/` directory so `migration:exportPage` exists in the source deployment:
 
-- Uses a two-stage Node 22 build.
-- Runs as the unprivileged `node` user.
-- Listens on `0.0.0.0:8787` by default.
-- Includes an HTTP health check at `/health`.
-- Persists only the encrypted Twitch token file under `/data`.
-- Accepts all configuration at runtime; no secrets are Docker build arguments.
-- Remains online in setup mode when required configuration is missing or still contains example placeholders.
+   ```sh
+   npx convex deploy
+   ```
 
-`GET /health` is a liveness endpoint and always returns HTTP 200 while the process is operating. Its JSON includes `ready`, `configured`, and safe `configurationIssues` fields. `GET /ready` returns HTTP 503 until configuration and integration initialization succeed. Missing credentials disable ingestion and OAuth but do not terminate the dashboard container.
+   Use `npx convex dev` instead when migrating a development deployment.
 
-Place TLS in front of port 8787 with your production ingress or reverse proxy. The public origin and Twitch callback must route to the same container endpoints. Run one ingestion-worker replica unless you add leader election and a shared OAuth-state/token-store implementation.
+2. Set these server-side values in `.env` or the shell:
 
-The image runs with UID/GID `1000:1000`. Docker named volumes are initialized from the image's writable `/data` directory. On Kubernetes or another orchestrator that mounts an empty volume with different ownership, set the pod security context `fsGroup: 1000` (or otherwise make `/data` writable by UID 1000).
+   ```dotenv
+   DATABASE_URL=postgresql://twitch_logs:password@localhost:5432/twitch_logs
+   CONVEX_URL=https://your-deployment.convex.cloud
+   INGESTION_SECRET=the-secret-also-configured-in-convex
+   ```
 
-Your existing Convex deployment must already contain the functions and schema in `convex/`. Those source files are deployment definitions for your external Convex project; they are not included in the final runtime image and do not create a local database.
+3. Run the importer:
 
-## Architecture
+   ```sh
+   npm run migrate:convex
+   ```
 
-```text
-Twitch OAuth + Helix + EventSub WebSocket
-                  │
-                  ▼
-        external Node worker
-  Auth → API → EventSub → Chat service
-                  │ normalized messages
-                  ▼
-        guarded Convex mutations
-                  │
-                  ▼
-      Convex database + subscriptions
-                  │
-                  ▼
-          React/Vite dashboard
-```
+The importer pages through and upserts these tables in dependency order:
 
-The Node worker is an intentional deployment boundary. Convex actions have finite execution time and are not a suitable home for a permanent WebSocket. The worker watches the Convex channel query reactively, resolves new Twitch usernames with Helix, adds or removes EventSub subscriptions, and sends normalized messages back through an ingestion-secret-protected mutation.
+1. `platforms`
+2. `channels`
+3. `chatTabs`
+4. `chatMessages`
+5. `chatTabMatches`
+6. `adminSettings`
+7. `adminJobs`
+8. `adminMetrics`
+9. `adminDatabaseStats`
+10. `maintenanceThrottle`
+11. `adminAuditLog`
 
-Main components:
+Convex document IDs and creation times are preserved. Foreign-key relationships therefore remain intact. Each page is committed in one PostgreSQL transaction, and rows are upserted by their preserved ID, so an interrupted import or a final catch-up import can be safely rerun. Set `MIGRATION_PAGE_SIZE` from 1 to 500 to tune batches; the default is 250.
 
-- `TwitchAuthService`: authorization-code OAuth, CSRF state checking, startup/hourly validation, serialized refresh, and revoked-authorization handling.
-- `EncryptedTokenStore`: AES-256-GCM token storage. The encryption key stays in the worker environment or deployment secret manager.
-- `TwitchApiClient`: username lookup and EventSub subscription management with automatic refresh-and-retry after a 401.
-- `TwitchEventSubClient`: welcome/session handling, keepalive deadlines, Twitch-directed seamless reconnect, dropped-connection backoff, resubscription, and notification-ID deduplication.
-- `TwitchChatService`: channel lifecycle and a reusable `onMessage` callback that emits normalized `TwitchChatMessage` values without depending on React or Convex UI code.
-- `ConvexChatRepository`: the worker's storage boundary. Convex also deduplicates by Twitch message ID transactionally.
+The importer does not delete PostgreSQL rows that no longer exist in Convex. During the overlap period, prefer soft deletion and run the final import immediately before making Convex read-only.
 
-One WebSocket is shared by all configured channels. The service already models channels as a collection, so adding more channels does not require a new architecture. Twitch currently allows many subscriptions per socket; capacity sharding can be added inside `TwitchEventSubClient` later without changing the UI or database model.
+## Recommended final-cutover sequence
 
-## Admin control room
+1. Commit and push this work to a branch that does not automatically replace production.
+2. Provision PostgreSQL 18 and configure backups and persistent storage.
+3. Set `DATABASE_URL` for the migration environment and run `npm run db:migrate`.
+4. Deploy `convex/migration.ts` to the current Convex deployment.
+5. Stop the old Convex-writing worker or otherwise pause ingestion briefly.
+6. Run `npm run migrate:convex` and verify the reported counts against Convex.
+7. Add the tested `DATABASE_URL` to the production application environment.
+8. Deploy this PostgreSQL-backed application version.
+9. Verify `/health`, channels, recent history, filters, and a newly received Twitch message.
+10. If verification fails, stop the new deployment and restart the old Convex-backed release; the migration does not delete Convex data.
+11. Keep `CONVEX_URL` and `INGESTION_SECRET` while `/admin` still uses Convex.
+12. After the admin service is ported, take a final Convex backup and remove the Convex dependency and environment values.
 
-Open `/admin` on the frontend origin. The first visit creates the single super admin password; later visits can use that password or a six-digit code from a paired authenticator app. Passwords are scrypt-hashed in the worker before storage. The TOTP secret is AES-256-GCM encrypted with `TWITCH_TOKEN_ENCRYPTION_KEY`, and admin sessions use signed, HttpOnly, SameSite cookies.
+The brief ingestion pause between steps 5 and 8 prevents messages from arriving in Convex after the final copy. If avoiding any pause is mandatory, implement temporary dual-writing and reconciliation before attempting the production cutover.
 
-The control room provides persistent, cancellable operations for rebuilding image metadata, rebuilding saved-view indexes, scanning message references, and measuring application document payloads. Each operation runs in bounded Convex batches and stores its cursor, progress, result, and audit events in the database, so refreshing the browser does not lose its state. Database measurements exclude Convex indexes, backups, file storage, logs, and platform overhead because those values are not exposed to database functions.
+## Local development
 
-Deploy the updated `convex/` schema and functions before using the route. In development, run the full `npm run dev` command so `/admin` can reach both Vite and the worker. No additional secret is required: admin storage uses the existing `CONVEX_URL`, `INGESTION_SECRET`, and `TWITCH_TOKEN_ENCRYPTION_KEY` worker settings.
+Prerequisites:
 
-## Database diagnostics
+- Node.js 22 or newer;
+- PostgreSQL 18 (the SQL is intentionally conventional and may also work on recent older versions, but 18 is the supported target);
+- a Twitch application;
+- the existing Convex deployment only while migrating or using `/admin`.
 
-The `debug` Convex module exposes read-only, `INGESTION_SECRET`-protected functions for operational troubleshooting:
+Install dependencies and configure the environment:
 
-- `debug:databaseStats` scans all application tables in globally paced read batches and reports document counts, Convex-calculated payload bytes, averages, largest documents, and creation-time ranges per table. Its total excludes indexes, backups, logs, and other Convex platform overhead because those values are not available to database functions.
-- `debug:health` reports platform and channel state, channels that are unresolved, stale, or errored, and the latest ingested message. Pass `staleAfterMs` to change the default 15-minute activity threshold.
-- `debug:findMessage` looks up an `externalMessageId`, an `eventNotificationId`, or both through their indexes and flags duplicate matches.
-
-These can be run from the Convex dashboard or with `npx convex run`. Pass the deployment's existing `INGESTION_SECRET` as `ingestionSecret`; `debug:databaseStats` also accepts a `pageSize` from 1 to 100 for tuning a large scan.
-
-## Twitch developer application setup
-
-1. Sign in to the [Twitch Developer Console](https://dev.twitch.tv/console/apps) and register an application.
-2. Add `http://localhost:8787/auth/twitch/callback` as an OAuth redirect URL. It must exactly match `TWITCH_REDIRECT_URI`.
-3. Use a **Confidential** client type because the worker keeps a client secret and refresh token server-side.
-4. Copy the Client ID and generate a Client Secret. Put both only in the worker environment.
-5. The OAuth flow requests only `user:read:chat`, the scope Twitch documents for [`channel.chat.message`](https://dev.twitch.tv/docs/eventsub/eventsub-subscription-types/#channelchatmessage). The authorized user ID becomes the subscription's `user_id`; each configured broadcaster becomes its `broadcaster_user_id`.
-
-The worker uses Twitch's [authorization-code grant](https://dev.twitch.tv/docs/authentication/getting-tokens-oauth/#authorization-code-grant-flow), which returns refreshable user tokens. It validates them at startup and hourly as required by Twitch's [token-validation guidance](https://dev.twitch.tv/docs/authentication/validate-tokens/), and follows Twitch's [WebSocket reconnect and keepalive rules](https://dev.twitch.tv/docs/eventsub/handling-websocket-events/).
-
-## Local setup
-
-Prerequisites for local development: Node.js 22, npm, an existing Convex project, and the Twitch application above.
-
-```powershell
+```sh
 npm install
-Copy-Item .env.example .env.local
-```
-
-Generate the two independent secrets:
-
-```powershell
-[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
-[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLower()
-```
-
-Use the base64 value for `TWITCH_TOKEN_ENCRYPTION_KEY` and the hex value for `INGESTION_SECRET`. Complete `.env.local`:
-
-```dotenv
-VITE_CONVEX_URL=https://your-deployment.convex.cloud
-VITE_WORKER_URL=http://localhost:8787
-
-CONVEX_URL=https://your-deployment.convex.cloud
-TWITCH_CLIENT_ID=your_client_id
-TWITCH_CLIENT_SECRET=your_client_secret
-TWITCH_REDIRECT_URI=http://localhost:8787/auth/twitch/callback
-TWITCH_FRONTEND_URL=http://localhost:5173
-TWITCH_TOKEN_ENCRYPTION_KEY=your_base64_32_byte_key
-TWITCH_TOKEN_STORE_PATH=./data/twitch-tokens.enc
-INGESTION_SECRET=your_random_hex_secret
-WORKER_PORT=8787
-LOG_LEVEL=info
-```
-
-Do not add `VITE_` to any secret. Vite deliberately exposes `VITE_*` values to browser code. `VITE_CONVEX_URL` and `VITE_WORKER_URL` are public service locations, not credentials.
-
-Initialize/deploy the Convex development backend:
-
-```powershell
-npx convex dev
-```
-
-Set the same ingestion secret in the Convex deployment. Omitting the value from the command keeps it out of shell history:
-
-```powershell
-npx convex env set INGESTION_SECRET
-```
-
-Then start all three local processes:
-
-```powershell
+cp .env.example .env
+npm run db:migrate
 npm run dev
 ```
 
-Open `http://localhost:5173`, choose **Connect Twitch**, authorize the single read-chat scope, and add a Twitch username. The worker resolves it to a stable Twitch user ID before subscribing.
+`npm run dev` starts Vite and the Node worker. It no longer starts `convex dev`. Use `npm run dev:convex` only when changing/deploying the temporary Convex migration or admin functions.
 
-If `npx convex dev` rewrites the Convex URL in `.env.local`, make sure both `VITE_CONVEX_URL` and `CONVEX_URL` point to that deployment before restarting the worker.
+Important environment variables:
 
-## Token storage and deployment
+- `DATABASE_URL`: PostgreSQL connection string used by the worker and migration tools.
+- `VITE_WORKER_URL`: browser-visible worker origin during split local development.
+- `PUBLIC_WORKER_URL`: browser-visible worker origin injected into the production runtime config; leave empty when the dashboard and worker share an origin.
+- `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_REDIRECT_URI`: Twitch OAuth application settings.
+- `TWITCH_TOKEN_ENCRYPTION_KEY`: base64-encoded 32-byte key for the local encrypted OAuth-token store.
+- `TWITCH_TOKEN_STORE_PATH`: encrypted token file location.
+- `CONVEX_URL`, `INGESTION_SECRET`: temporary server-side values used by the Convex importer and the transitional admin console.
 
-- Client ID, client secret, redirect URL, token encryption key, ingestion secret, and optional bootstrap tokens are read only by the worker from environment variables/application secrets.
-- Access and refresh tokens are stored in an AES-256-GCM encrypted file. `data/` is ignored by Git. Use a persistent volume for that file in production, or replace the small `TwitchTokenStore` interface with your cloud secret manager.
-- `TWITCH_ACCESS_TOKEN` and `TWITCH_REFRESH_TOKEN` are optional one-time bootstrap variables. When both are present and the encrypted store is empty, the worker encrypts them immediately. Remove them from the environment afterward.
-- Token responses and authorization headers are redacted from structured logs. The worker logs message IDs and routing metadata, not OAuth credentials.
-- Run exactly one worker instance per encrypted token store/authorization unless you add leader election. A single worker already handles multiple channels.
-- Deploy the worker to an always-on Node host with outbound HTTPS and WebSocket access. Deploy the Vite build independently and set `TWITCH_FRONTEND_URL`/`VITE_WORKER_URL` to their public HTTPS URLs.
+Never prefix secrets with `VITE_`; Vite exposes those variables to browser code.
 
-## Runtime behavior
+## Runtime architecture
 
-- A normal connection loss creates a new EventSub session and recreates every desired subscription after the welcome message.
-- A Twitch `session_reconnect` uses the supplied URL unchanged, waits for the new welcome, then closes the old socket. Twitch carries the subscriptions in this path, so the worker does not duplicate them.
-- Notifications are deduplicated in memory by EventSub notification ID. Convex provides the durable second line of defense by checking Twitch message ID in the insertion transaction.
-- Missing keepalives terminate the socket and enter capped exponential reconnect backoff.
-- API 401 responses trigger one serialized token refresh and retry. Invalid refresh tokens, revoked authorization, missing scope, and EventSub revocations surface as `authorization_required` or `error` channel states without leaking credentials.
-- Shutdown uses an `AbortSignal`, closes the socket and Convex subscription, and stops the HTTP server.
-- Messages sent before the EventSub subscription became active are intentionally unavailable. Twitch does not expose general chat history through this integration, and the app never attempts to fetch it.
+```text
+React dashboard
+  -> worker /api/data endpoints (2-second refresh)
+      -> PostgreSQL 18
 
-## Data model and extension points
+Twitch EventSub WebSocket
+  -> TwitchChatService
+      -> PostgresStore
+          -> PostgreSQL 18
 
-`channels` and `chatMessages` keep portable fields such as platform, external IDs, usernames, text, timestamp, and role flags at the top level. Twitch-specific fragments and raw data live in flexible metadata fields. Adding another platform means implementing another ingestion adapter that produces the same normalized message shape, then adding its platform option in channel management; the feed and most Convex queries remain unchanged.
+/admin (temporary compatibility path)
+  -> AdminService
+      -> Convex
 
-Useful commands:
-
-```powershell
-npm test
-npm run build
-npm run start:worker
+Convex migration source
+  -> migration:exportPage
+      -> scripts/migrate-convex-to-postgres.ts
+          -> PostgreSQL 18
 ```
+
+Incoming messages are uniquely constrained by `external_message_id`, providing durable duplicate protection. Channel state is polled every two seconds so changes made in the dashboard update EventSub subscriptions without requiring PostgreSQL-specific extensions or an additional message broker.
+
+## Commands
+
+```sh
+npm run dev                 # dashboard + PostgreSQL-backed worker
+npm run build               # TypeScript and production frontend build
+npm test                    # unit tests
+npm run lint                # ESLint
+npm run db:migrate          # apply PostgreSQL migrations
+npm run migrate:convex      # upsert every Convex table into PostgreSQL
+npm run dev:convex          # temporary Convex development command
+```
+
+## Verification boundary
+
+The repository build, lint, and unit tests validate TypeScript and application behavior without a live database. Before production cutover, run the migration and smoke-test against an actual PostgreSQL 18 instance. In particular, verify counts for `channels`, `chat_messages`, and the admin tables, then confirm a newly received Twitch message appears in PostgreSQL and in the dashboard.

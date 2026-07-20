@@ -15,7 +15,7 @@ import {
   usePaginatedQuery,
   useQuery,
   type PaginationStatus,
-} from "convex/react";
+} from "./postgresReact";
 import {
   api,
   type Channel,

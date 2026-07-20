@@ -8,6 +8,7 @@ import type { Logger } from "./logger";
 import type { ThirdPartyEmoteService } from "./emotes/ThirdPartyEmoteService";
 import type { TwitchBadgeService } from "./twitch/TwitchBadgeService";
 import type { TwitchAuthService } from "./twitch/TwitchAuthService";
+import type { ChatTabInput, MessagePageArgs, PostgresStore } from "./PostgresStore";
 import {
   AdminAuthError,
   AdminService,
@@ -25,6 +26,7 @@ export interface ApplicationRuntimeState {
   badges?: TwitchBadgeService;
   emotes?: ThirdPartyEmoteService;
   integrationError?: string;
+  store?: PostgresStore;
 }
 
 export interface HttpServerDependencies {
@@ -90,7 +92,7 @@ export function createHttpServer(
         configured: false,
         authenticated: false,
         totpEnabled: false,
-        error: "Admin storage is unavailable until Convex and encryption settings are configured",
+        error: "Admin storage is unavailable until the transitional Convex settings and encryption key are configured",
       });
       return;
     }
@@ -234,6 +236,81 @@ export function createHttpServer(
     }
   });
 
+  app.get("/api/data/channels", async (_request, response) => {
+    await sendData(response, runtime, () => runtime.store!.listChannels(), logger);
+  });
+
+  app.post("/api/data/platforms/ensure-seeded", async (_request, response) => {
+    await sendData(response, runtime, async () => {
+      await runtime.store!.ensurePlatformSeeded();
+      return null;
+    }, logger);
+  });
+
+  app.post("/api/data/channels/add", async (request, response) => {
+    await sendData(response, runtime, () => runtime.store!.addChannel(request.body), logger);
+  });
+
+  app.post("/api/data/channels/set-logging", async (request, response) => {
+    await sendData(response, runtime, async () => {
+      await runtime.store!.setLogging(String(request.body?.id ?? ""), Boolean(request.body?.enabled));
+      return null;
+    }, logger);
+  });
+
+  app.post("/api/data/channels/reconnect", async (request, response) => {
+    await sendData(response, runtime, async () => {
+      await runtime.store!.reconnect(String(request.body?.id ?? ""));
+      return null;
+    }, logger);
+  });
+
+  app.post("/api/data/channels/remove", async (request, response) => {
+    await sendData(response, runtime, async () => {
+      await runtime.store!.removeChannel(String(request.body?.id ?? ""));
+      return null;
+    }, logger);
+  });
+
+  app.get("/api/data/chat-tabs", async (_request, response) => {
+    await sendData(response, runtime, () => runtime.store!.listChatTabs(), logger);
+  });
+
+  app.post("/api/data/chat-tabs/save", async (request, response) => {
+    await sendData(response, runtime, async () => {
+      await runtime.store!.saveChatTab(request.body?.tab as ChatTabInput);
+      return null;
+    }, logger);
+  });
+
+  app.post("/api/data/chat-tabs/import", async (request, response) => {
+    await sendData(response, runtime, async () => {
+      await runtime.store!.importChatTabs((request.body?.tabs ?? []) as ChatTabInput[]);
+      return null;
+    }, logger);
+  });
+
+  app.post("/api/data/chat-tabs/remove", async (request, response) => {
+    await sendData(response, runtime, async () => {
+      await runtime.store!.removeChatTab(String(request.body?.id ?? ""));
+      return null;
+    }, logger);
+  });
+
+  app.post("/api/data/messages/page", async (request, response) => {
+    await sendData(response, runtime, () =>
+      runtime.store!.pageMessages(request.body as MessagePageArgs, false), logger);
+  });
+
+  app.post("/api/data/messages/page-images", async (request, response) => {
+    await sendData(response, runtime, () =>
+      runtime.store!.pageMessages(request.body as MessagePageArgs, true), logger);
+  });
+
+  app.post("/api/data/messages/filter-counts", async (request, response) => {
+    await sendData(response, runtime, () => runtime.store!.filterMatchCounts(request.body), logger);
+  });
+
   app.get("/health", (_request, response) => {
     response.json({
       ok: true,
@@ -362,7 +439,6 @@ export function createHttpServer(
 
   app.get("/runtime-config.js", (_request, response) => {
     const runtimeConfig = JSON.stringify({
-      convexUrl: configuration.convexUrl,
       workerUrl: configuration.publicWorkerUrl,
       configurationIssues: configuration.issues,
     }).replace(/</g, "\\u003c");
@@ -449,6 +525,26 @@ export function createHttpServer(
     });
     server.once("error", reject);
   });
+}
+
+async function sendData(
+  response: express.Response,
+  runtime: ApplicationRuntimeState,
+  operation: () => Promise<unknown>,
+  logger: Logger,
+) {
+  if (!runtime.store) {
+    response.status(503).json({ error: "PostgreSQL storage is unavailable" });
+    return;
+  }
+  try {
+    response.json(await operation());
+  } catch (error) {
+    logger.warn({ err: error }, "PostgreSQL API request failed");
+    response.status(400).json({
+      error: error instanceof Error ? error.message : "Database request failed",
+    });
+  }
 }
 
 function readAdminCookie(header?: string) {

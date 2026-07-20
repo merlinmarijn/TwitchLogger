@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfiguration } from "../worker/config";
 
 const completeEnvironment = {
+  DATABASE_URL: "postgresql://twitch_logs:secret@postgres:5432/twitch_logs",
   CONVEX_URL: "https://convex.example.com",
   INGESTION_SECRET: "0123456789abcdef0123456789abcdef",
   TWITCH_CLIENT_ID: "real-client-id",
@@ -20,8 +21,7 @@ describe("loadConfiguration", () => {
     expect(configuration.port).toBe(8787);
     expect(configuration.issues).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("CONVEX_URL"),
-        expect.stringContaining("INGESTION_SECRET"),
+        expect.stringContaining("DATABASE_URL"),
         expect.stringContaining("TWITCH_CLIENT_ID"),
         expect.stringContaining("TWITCH_CLIENT_SECRET"),
         expect.stringContaining("TWITCH_REDIRECT_URI"),
@@ -33,8 +33,8 @@ describe("loadConfiguration", () => {
   it("treats shipped example placeholders as incomplete configuration", () => {
     const configuration = loadConfiguration({
       ...completeEnvironment,
+      DATABASE_URL: "your_database_url",
       TWITCH_CLIENT_SECRET: "your_twitch_client_secret",
-      INGESTION_SECRET: "replace_with_a_long_random_value",
     });
 
     expect(configuration.options).toBeUndefined();
@@ -46,8 +46,7 @@ describe("loadConfiguration", () => {
 
     expect(configuration.issues).toEqual([]);
     expect(configuration.options).toMatchObject({
-      convexUrl: completeEnvironment.CONVEX_URL,
-      ingestionSecret: completeEnvironment.INGESTION_SECRET,
+      databaseUrl: completeEnvironment.DATABASE_URL,
       port: 8787,
       twitch: {
         clientId: completeEnvironment.TWITCH_CLIENT_ID,

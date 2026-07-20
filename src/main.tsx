@@ -1,7 +1,6 @@
 import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
-import { ConvexProvider, ConvexReactClient } from "convex/react";
-import { configurationIssues, convexUrl } from "./runtimeConfig";
+import { configurationIssues } from "./runtimeConfig";
 import "./styles.css";
 
 const root = createRoot(document.getElementById("root")!);
@@ -20,7 +19,7 @@ if (isAdminRoute) {
       </Suspense>
     </StrictMode>,
   );
-} else if (!convexUrl) {
+} else if (configurationIssues.length > 0) {
   root.render(
     <StrictMode>
       <main className="setup-required">
@@ -31,13 +30,9 @@ if (isAdminRoute) {
           Live logging is paused until the server receives its required environment
           configuration.
         </p>
-        {configurationIssues.length > 0 && (
-          <ul>
-            {configurationIssues.map((issue) => (
-              <li key={issue}>{issue}</li>
-            ))}
-          </ul>
-        )}
+        <ul>
+          {configurationIssues.map((issue) => <li key={issue}>{issue}</li>)}
+        </ul>
         <p className="setup-hint">
           Add the missing values to the container environment and recreate the container.
         </p>
@@ -45,16 +40,11 @@ if (isAdminRoute) {
     </StrictMode>,
   );
 } else {
-  const convex = new ConvexReactClient(convexUrl, {
-    skipConvexDeploymentUrlCheck: true,
-  });
   root.render(
     <StrictMode>
-      <ConvexProvider client={convex}>
-        <Suspense fallback={<main className="route-loader">Opening Twitch Logs…</main>}>
-          <App />
-        </Suspense>
-      </ConvexProvider>
+      <Suspense fallback={<main className="route-loader">Opening Twitch Logs…</main>}>
+        <App />
+      </Suspense>
     </StrictMode>,
   );
 }

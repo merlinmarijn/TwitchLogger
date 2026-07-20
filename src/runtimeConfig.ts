@@ -1,5 +1,4 @@
 interface RuntimeConfig {
-  convexUrl?: string;
   workerUrl?: string;
   configurationIssues?: string[];
 }
@@ -11,9 +10,6 @@ declare global {
 }
 
 const runtimeConfig = window.__TWITCH_LOGS_CONFIG__ ?? {};
-
-export const convexUrl =
-  runtimeConfig.convexUrl || (import.meta.env.VITE_CONVEX_URL as string | undefined);
 
 export const workerUrl =
   runtimeConfig.workerUrl ??

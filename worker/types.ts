@@ -11,9 +11,8 @@ export interface TwitchOptions {
 }
 
 export interface WorkerOptions {
-  convexUrl: string;
+  databaseUrl: string;
   publicWorkerUrl: string;
-  ingestionSecret: string;
   port: number;
   logLevel: string;
   twitch: TwitchOptions;
@@ -87,7 +86,7 @@ export interface FollowedChannel {
 }
 
 export interface ResolvedChannel {
-  convexId: string;
+  storageId: string;
   twitchId: string;
   username: string;
   displayName: string;

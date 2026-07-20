@@ -113,7 +113,7 @@ export class ConvexChatRepository {
   async saveResolvedChannel(channel: ResolvedChannel) {
     await this.http.mutation(updateResolved as FunctionReference<"mutation">, {
       ingestionSecret: this.ingestionSecret,
-      id: channel.convexId,
+      id: channel.storageId,
       externalChannelId: channel.twitchId,
       username: channel.username,
       displayName: channel.displayName,
@@ -141,7 +141,7 @@ export class ConvexChatRepository {
       insertIncoming as FunctionReference<"mutation">,
       {
         ingestionSecret: this.ingestionSecret,
-        channelId: channel.convexId,
+        channelId: channel.storageId,
         externalMessageId: message.messageId,
         eventNotificationId: message.eventNotificationId,
         externalChannelId: message.channelId,

@@ -61,8 +61,9 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
     warnings.push("WORKER_PORT is invalid; using port 8787");
   }
 
-  const convexUrl = required(env, "CONVEX_URL", issues);
-  const ingestionSecret = required(env, "INGESTION_SECRET", issues);
+  const databaseUrl = required(env, "DATABASE_URL", issues);
+  const convexUrl = optional(env, "CONVEX_URL");
+  const ingestionSecret = optional(env, "INGESTION_SECRET");
   const clientId = required(env, "TWITCH_CLIENT_ID", issues);
   const clientSecret = required(env, "TWITCH_CLIENT_SECRET", issues);
   const redirectUri = required(env, "TWITCH_REDIRECT_URI", issues);
@@ -79,16 +80,14 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
   }
 
   const options =
-    convexUrl &&
-    ingestionSecret &&
+    databaseUrl &&
     clientId &&
     clientSecret &&
     redirectUri &&
     tokenEncryptionKey
       ? {
-          convexUrl,
+          databaseUrl,
           publicWorkerUrl,
-          ingestionSecret,
           port,
           logLevel: env.LOG_LEVEL ?? "info",
           twitch: {
@@ -130,4 +129,11 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
     publicWorkerUrl,
     frontendUrl,
   };
+}
+
+function optional(env: Environment, name: string) {
+  const value = env[name]?.trim();
+  return value && !placeholderPatterns.some((pattern) => pattern.test(value))
+    ? value
+    : undefined;
 }

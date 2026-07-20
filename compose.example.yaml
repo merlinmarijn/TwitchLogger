@@ -1,4 +1,19 @@
 services:
+  postgres:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: twitch_logs
+      POSTGRES_USER: twitch_logs
+      POSTGRES_PASSWORD: change_this_password
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U twitch_logs -d twitch_logs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   twitch-logs:
     build:
       context: .
@@ -8,6 +23,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8787:8787"
     volumes:
@@ -22,3 +40,4 @@ services:
 
 volumes:
   twitch_tokens:
+  postgres_data:

@@ -12,6 +12,8 @@ COPY public ./public
 COPY shared ./shared
 COPY src ./src
 COPY convex ./convex
+COPY db ./db
+COPY scripts ./scripts
 COPY worker ./worker
 
 RUN npm run build
@@ -31,6 +33,8 @@ RUN npm ci --omit=dev --ignore-scripts=false \
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node shared ./shared
 COPY --chown=node:node worker ./worker
+COPY --chown=node:node db ./db
+COPY --chown=node:node scripts ./scripts
 
 RUN mkdir -p /data \
     && chown node:node /data

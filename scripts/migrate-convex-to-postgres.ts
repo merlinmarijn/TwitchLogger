@@ -27,6 +27,14 @@ const databaseUrl = required("DATABASE_URL");
 const convexUrl = required("CONVEX_URL");
 const ingestionSecret = required("INGESTION_SECRET");
 const pageSize = readPageSize(process.env.MIGRATION_PAGE_SIZE);
+const maxRetries = readInteger("MIGRATION_MAX_RETRIES", process.env.MIGRATION_MAX_RETRIES, 8, 0, 20);
+const retryBaseDelayMs = readInteger(
+  "MIGRATION_RETRY_BASE_MS",
+  process.env.MIGRATION_RETRY_BASE_MS,
+  1_000,
+  100,
+  60_000,
+);
 const database = new PostgresDatabase(databaseUrl);
 const convex = new ConvexHttpClient(convexUrl, { skipConvexDeploymentUrlCheck: true });
 
@@ -36,12 +44,10 @@ try {
   for (const table of tables) {
     let cursor: string | null = null;
     let count = 0;
+    let tablePageSize = pageSize;
     do {
-      const result = await convex.query(exportPage as FunctionReference<"query">, {
-        ingestionSecret,
-        table,
-        paginationOpts: { cursor, numItems: pageSize },
-      }) as { page: Document[]; continueCursor: string; isDone: boolean };
+      const result = await queryExportPage(table, cursor, tablePageSize);
+      tablePageSize = result.pageSize;
       await importPage(database, table, result.page);
       count += result.page.length;
       total += result.page.length;
@@ -54,6 +60,41 @@ try {
   console.log(`Migration complete: ${total} Convex documents upserted into PostgreSQL.`);
 } finally {
   await database.close();
+}
+
+async function queryExportPage(table: ConvexTable, cursor: string | null, initialPageSize: number) {
+  let retry = 0;
+  let requestedPageSize = initialPageSize;
+  while (true) {
+    try {
+      const result = await convex.query(exportPage as FunctionReference<"query">, {
+        ingestionSecret,
+        table,
+        paginationOpts: { cursor, numItems: requestedPageSize },
+      }) as { page: Document[]; continueCursor: string; isDone: boolean };
+      return { ...result, pageSize: requestedPageSize };
+    } catch (error) {
+      if (isQueryTimeout(error) && requestedPageSize > 1) {
+        const reducedPageSize = Math.max(1, Math.floor(requestedPageSize / 2));
+        process.stdout.write(
+          `\n${table}: source query timed out; reducing page size from `
+          + `${requestedPageSize} to ${reducedPageSize}\n`,
+        );
+        requestedPageSize = reducedPageSize;
+        await wait(retryBaseDelayMs);
+        continue;
+      }
+      if (!isRetryableSourceError(error) || retry >= maxRetries) throw error;
+
+      retry += 1;
+      const delayMs = Math.min(retryBaseDelayMs * (2 ** (retry - 1)), 30_000);
+      process.stdout.write(
+        `\n${table}: source temporarily unavailable (${describeSourceError(error)}); `
+        + `retrying in ${formatDelay(delayMs)} (${retry}/${maxRetries})\n`,
+      );
+      await wait(delayMs);
+    }
+  }
 }
 
 async function importPage(database: PostgresDatabase, table: ConvexTable, documents: Document[]) {
@@ -193,4 +234,45 @@ function readPageSize(value?: string) {
     throw new Error("MIGRATION_PAGE_SIZE must be between 1 and 500");
   }
   return parsed;
+}
+
+function readInteger(name: string, value: string | undefined, fallback: number, min: number, max: number) {
+  const parsed = Number.parseInt(value ?? String(fallback), 10);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${name} must be between ${min} and ${max}`);
+  }
+  return parsed;
+}
+
+function isRetryableSourceError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /404 page not found|function execution timed out|\b(?:429|500|502|503|504)\b|bad gateway|service unavailable|gateway timeout|fetch failed|econnreset|etimedout|socket hang up/i
+    .test(message);
+}
+
+function isQueryTimeout(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /function execution timed out/i.test(message);
+}
+
+function describeSourceError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (isQueryTimeout(error)) return "source query timed out";
+  if (/404 page not found/i.test(message)) return "HTTP 404 while source restarts";
+  if (/\b502\b|bad gateway/i.test(message)) return "HTTP 502 Bad Gateway";
+  if (/\b503\b|service unavailable/i.test(message)) return "HTTP 503 Service Unavailable";
+  if (/\b504\b|gateway timeout/i.test(message)) return "HTTP 504 Gateway Timeout";
+  if (/\b429\b/.test(message)) return "HTTP 429 Too Many Requests";
+  if (/\b500\b/.test(message)) return "HTTP 500 Internal Server Error";
+  if (/econnreset|socket hang up/i.test(message)) return "connection reset";
+  if (/etimedout/i.test(message)) return "connection timed out";
+  return "network request failed";
+}
+
+function formatDelay(delayMs: number) {
+  return delayMs < 1_000 ? `${delayMs}ms` : `${delayMs / 1_000}s`;
+}
+
+function wait(delayMs: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 }

@@ -19,6 +19,7 @@ import type * as lib_maintenancePacing from "../lib/maintenancePacing.js";
 import type * as lib_messageFilters from "../lib/messageFilters.js";
 import type * as lib_messagePagination from "../lib/messagePagination.js";
 import type * as messages from "../messages.js";
+import type * as migration from "../migration.js";
 import type * as platforms from "../platforms.js";
 
 import type {
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   "lib/messageFilters": typeof lib_messageFilters;
   "lib/messagePagination": typeof lib_messagePagination;
   messages: typeof messages;
+  migration: typeof migration;
   platforms: typeof platforms;
 }>;
 

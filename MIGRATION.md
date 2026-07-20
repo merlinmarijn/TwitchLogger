@@ -102,6 +102,10 @@ The importer pages through and upserts these tables in dependency order:
 
 Convex document IDs and creation times are preserved. Foreign-key relationships therefore remain intact. Each page is committed in one PostgreSQL transaction, and rows are upserted by their preserved ID, so an interrupted import or a final catch-up import can be safely rerun. Set `MIGRATION_PAGE_SIZE` from 1 to 500 to tune batches; the default is 250.
 
+Transient source errors (including HTTP 429, 5xx responses, and the brief 404 response seen while a self-hosted backend restarts) are retried with exponential backoff so a Convex or reverse-proxy interruption does not restart the import. `MIGRATION_MAX_RETRIES` controls the retries per page (default 8, range 0-20), and `MIGRATION_RETRY_BASE_MS` controls the initial delay (default 1000, range 100-60000 milliseconds).
+
+If a page exceeds the Convex query duration limit, the importer automatically halves the page size for that table and retries from the same cursor.
+
 The importer does not delete PostgreSQL rows that no longer exist in Convex. During the overlap period, prefer soft deletion and run the final import immediately before making Convex read-only.
 
 ## Recommended final-cutover sequence

@@ -10,12 +10,14 @@ import { filterRuleError } from "./filters";
 export function ChatTabBar({
   tabs,
   activeId,
+  canEdit,
   onSelect,
   onAdd,
   onEdit,
 }: {
   tabs: ChatViewTab[];
   activeId: string;
+  canEdit: boolean;
   onSelect: (id: string) => void;
   onAdd: () => void;
   onEdit: (tab: ChatViewTab) => void;
@@ -52,11 +54,13 @@ export function ChatTabBar({
             {tab.name}
           </button>
         ))}
-        <button className="add-chat-tab" onClick={onAdd} title="Add a filtered chat tab">
-          + Add tab
-        </button>
+        {canEdit && (
+          <button className="add-chat-tab" onClick={onAdd} title="Add a filtered chat tab">
+            + Add tab
+          </button>
+        )}
       </div>
-      {activeTab && (
+      {canEdit && activeTab && (
         <button className="edit-chat-tab" onClick={() => onEdit(activeTab)}>
           Edit tab
         </button>

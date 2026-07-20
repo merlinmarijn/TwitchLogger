@@ -101,10 +101,13 @@ export class AdminService {
     };
   }
 
-  async setup(password: string) {
+  async setup(password: string, setupKey: string) {
     validatePassword(password);
     const state = await this.authState();
     if (state.configured) throw new AdminAuthError("The super admin is already configured", 409);
+    if (!secretMatches(setupKey, this.ingestionSecret)) {
+      throw new AdminAuthError("The setup key is incorrect", 401);
+    }
     const credentials = await hashPassword(password);
     const result = await this.client.mutation(initializeAuthRef as FunctionReference<"mutation">, {
       ingestionSecret: this.ingestionSecret,
@@ -296,6 +299,13 @@ export class AdminService {
       decipher.final(),
     ]).toString("utf8");
   }
+}
+
+function secretMatches(supplied: string, expected: string) {
+  const suppliedBytes = Buffer.from(supplied, "utf8");
+  const expectedBytes = Buffer.from(expected, "utf8");
+  return suppliedBytes.length === expectedBytes.length &&
+    timingSafeEqual(suppliedBytes, expectedBytes);
 }
 
 export class AdminAuthError extends Error {

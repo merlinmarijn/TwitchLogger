@@ -2,7 +2,9 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfiguration } from "../worker/config";
 import { createHttpServer } from "../worker/httpServer";
+import { AdminAuthError, AdminService } from "../worker/AdminService";
 import { createLogger } from "../worker/logger";
+import type { PostgresStore } from "../worker/PostgresStore";
 
 const servers: Array<ReturnType<typeof createHttpServer> extends Promise<infer T> ? T : never> = [];
 
@@ -48,6 +50,50 @@ describe("setup-mode HTTP server", () => {
     });
 
     expect(response.status).toBe(403);
+  });
+
+  it("rejects public data mutations before they reach PostgreSQL", async () => {
+    let channelAdded = false;
+    const configuration = {
+      ...loadConfiguration({ TWITCH_FRONTEND_URL: "http://localhost:5173" }),
+      port: 0,
+      adminOptions: {
+        convexUrl: "https://admin.example",
+        ingestionSecret: "test-secret",
+        encryptionKey: Buffer.alloc(32, 1),
+      },
+    };
+    const server = await createHttpServer(
+      configuration,
+      {
+        store: {
+          addChannel: async () => {
+            channelAdded = true;
+            return "channel-id";
+          },
+        } as unknown as PostgresStore,
+      },
+      createLogger("silent"),
+      {
+        createAdminService: () => ({
+          requireSession: async () => {
+            throw new AdminAuthError("Your admin session has expired", 401);
+          },
+          recordMetric: async () => undefined,
+        }) as unknown as AdminService,
+      },
+    );
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/data/channels/add`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://localhost:5173" },
+      body: JSON.stringify({ platform: "twitch", username: "public-user", loggingEnabled: true }),
+    });
+
+    expect(response.status).toBe(401);
+    expect(channelAdded).toBe(false);
   });
 
   it("stays live and reports not-ready when configuration is missing", async () => {

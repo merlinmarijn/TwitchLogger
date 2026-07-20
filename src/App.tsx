@@ -4,6 +4,7 @@ import {
   Suspense,
   type ErrorInfo,
   type ReactNode,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -49,12 +50,20 @@ const FilterWorkspace = lazy(() => import("./FilterWorkspace"));
 const INITIAL_MESSAGE_COUNT = 50;
 const HISTORY_PAGE_SIZE = 100;
 const SEARCH_DEBOUNCE_MS = 200;
+const MAX_BULK_ITEMS = 100;
 
-interface AuthStatus {
+interface TwitchAuthStatus {
   configured?: boolean;
   authenticated: boolean;
   login?: string;
   reason?: string;
+}
+
+interface AdminAccessStatus {
+  configured: boolean;
+  authenticated: boolean;
+  totpEnabled: boolean;
+  error?: string;
 }
 
 function loadSavedFilterState() {
@@ -99,9 +108,11 @@ export default function App() {
   const [pausedMessages, setPausedMessages] = useState<ChatMessage[]>([]);
   const [pausedMessageKey, setPausedMessageKey] = useState("");
   const [clearBefore, setClearBefore] = useState(0);
-  const [auth, setAuth] = useState<AuthStatus>();
+  const [auth, setAuth] = useState<TwitchAuthStatus>();
+  const [adminAccess, setAdminAccess] = useState<AdminAccessStatus>();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [notice, setNotice] = useState<string>();
+  const [selectionMode, setSelectionMode] = useState(false);
   const chatTabs = serverChatTabs === undefined ||
       (serverChatTabs.length === 0 && legacyChatTabs.length > 0)
     ? legacyChatTabs
@@ -191,6 +202,9 @@ export default function App() {
   const importLocalChatTabs = useMutation(api.chatTabs.importLocal);
   const saveChatTabMutation = useMutation(api.chatTabs.save);
   const removeChatTabMutation = useMutation(api.chatTabs.remove);
+  const deleteMessagesMutation = useMutation(api.messages.delete);
+  const hideImagesMutation = useMutation(api.messages.hideImages);
+  const isAdmin = Boolean(adminAccess?.authenticated);
   const visibleChannelIds = useMemo(
     () => galleryActive
       ? []
@@ -205,13 +219,37 @@ export default function App() {
     return () => window.clearTimeout(timeout);
   }, [quickSearch]);
 
+  const loadAdminAccess = useCallback(() => {
+    void fetch(`${workerUrl}/api/admin/auth/status`, { credentials: "include" })
+      .then(async (response) => {
+        const status = await response.json() as AdminAccessStatus;
+        setAdminAccess(status);
+      })
+      .catch(() => setAdminAccess({
+        configured: false,
+        authenticated: false,
+        totpEnabled: false,
+        error: "Admin service is offline",
+      }));
+  }, []);
+
   useEffect(() => {
-    void ensureSeeded({});
     void fetch(`${workerUrl}/auth/twitch/status`)
       .then((response) => response.json())
-      .then((status: AuthStatus) => setAuth(status))
+      .then((status: TwitchAuthStatus) => setAuth(status))
       .catch(() => setAuth({ authenticated: false, reason: "Ingestion worker is offline" }));
-  }, [ensureSeeded]);
+    loadAdminAccess();
+    const interval = window.setInterval(loadAdminAccess, 60_000);
+    window.addEventListener("focus", loadAdminAccess);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", loadAdminAccess);
+    };
+  }, [loadAdminAccess]);
+
+  useEffect(() => {
+    if (isAdmin) void ensureSeeded({}).catch((error: Error) => setNotice(error.message));
+  }, [ensureSeeded, isAdmin]);
 
   useEffect(() => {
     try {
@@ -222,7 +260,7 @@ export default function App() {
   }, [filterState]);
 
   useEffect(() => {
-    if (serverChatTabs === undefined || legacyChatTabs.length === 0 ||
+    if (!isAdmin || serverChatTabs === undefined || legacyChatTabs.length === 0 ||
         chatTabMigrationStartedRef.current) return;
     chatTabMigrationStartedRef.current = true;
     void importLocalChatTabs({ tabs: legacyChatTabs.map(tabInput) })
@@ -234,7 +272,37 @@ export default function App() {
         chatTabMigrationStartedRef.current = false;
         setNotice(`Could not migrate chat tabs: ${error.message}`);
       });
-  }, [importLocalChatTabs, legacyChatTabs, serverChatTabs]);
+  }, [importLocalChatTabs, isAdmin, legacyChatTabs, serverChatTabs]);
+
+  const deleteMessages = async (messageIds: string[]) => {
+    try {
+      let deleted = 0;
+      for (let offset = 0; offset < messageIds.length; offset += 200) {
+        deleted += (await deleteMessagesMutation({
+          messageIds: messageIds.slice(offset, offset + 200),
+        })).deleted;
+      }
+      setNotice(`${deleted} ${deleted === 1 ? "message" : "messages"} removed permanently.`);
+    } catch (error) {
+      setNotice(`Could not remove messages: ${(error as Error).message}`);
+      throw error;
+    }
+  };
+
+  const hideImages = async (images: Array<{ messageId: string; url: string }>) => {
+    try {
+      let hidden = 0;
+      for (let offset = 0; offset < images.length; offset += 100) {
+        hidden += (await hideImagesMutation({
+          images: images.slice(offset, offset + 100),
+        })).hidden;
+      }
+      setNotice(`${hidden} ${hidden === 1 ? "image" : "images"} removed permanently.`);
+    } catch (error) {
+      setNotice(`Could not remove images: ${(error as Error).message}`);
+      throw error;
+    }
+  };
 
   const saveFilter = (filter: MessageFilter, apply: boolean) => {
     setFilterState((current) => {
@@ -290,17 +358,26 @@ export default function App() {
               <small>EventSub live monitor</small>
             </div>
           </div>
-          {auth?.authenticated ? (
-            <span className="auth-chip connected">Connected as {auth.login}</span>
-          ) : auth?.configured === false ? (
-            <span className="auth-chip setup" title={auth.reason}>
-              Twitch setup required
-            </span>
-          ) : (
-            <a className="button primary" href={`${workerUrl}/auth/twitch/start`}>
-              Connect Twitch
+          <div className="topbar-actions">
+            {auth?.authenticated ? (
+              <span className="auth-chip connected">Connected as {auth.login}</span>
+            ) : auth?.configured === false ? (
+              <span className="auth-chip setup" title={auth.reason}>
+                Twitch setup required
+              </span>
+            ) : isAdmin ? (
+              <a className="button primary" href={`${workerUrl}/auth/twitch/start`}>
+                Connect Twitch
+              </a>
+            ) : null}
+            <a
+              className={`auth-chip admin-access ${isAdmin ? "active" : ""}`}
+              href="/admin"
+              title={adminAccess?.error}
+            >
+              {isAdmin ? "Admin mode" : "Admin sign in"}
             </a>
-          )}
+          </div>
         </header>
 
         {notice && (
@@ -313,6 +390,7 @@ export default function App() {
           <ChannelSidebar
             channels={channels}
             selectedChannelId={selectedChannelId}
+            isAdmin={isAdmin}
             onSelect={setSelectedChannelId}
             onAdd={() => setDialogOpen(true)}
             onError={setNotice}
@@ -324,6 +402,8 @@ export default function App() {
               channel={selectedChannel}
               paused={paused}
               filterText={quickSearch}
+              isAdmin={isAdmin}
+              selectionMode={selectionMode}
               view={view}
               onTextChange={setQuickSearch}
               onViewChange={setView}
@@ -335,12 +415,14 @@ export default function App() {
                 setPaused((value) => !value);
               }}
               onClear={() => setClearBefore(Date.now())}
+              onToggleSelection={() => setSelectionMode((current) => !current)}
             />
             {view === "chat" ? (
               <>
                 <ChatTabBar
                   activeId={activeChatTab?.id ?? "all"}
                   tabs={chatTabs}
+                  canEdit={isAdmin}
                   onAdd={() => setEditingChatTab("new")}
                   onEdit={setEditingChatTab}
                   onSelect={setActiveChatTabId}
@@ -348,9 +430,13 @@ export default function App() {
                 {activeChatTab?.layout === "gallery" ? (
                   <ImageGallery
                     historyEnabled={clearBefore === 0}
-                    key={messageFeedKey}
+                    key={`${messageFeedKey}:${selectionMode}`}
                     loadMore={galleryQuery.loadMore}
                     messages={sourceMessages}
+                    isAdmin={isAdmin}
+                    selectionMode={selectionMode}
+                    onDeleteMessages={deleteMessages}
+                    onHideImages={hideImages}
                     paused={paused}
                     serverFiltering={serverFiltering}
                     status={galleryQuery.status}
@@ -361,9 +447,13 @@ export default function App() {
                     emotesByChannel={emotesByChannel}
                     highlightedIds={highlightedIds}
                     historyEnabled={clearBefore === 0}
-                    key={messageFeedKey}
+                    key={`${messageFeedKey}:${selectionMode}`}
                     loadMore={recentQuery.loadMore}
                     messages={sourceMessages}
+                    isAdmin={isAdmin}
+                    selectionMode={selectionMode}
+                    onDeleteMessages={deleteMessages}
+                    onHideImages={hideImages}
                     paused={paused}
                     serverFiltering={serverFiltering}
                     status={recentQuery.status}
@@ -408,12 +498,14 @@ export default function App() {
 function ChannelSidebar({
   channels,
   selectedChannelId,
+  isAdmin,
   onSelect,
   onAdd,
   onError,
 }: {
   channels: Channel[];
   selectedChannelId?: string;
+  isAdmin: boolean;
   onSelect: (id?: string) => void;
   onAdd: () => void;
   onError: (message: string) => void;
@@ -459,7 +551,7 @@ function ChannelSidebar({
                 title={channel.connectionError ?? channel.connectionStatus}
               />
             </button>
-            <div className="channel-actions">
+            {isAdmin && <div className="channel-actions">
               <button
                 onClick={() =>
                   run(setLogging({ id: channel._id, enabled: !channel.loggingEnabled }))
@@ -481,14 +573,18 @@ function ChannelSidebar({
               >
                 Remove
               </button>
-            </div>
+            </div>}
           </div>
         ))}
       </div>
       {channels.length === 0 && (
-        <div className="empty compact"><strong>No channels yet</strong><span>Add one to begin logging.</span></div>
+        <div className="empty compact"><strong>No channels yet</strong><span>{isAdmin ? "Add one to begin logging." : "An admin can add the first channel."}</span></div>
       )}
-      <button className="button add-channel" onClick={onAdd}>+ Add channel</button>
+      {isAdmin ? (
+        <button className="button add-channel" onClick={onAdd}>+ Add channel</button>
+      ) : (
+        <a className="button add-channel" href="/admin">Admin sign in</a>
+      )}
     </aside>
   );
 }
@@ -498,21 +594,27 @@ function FeedToolbar({
   channel,
   paused,
   filterText,
+  isAdmin,
+  selectionMode,
   view,
   onTextChange,
   onViewChange,
   onPause,
   onClear,
+  onToggleSelection,
 }: {
   activeFilterCount: number;
   channel?: Channel;
   paused: boolean;
   filterText: string;
+  isAdmin: boolean;
+  selectionMode: boolean;
   view: "chat" | "filters";
   onTextChange: (text: string) => void;
   onViewChange: (view: "chat" | "filters") => void;
   onPause: () => void;
   onClear: () => void;
+  onToggleSelection: () => void;
 }) {
   return (
     <div className="feed-toolbar">
@@ -553,6 +655,15 @@ function FeedToolbar({
               {paused ? "Resume" : "Pause"}
             </button>
             <button className="button" onClick={onClear}>Clear view</button>
+            {isAdmin && (
+              <button
+                aria-pressed={selectionMode}
+                className={`button ${selectionMode ? "selection-active" : ""}`}
+                onClick={onToggleSelection}
+              >
+                {selectionMode ? "Done selecting" : "Bulk actions"}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -563,6 +674,10 @@ function FeedToolbar({
 function MessageFeed({
   messages,
   paused,
+  isAdmin,
+  selectionMode,
+  onDeleteMessages,
+  onHideImages,
   highlightedIds,
   emotesByChannel,
   badgesByChannel,
@@ -573,6 +688,10 @@ function MessageFeed({
 }: {
   messages: ChatMessage[];
   paused: boolean;
+  isAdmin: boolean;
+  selectionMode: boolean;
+  onDeleteMessages: (messageIds: string[]) => Promise<void>;
+  onHideImages: (images: Array<{ messageId: string; url: string }>) => Promise<void>;
   highlightedIds: ReadonlySet<string>;
   emotesByChannel: ReadonlyMap<string, ReadonlyMap<string, ThirdPartyEmote>>;
   badgesByChannel: ReadonlyMap<string, ReadonlyMap<string, ChatBadgeDefinition>>;
@@ -585,6 +704,34 @@ function MessageFeed({
   const historyTriggerRef = useRef<HTMLDivElement>(null);
   const previousScrollHeightRef = useRef<number | undefined>(undefined);
   const [followNewest, setFollowNewest] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [moderationBusy, setModerationBusy] = useState(false);
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < MAX_BULK_ITEMS) next.add(id);
+      return next;
+    });
+  };
+
+  const runModeration = async (action: () => Promise<void>) => {
+    setModerationBusy(true);
+    try {
+      await action();
+      setSelectedIds(new Set());
+    } catch {
+      // The parent reports the actionable API error in the shared notice area.
+    } finally {
+      setModerationBusy(false);
+    }
+  };
+
+  const selectedMessages = messages.filter((message) => selectedIds.has(message._id));
+  const selectedImages = selectedMessages.flatMap((message) =>
+    (message.imageUrls ?? []).map((url) => ({ messageId: message._id, url })),
+  );
 
   useEffect(() => {
     if (followNewest && !paused) {
@@ -624,6 +771,36 @@ function MessageFeed({
 
   return (
     <div className="feed-wrap">
+      {isAdmin && selectionMode && (
+        <BulkActionBar
+          busy={moderationBusy}
+          count={selectedIds.size}
+          limit={MAX_BULK_ITEMS}
+          onSelectAll={() => setSelectedIds(new Set(
+            messages.slice(0, MAX_BULK_ITEMS).map((message) => message._id),
+          ))}
+          onClear={() => setSelectedIds(new Set())}
+          actions={[
+            ...(selectedImages.length > 0 ? [{
+              label: `Remove images (${selectedImages.length})`,
+              run: () => {
+                if (window.confirm(`Permanently remove ${selectedImages.length} selected images?`)) {
+                  void runModeration(() => onHideImages(selectedImages));
+                }
+              },
+            }] : []),
+            {
+              danger: true,
+              label: `Delete messages (${selectedIds.size})`,
+              run: () => {
+                if (window.confirm(`Permanently delete ${selectedIds.size} selected messages?`)) {
+                  void runModeration(() => onDeleteMessages([...selectedIds]));
+                }
+              },
+            },
+          ]}
+        />
+      )}
       <div className="message-feed" ref={viewportRef} onScroll={handleScroll}>
         <div className="history-loader" ref={historyTriggerRef}>
           {paused ? (
@@ -658,8 +835,26 @@ function MessageFeed({
               badgeCatalog={badgesByChannel.get(message.externalChannelId)}
               emotes={emotesByChannel.get(message.externalChannelId)}
               highlighted={highlightedIds.has(message._id)}
+              isAdmin={isAdmin}
               key={message._id}
               message={message}
+              selectable={selectionMode}
+              selected={selectedIds.has(message._id)}
+              onSelect={() => toggleSelected(message._id)}
+              onDelete={() => {
+                if (window.confirm("Permanently delete this message from the logs?")) {
+                  void runModeration(() => onDeleteMessages([message._id]));
+                }
+              }}
+              onHideImages={() => {
+                const images = (message.imageUrls ?? []).map((url) => ({
+                  messageId: message._id,
+                  url,
+                }));
+                if (images.length > 0 && window.confirm("Permanently remove every image from this message?")) {
+                  void runModeration(() => onHideImages(images));
+                }
+              }}
             />
           ))
         )}
@@ -684,6 +879,10 @@ function MessageFeed({
 
 function ImageGallery({
   messages,
+  isAdmin,
+  selectionMode,
+  onDeleteMessages,
+  onHideImages,
   historyEnabled,
   loadMore,
   paused,
@@ -691,6 +890,10 @@ function ImageGallery({
   status,
 }: {
   messages: ChatMessage[];
+  isAdmin: boolean;
+  selectionMode: boolean;
+  onDeleteMessages: (messageIds: string[]) => Promise<void>;
+  onHideImages: (images: Array<{ messageId: string; url: string }>) => Promise<void>;
   historyEnabled: boolean;
   loadMore: (numItems: number) => void;
   paused: boolean;
@@ -704,6 +907,31 @@ function ImageGallery({
   const viewportRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLDivElement>(null);
   const historyLoadPendingRef = useRef(false);
+  const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(() => new Set());
+  const [moderationBusy, setModerationBusy] = useState(false);
+
+  const toggleSelected = (id: string) => {
+    setSelectedImageIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < MAX_BULK_ITEMS) next.add(id);
+      return next;
+    });
+  };
+
+  const runModeration = async (action: () => Promise<void>) => {
+    setModerationBusy(true);
+    try {
+      await action();
+      setSelectedImageIds(new Set());
+    } catch {
+      // The parent reports the actionable API error in the shared notice area.
+    } finally {
+      setModerationBusy(false);
+    }
+  };
+
+  const selectedImages = images.filter((image) => selectedImageIds.has(image.id));
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -722,6 +950,40 @@ function ImageGallery({
 
   return (
     <div className="image-gallery-wrap" ref={viewportRef}>
+      {isAdmin && selectionMode && (
+        <BulkActionBar
+          busy={moderationBusy}
+          count={selectedImageIds.size}
+          limit={MAX_BULK_ITEMS}
+          onSelectAll={() => setSelectedImageIds(new Set(
+            images.slice(0, MAX_BULK_ITEMS).map((image) => image.id),
+          ))}
+          onClear={() => setSelectedImageIds(new Set())}
+          actions={[
+            {
+              label: `Remove images (${selectedImageIds.size})`,
+              run: () => {
+                if (window.confirm(`Permanently remove ${selectedImageIds.size} selected images?`)) {
+                  void runModeration(() => onHideImages(selectedImages.map((image) => ({
+                    messageId: image.message._id,
+                    url: image.url,
+                  }))));
+                }
+              },
+            },
+            {
+              danger: true,
+              label: "Delete source messages",
+              run: () => {
+                const messageIds = [...new Set(selectedImages.map((image) => image.message._id))];
+                if (window.confirm(`Permanently delete ${messageIds.length} source messages?`)) {
+                  void runModeration(() => onDeleteMessages(messageIds));
+                }
+              },
+            },
+          ]}
+        />
+      )}
       {status === "LoadingFirstPage" ? (
         <div className="empty">Loading artwork…</div>
       ) : images.length === 0 &&
@@ -744,7 +1006,29 @@ function ImageGallery({
                 : "Newest first · loading history"}</span>
           </div>
           <div className="image-gallery">
-            {images.map((image) => <GalleryCard image={image} key={image.id} />)}
+            {images.map((image) => (
+              <GalleryCard
+                image={image}
+                isAdmin={isAdmin}
+                key={image.id}
+                selectable={selectionMode}
+                selected={selectedImageIds.has(image.id)}
+                onSelect={() => toggleSelected(image.id)}
+                onDeleteMessage={() => {
+                  if (window.confirm("Permanently delete the message that contains this image?")) {
+                    void runModeration(() => onDeleteMessages([image.message._id]));
+                  }
+                }}
+                onHideImage={() => {
+                  if (window.confirm("Permanently remove this image from the gallery?")) {
+                    void runModeration(() => onHideImages([{
+                      messageId: image.message._id,
+                      url: image.url,
+                    }]));
+                  }
+                }}
+              />
+            ))}
           </div>
         </>
       )}
@@ -763,12 +1047,44 @@ function ImageGallery({
   );
 }
 
-function GalleryCard({ image }: { image: GalleryImage }) {
+function GalleryCard({
+  image,
+  isAdmin,
+  selectable,
+  selected,
+  onSelect,
+  onDeleteMessage,
+  onHideImage,
+}: {
+  image: GalleryImage;
+  isAdmin: boolean;
+  selectable: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  onDeleteMessage: () => void;
+  onHideImage: () => void;
+}) {
   const [failed, setFailed] = useState(false);
   const postedAt = new Date(image.message.timestamp);
 
   return (
-    <article className="gallery-card">
+    <article className={`gallery-card ${selectable ? "moderation-selectable" : ""} ${selected ? "moderation-selected" : ""}`}>
+      {selectable && (
+        <label className="moderation-check gallery-check">
+          <input
+            aria-label={`Select image shared by ${image.message.senderDisplayName}`}
+            checked={selected}
+            onChange={onSelect}
+            type="checkbox"
+          />
+        </label>
+      )}
+      {isAdmin && (
+        <ItemActionMenu label="Image actions" actions={[
+          { label: "Remove image", onClick: onHideImage },
+          { label: "Delete source message", danger: true, onClick: onDeleteMessage },
+        ]} />
+      )}
       <a
         aria-label={`Open image posted by ${image.message.senderDisplayName}`}
         href={image.url}
@@ -806,11 +1122,23 @@ function MessageRow({
   emotes = new Map(),
   badgeCatalog = new Map(),
   highlighted = false,
+  isAdmin,
+  selectable,
+  selected,
+  onSelect,
+  onDelete,
+  onHideImages,
 }: {
   message: ChatMessage;
   emotes?: ReadonlyMap<string, ThirdPartyEmote>;
   badgeCatalog?: ReadonlyMap<string, ChatBadgeDefinition>;
   highlighted?: boolean;
+  isAdmin: boolean;
+  selectable: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  onHideImages: () => void;
 }) {
   const messageParts = buildMessageParts(
     message.messageText,
@@ -818,7 +1146,25 @@ function MessageRow({
     emotes,
   );
   return (
-    <article className={`message-row ${highlighted ? "filter-highlighted" : ""}`}>
+    <article className={`message-row ${highlighted ? "filter-highlighted" : ""} ${selectable ? "moderation-selectable" : ""} ${selected ? "moderation-selected" : ""}`}>
+      {selectable && (
+        <label className="moderation-check message-check">
+          <input
+            aria-label={`Select message from ${message.senderDisplayName}`}
+            checked={selected}
+            onChange={onSelect}
+            type="checkbox"
+          />
+        </label>
+      )}
+      {isAdmin && (
+        <ItemActionMenu label="Message actions" actions={[
+          ...((message.imageUrls?.length ?? 0) > 0
+            ? [{ label: "Remove all images", onClick: onHideImages }]
+            : []),
+          { label: "Delete message", danger: true, onClick: onDelete },
+        ]} />
+      )}
       <time dateTime={new Date(message.timestamp).toISOString()}>
         {new Date(message.timestamp).toLocaleTimeString([], {
           hour: "2-digit",
@@ -859,6 +1205,75 @@ function MessageRow({
         <p>{renderMessageParts(messageParts)}</p>
       </div>
     </article>
+  );
+}
+
+function ItemActionMenu({
+  label,
+  actions,
+}: {
+  label: string;
+  actions: Array<{ label: string; danger?: boolean; onClick: () => void }>;
+}) {
+  return (
+    <details className="item-action-menu">
+      <summary aria-label={label} title={label}>•••</summary>
+      <div role="menu">
+        {actions.map((action) => (
+          <button
+            className={action.danger ? "danger" : ""}
+            key={action.label}
+            onClick={(event) => {
+              const details = event.currentTarget.closest("details");
+              if (details) details.open = false;
+              action.onClick();
+            }}
+            role="menuitem"
+            type="button"
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function BulkActionBar({
+  count,
+  limit,
+  busy,
+  onSelectAll,
+  onClear,
+  actions,
+}: {
+  count: number;
+  limit: number;
+  busy: boolean;
+  onSelectAll: () => void;
+  onClear: () => void;
+  actions: Array<{ label: string; danger?: boolean; run: () => void }>;
+}) {
+  return (
+    <div className="bulk-action-bar" aria-label="Bulk moderation actions">
+      <strong>{count} selected</strong>
+      <span>Up to {limit} at once</span>
+      <button disabled={busy} onClick={onSelectAll} type="button">Select visible</button>
+      {count > 0 && <button disabled={busy} onClick={onClear} type="button">Clear</button>}
+      <div>
+        {actions.map((action) => (
+          <button
+            className={action.danger ? "danger" : ""}
+            disabled={busy || count === 0}
+            key={action.label}
+            onClick={action.run}
+            type="button"
+          >
+            {busy ? "Working…" : action.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

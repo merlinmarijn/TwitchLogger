@@ -81,6 +81,7 @@ export function usePaginatedQuery<Args extends object, Result>(
 async function request<Args, Result>(operation: ApiOperation<Args, Result>, args: Args) {
   const response = await fetch(`${workerUrl}${operation.path}`, {
     method: operation.method,
+    credentials: "include",
     ...(operation.method === "POST"
       ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(args) }
       : {}),

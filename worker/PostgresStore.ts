@@ -32,6 +32,11 @@ export interface ChatTabInput {
   rules: FilterRule[];
 }
 
+export interface HiddenImageInput {
+  messageId: string;
+  url: string;
+}
+
 interface MessageRow {
   id: string;
   external_channel_id: string;
@@ -317,10 +322,47 @@ export class PostgresStore implements ChatRepository {
     await this.database.query("DELETE FROM chat_tabs WHERE client_id = $1", [clientId]);
   }
 
+  async deleteMessages(messageIds: string[]) {
+    if (messageIds.length === 0) return 0;
+    const result = await this.database.query<{ id: string }>(`
+      UPDATE chat_messages
+      SET deleted_at = $2
+      WHERE id = ANY($1::text[]) AND deleted_at IS NULL
+      RETURNING id
+    `, [messageIds, Date.now()]);
+    return result.rowCount ?? 0;
+  }
+
+  async hideMessageImages(images: HiddenImageInput[]) {
+    let hidden = 0;
+    for (const image of images) {
+      const result = await this.database.query<{ id: string }>(`
+        UPDATE chat_messages
+        SET image_urls = COALESCE(image_urls, '[]'::jsonb) - $2::text,
+            hidden_image_urls = CASE
+              WHEN hidden_image_urls ? $2::text THEN hidden_image_urls
+              ELSE hidden_image_urls || jsonb_build_array($2::text)
+            END,
+            has_images = jsonb_array_length(COALESCE(image_urls, '[]'::jsonb) - $2::text) > 0,
+            gallery_channel_id = CASE
+              WHEN jsonb_array_length(COALESCE(image_urls, '[]'::jsonb) - $2::text) > 0
+                THEN channel_id
+              ELSE NULL
+            END
+        WHERE id = $1
+          AND deleted_at IS NULL
+          AND COALESCE(image_urls, '[]'::jsonb) ? $2::text
+        RETURNING id
+      `, [image.messageId, image.url]);
+      hidden += result.rowCount ?? 0;
+    }
+    return hidden;
+  }
+
   async pageMessages(args: MessagePageArgs, imagesOnly: boolean) {
     const requested = Math.max(1, Math.min(Math.floor(args.paginationOpts.numItems), MAX_MESSAGE_SCAN));
     const values: unknown[] = [];
-    const conditions: string[] = [];
+    const conditions: string[] = ["deleted_at IS NULL"];
     if (args.channelId) {
       values.push(args.channelId);
       conditions.push(`channel_id = $${values.length}`);

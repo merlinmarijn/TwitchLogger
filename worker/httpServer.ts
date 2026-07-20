@@ -8,7 +8,12 @@ import type { Logger } from "./logger";
 import type { ThirdPartyEmoteService } from "./emotes/ThirdPartyEmoteService";
 import type { TwitchBadgeService } from "./twitch/TwitchBadgeService";
 import type { TwitchAuthService } from "./twitch/TwitchAuthService";
-import type { ChatTabInput, MessagePageArgs, PostgresStore } from "./PostgresStore";
+import type {
+  ChatTabInput,
+  HiddenImageInput,
+  MessagePageArgs,
+  PostgresStore,
+} from "./PostgresStore";
 import {
   AdminAuthError,
   AdminService,
@@ -32,6 +37,11 @@ export interface ApplicationRuntimeState {
 export interface HttpServerDependencies {
   fetchTouhouWikiImage?: (url: URL) => Promise<ProxiedImage>;
   resolveImgurImageUrl?: (url: URL) => Promise<URL>;
+  createAdminService?: (
+    convexUrl: string,
+    ingestionSecret: string,
+    encryptionKey: Buffer,
+  ) => AdminService;
 }
 
 export function createHttpServer(
@@ -47,7 +57,8 @@ export function createHttpServer(
     normalizeOrigin(configuration.publicWorkerUrl),
   ].filter((origin): origin is string => Boolean(origin)));
   const admin = configuration.adminOptions
-    ? new AdminService(
+    ? (dependencies.createAdminService ?? ((convexUrl, ingestionSecret, encryptionKey) =>
+        new AdminService(convexUrl, ingestionSecret, encryptionKey)))(
         configuration.adminOptions.convexUrl,
         configuration.adminOptions.ingestionSecret,
         configuration.adminOptions.encryptionKey,
@@ -60,7 +71,7 @@ export function createHttpServer(
     methods: ["GET", "POST"],
     credentials: true,
   }));
-  app.use(express.json({ limit: "32kb" }));
+  app.use(express.json({ limit: "256kb" }));
   if (admin) {
     app.use((request, response, next) => {
       const startedAt = performance.now();
@@ -85,6 +96,25 @@ export function createHttpServer(
     }
     next();
   });
+
+  const requireAdminSession: express.RequestHandler = async (request, response, next) => {
+    response.set("Cache-Control", "no-store");
+    const origin = request.get("origin");
+    if (origin && !trustedAdminOrigins.has(origin)) {
+      response.status(403).json({ error: "This admin request came from an untrusted origin" });
+      return;
+    }
+    if (!admin) {
+      sendAdminUnavailable(response);
+      return;
+    }
+    try {
+      await admin.requireSession(readAdminCookie(request.headers.cookie));
+      next();
+    } catch (error) {
+      sendAdminError(response, error, logger);
+    }
+  };
 
   app.get("/api/admin/auth/status", async (request, response) => {
     if (!admin) {
@@ -111,7 +141,8 @@ export function createHttpServer(
     }
     try {
       const password = typeof request.body?.password === "string" ? request.body.password : "";
-      const session = await admin.setup(password);
+      const setupKey = typeof request.body?.setupKey === "string" ? request.body.setupKey : "";
+      const session = await admin.setup(password, setupKey);
       clearAdminAttempts(failedAdminAttempts, request.ip);
       setAdminCookie(response, session, configuration);
       response.status(201).json({ authenticated: true });
@@ -240,32 +271,32 @@ export function createHttpServer(
     await sendData(response, runtime, () => runtime.store!.listChannels(), logger);
   });
 
-  app.post("/api/data/platforms/ensure-seeded", async (_request, response) => {
+  app.post("/api/data/platforms/ensure-seeded", requireAdminSession, async (_request, response) => {
     await sendData(response, runtime, async () => {
       await runtime.store!.ensurePlatformSeeded();
       return null;
     }, logger);
   });
 
-  app.post("/api/data/channels/add", async (request, response) => {
+  app.post("/api/data/channels/add", requireAdminSession, async (request, response) => {
     await sendData(response, runtime, () => runtime.store!.addChannel(request.body), logger);
   });
 
-  app.post("/api/data/channels/set-logging", async (request, response) => {
+  app.post("/api/data/channels/set-logging", requireAdminSession, async (request, response) => {
     await sendData(response, runtime, async () => {
       await runtime.store!.setLogging(String(request.body?.id ?? ""), Boolean(request.body?.enabled));
       return null;
     }, logger);
   });
 
-  app.post("/api/data/channels/reconnect", async (request, response) => {
+  app.post("/api/data/channels/reconnect", requireAdminSession, async (request, response) => {
     await sendData(response, runtime, async () => {
       await runtime.store!.reconnect(String(request.body?.id ?? ""));
       return null;
     }, logger);
   });
 
-  app.post("/api/data/channels/remove", async (request, response) => {
+  app.post("/api/data/channels/remove", requireAdminSession, async (request, response) => {
     await sendData(response, runtime, async () => {
       await runtime.store!.removeChannel(String(request.body?.id ?? ""));
       return null;
@@ -276,21 +307,21 @@ export function createHttpServer(
     await sendData(response, runtime, () => runtime.store!.listChatTabs(), logger);
   });
 
-  app.post("/api/data/chat-tabs/save", async (request, response) => {
+  app.post("/api/data/chat-tabs/save", requireAdminSession, async (request, response) => {
     await sendData(response, runtime, async () => {
       await runtime.store!.saveChatTab(request.body?.tab as ChatTabInput);
       return null;
     }, logger);
   });
 
-  app.post("/api/data/chat-tabs/import", async (request, response) => {
+  app.post("/api/data/chat-tabs/import", requireAdminSession, async (request, response) => {
     await sendData(response, runtime, async () => {
       await runtime.store!.importChatTabs((request.body?.tabs ?? []) as ChatTabInput[]);
       return null;
     }, logger);
   });
 
-  app.post("/api/data/chat-tabs/remove", async (request, response) => {
+  app.post("/api/data/chat-tabs/remove", requireAdminSession, async (request, response) => {
     await sendData(response, runtime, async () => {
       await runtime.store!.removeChatTab(String(request.body?.id ?? ""));
       return null;
@@ -309,6 +340,28 @@ export function createHttpServer(
 
   app.post("/api/data/messages/filter-counts", async (request, response) => {
     await sendData(response, runtime, () => runtime.store!.filterMatchCounts(request.body), logger);
+  });
+
+  app.post("/api/data/messages/delete", requireAdminSession, async (request, response) => {
+    const messageIds = parseMessageIds(request.body?.messageIds);
+    if (!messageIds) {
+      response.status(400).json({ error: "Choose between 1 and 200 valid messages" });
+      return;
+    }
+    await sendData(response, runtime, async () => ({
+      deleted: await runtime.store!.deleteMessages(messageIds),
+    }), logger);
+  });
+
+  app.post("/api/data/messages/hide-images", requireAdminSession, async (request, response) => {
+    const images = parseHiddenImages(request.body?.images);
+    if (!images) {
+      response.status(400).json({ error: "Choose between 1 and 100 valid images" });
+      return;
+    }
+    await sendData(response, runtime, async () => ({
+      hidden: await runtime.store!.hideMessageImages(images),
+    }), logger);
   });
 
   app.get("/health", (_request, response) => {
@@ -448,7 +501,7 @@ export function createHttpServer(
       .send(`window.__TWITCH_LOGS_CONFIG__ = ${runtimeConfig};`);
   });
 
-  app.get("/auth/twitch/start", (_request, response) => {
+  app.get("/auth/twitch/start", requireAdminSession, (_request, response) => {
     if (!runtime.auth) {
       response
         .status(503)
@@ -627,4 +680,37 @@ function clearAdminAttempts(
   address: string | undefined,
 ) {
   attempts.delete(address ?? "unknown");
+}
+
+function parseMessageIds(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 200) return undefined;
+  const ids = [...new Set(value.filter(
+    (id): id is string => typeof id === "string" && id.length > 0 && id.length <= 128,
+  ))];
+  return ids.length === value.length ? ids : undefined;
+}
+
+function parseHiddenImages(value: unknown): HiddenImageInput[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 100) return undefined;
+  const unique = new Map<string, HiddenImageInput>();
+  for (const item of value) {
+    const messageId = item && typeof item === "object" && "messageId" in item
+      ? (item as { messageId?: unknown }).messageId
+      : undefined;
+    const url = item && typeof item === "object" && "url" in item
+      ? (item as { url?: unknown }).url
+      : undefined;
+    if (
+      typeof messageId !== "string" || messageId.length === 0 || messageId.length > 128 ||
+      typeof url !== "string" || url.length === 0 || url.length > 2_048
+    ) return undefined;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return undefined;
+    } catch {
+      return undefined;
+    }
+    unique.set(`${messageId}\u0000${url}`, { messageId, url });
+  }
+  return [...unique.values()];
 }

@@ -107,11 +107,11 @@ One WebSocket is shared by all configured channels. The service already models c
 
 ## Admin control room
 
-Open `/admin` on the frontend origin. The first visit creates the single super admin password; later visits can use that password or a six-digit code from a paired authenticator app. Passwords are scrypt-hashed in the worker before storage. The TOTP secret is AES-256-GCM encrypted with `TWITCH_TOKEN_ENCRYPTION_KEY`, and admin sessions use signed, HttpOnly, SameSite cookies.
+Open `/admin` on the frontend origin. The first visit requires the worker's existing `INGESTION_SECRET` as a one-time setup key before it creates the single super admin password; this prevents a visitor from claiming an uninitialized public deployment. Later visits can use that password or a six-digit code from a paired authenticator app. Passwords are scrypt-hashed in the worker before storage. The TOTP secret is AES-256-GCM encrypted with `TWITCH_TOKEN_ENCRYPTION_KEY`, and admin sessions use signed, HttpOnly, SameSite cookies.
 
 The control room provides persistent, cancellable operations for rebuilding image metadata, rebuilding saved-view indexes, scanning message references, and measuring application document payloads. Each operation runs in bounded Convex batches and stores its cursor, progress, result, and audit events in the database, so refreshing the browser does not lose its state. Database measurements exclude Convex indexes, backups, file storage, logs, and platform overhead because those values are not exposed to database functions.
 
-Deploy the updated `convex/` schema and functions before using the route. In development, run the full `npm run dev` command so `/admin` can reach both Vite and the worker. No additional secret is required: admin storage uses the existing `CONVEX_URL`, `INGESTION_SECRET`, and `TWITCH_TOKEN_ENCRYPTION_KEY` worker settings.
+Deploy the updated `convex/` schema and functions before using the route. In development, run the full `npm run dev` command so `/admin` can reach both Vite and the worker. No additional secret is required: first-time setup reuses `INGESTION_SECRET`, and admin storage uses the existing `CONVEX_URL`, `INGESTION_SECRET`, and `TWITCH_TOKEN_ENCRYPTION_KEY` worker settings.
 
 ## Database diagnostics
 

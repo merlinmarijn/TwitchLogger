@@ -90,5 +90,9 @@ export const api = {
     page: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page", "POST", true),
     pageImages: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page-images", "POST", true),
     filterMatchCounts: operation<{ channelId?: string; filters: MessageFilter[]; afterTimestamp?: number }, Array<{ id: string; count: number }>>("/api/data/messages/filter-counts", "POST", true),
+    delete: operation<{ messageIds: string[] }, { deleted: number }>("/api/data/messages/delete", "POST"),
+    hideImages: operation<{
+      images: Array<{ messageId: string; url: string }>;
+    }, { hidden: number }>("/api/data/messages/hide-images", "POST"),
   },
 };

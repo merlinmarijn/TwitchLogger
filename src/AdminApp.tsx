@@ -172,6 +172,7 @@ function AdminLoading() {
 }
 
 function SetupScreen({ unavailable, onComplete }: { unavailable?: string; onComplete: () => void }) {
+  const [setupKey, setSetupKey] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string>();
@@ -183,7 +184,7 @@ function SetupScreen({ unavailable, onComplete }: { unavailable?: string; onComp
     setBusy(true);
     setError(undefined);
     try {
-      await adminFetch("/auth/setup", { method: "POST", body: { password } });
+      await adminFetch("/auth/setup", { method: "POST", body: { password, setupKey } });
       onComplete();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -204,11 +205,14 @@ function SetupScreen({ unavailable, onComplete }: { unavailable?: string; onComp
       </section>
       <form className="auth-sheet" onSubmit={submit}>
         <div className="sheet-rule"><span>SUPER ADMIN</span><span>ONE ACCOUNT</span></div>
-        <h2>Choose the master password</h2>
-        <p>Use at least 12 characters. After signing in, pair an authenticator for code-only access.</p>
+        <h2>Unlock initial setup</h2>
+        <p>Enter the worker's INGESTION_SECRET once, then choose a password of at least 12 characters.</p>
         {unavailable ? <InlineError>{unavailable}</InlineError> : null}
+        <AuthField label="One-time setup key" hint="The INGESTION_SECRET configured on the worker">
+          <input autoComplete="off" autoFocus onChange={(event) => setSetupKey(event.target.value)} required type="password" value={setupKey} />
+        </AuthField>
         <AuthField label="Master password" hint="12–128 characters">
-          <input autoComplete="new-password" autoFocus minLength={12} maxLength={128} onChange={(event) => setPassword(event.target.value)} required type="password" value={password} />
+          <input autoComplete="new-password" minLength={12} maxLength={128} onChange={(event) => setPassword(event.target.value)} required type="password" value={password} />
         </AuthField>
         <AuthField label="Confirm password">
           <input autoComplete="new-password" minLength={12} maxLength={128} onChange={(event) => setConfirm(event.target.value)} required type="password" value={confirm} />

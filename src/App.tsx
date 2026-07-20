@@ -352,7 +352,7 @@ export default function App() {
       <div className="app-shell">
         <header className="topbar">
           <div className="brand">
-            <span className="brand-mark">TL</span>
+            <img alt="" className="brand-mark" src="/brand/twitch-logger-icon-64.png" />
             <div>
               <strong>Twitch Logs</strong>
               <small>EventSub live monitor</small>

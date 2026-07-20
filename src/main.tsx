@@ -23,7 +23,7 @@ if (isAdminRoute) {
   root.render(
     <StrictMode>
       <main className="setup-required">
-        <span className="brand-mark">TL</span>
+        <img alt="" className="brand-mark" src="/brand/twitch-logger-icon-64.png" />
         <span className="eyebrow">Setup required</span>
         <h1>Twitch Logs is running</h1>
         <p>

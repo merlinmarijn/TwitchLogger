@@ -19,8 +19,8 @@
 
 .admin-loading { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 1rem; background: var(--admin-paper); }
 .admin-loading p { color: var(--admin-muted); }
-.admin-seal { width: 3.25rem; height: 3.25rem; display: grid; place-items: center; border: 1px solid currentColor; border-radius: 50%; font: 400 1.15rem/1 "Instrument Serif", serif; letter-spacing: -.04em; }
-.admin-seal.small { width: 2.5rem; height: 2.5rem; font-size: .95rem; }
+.admin-seal { width: 3.25rem; height: 3.25rem; display: block; border-radius: .8rem; object-fit: cover; }
+.admin-seal.small { width: 2.5rem; height: 2.5rem; border-radius: .65rem; }
 
 .admin-auth-page { min-height: 100vh; display: grid; grid-template: auto 1fr / minmax(0, 1.1fr) minmax(25rem, .9fr); background: var(--admin-paper); }
 .auth-masthead { grid-column: 1 / -1; height: 6rem; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--admin-line); padding: 0 clamp(1.25rem, 4vw, 4.5rem); font-size: .68rem; font-weight: 700; letter-spacing: .14em; }

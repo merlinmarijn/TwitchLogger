@@ -165,7 +165,7 @@ export default function AdminApp() {
 function AdminLoading() {
   return (
     <main className="admin-loading">
-      <span className="admin-seal">TL</span>
+      <img alt="" className="admin-seal" src="/brand/twitch-logger-icon-64.png" />
       <p>Opening the operations ledger…</p>
     </main>
   );
@@ -343,7 +343,7 @@ function DashboardScreen({
   return (
     <div className="admin-shell">
       <aside className="admin-rail">
-        <a className="rail-brand" href="/"><span className="admin-seal small">TL</span><span>Twitch Logger<small>Control room</small></span></a>
+        <a className="rail-brand" href="/"><img alt="" className="admin-seal small" src="/brand/twitch-logger-icon-64.png" /><span>Twitch Logger<small>Control room</small></span></a>
         <nav aria-label="Admin sections">
           <a href="#overview"><OverviewIcon />Overview</a>
           <a href="#operations"><PulseIcon />Operations{activeJobs.length ? <b>{activeJobs.length}</b> : null}</a>
@@ -567,7 +567,7 @@ function SecurityDrawer({ totpEnabled, onClose, onChanged }: { totpEnabled: bool
 }
 
 function AuthMasthead({ step }: { step: string }) {
-  return <header className="auth-masthead"><a href="/"><span className="admin-seal">TL</span><span>Twitch Logger<small>Operations</small></span></a><span>{step}</span></header>;
+  return <header className="auth-masthead"><a href="/"><img alt="" className="admin-seal" src="/brand/twitch-logger-icon-64.png" /><span>Twitch Logger<small>Operations</small></span></a><span>{step}</span></header>;
 }
 
 function AuthField({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {

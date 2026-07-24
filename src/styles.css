@@ -531,11 +531,35 @@ h2 { font-size: 18px; }
   overflow: hidden;
   border: 1px solid #2b2b30;
   border-radius: 9px;
-  padding: 14px;
   background: var(--surface);
   color: #efeff1;
   content-visibility: auto;
   contain-intrinsic-size: 300px 360px;
+}
+.score-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 58px;
+  border-bottom: 1px solid var(--border);
+  padding: 11px 14px;
+  background: #151517;
+}
+.score-card-heading > div { min-width: 0; display: grid; gap: 3px; }
+.score-game-label {
+  color: #a786d8;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.score-card-heading > div > strong {
+  overflow: hidden;
+  color: #dedee3;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .rngdle-card {
   --rarity: #adadb8;
@@ -547,110 +571,144 @@ h2 { font-size: 18px; }
 .rngdle-card.rarity-epic { --rarity: #bf94ff; }
 .rngdle-card.rarity-anomaly { --rarity: #e5a45d; }
 .rngdle-card.rarity-mythic { --rarity: #eb727d; }
-.rngdle-ticket-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 11px;
-}
-.rngdle-ticket-top > span {
-  color: #dedee3;
-  font-size: 13px;
-  font-weight: 750;
-}
-.rngdle-ticket-top > strong {
-  border: 1px solid var(--rarity);
-  border-radius: 4px;
-  padding: 4px 6px;
+.rngdle-heading { box-shadow: inset 3px 0 0 var(--rarity); }
+.rngdle-rarity {
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--rarity) 60%, #2b2b30);
+  border-radius: 99px;
+  padding: 4px 7px;
+  background: color-mix(in srgb, var(--rarity) 10%, transparent);
   color: var(--rarity);
-  font-size: 8px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-.rngdle-roll {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 4px;
-  padding: 18px 0 14px;
-}
-.rngdle-roll > span {
-  display: grid;
-  place-items: center;
-  min-height: 48px;
-  border: 1px solid #35353b;
-  border-radius: 6px;
-  background: #202024;
-  color: var(--rarity);
-  font-size: clamp(20px, 2.2vw, 28px);
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-}
-.rngdle-prize {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-  border-top: 1px solid #2b2b30;
-  padding-top: 12px;
-}
-.rngdle-prize > span {
-  color: #777782;
-  font-size: 8px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-.rngdle-prize > strong {
-  font-size: 19px;
-  font-variant-numeric: tabular-nums;
-}
-.rngdle-prize small { color: var(--rarity); font-size: 8px; }
-.rngdle-details {
-  display: flex;
-  justify-content: space-between;
-  margin: 10px -14px 0;
-  border-top: 1px solid #2b2b30;
-  border-bottom: 1px solid #2b2b30;
-  padding: 8px 14px;
-  background: #151517;
-  color: #85858f;
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-}
-.foodguessr-card {
-  --food-accent: #b88adf;
-}
-.food-card-heading { display: flex; align-items: start; justify-content: space-between; gap: 14px; }
-.food-card-heading > div { display: grid; gap: 2px; }
-.food-card-heading span {
-  color: #a786d8;
   font-size: 8px;
   font-weight: 850;
-  letter-spacing: .1em;
+  letter-spacing: .08em;
   text-transform: uppercase;
 }
-.food-card-heading strong {
-  color: #dedee3;
-  font-size: 13px;
+.rngdle-primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(105px, .8fr);
+  gap: 1px;
+  border-bottom: 1px solid var(--border);
+  background: var(--border);
 }
-.food-total {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  margin-top: 18px;
+.rngdle-score, .rngdle-roll {
+  min-width: 0;
+  padding: 17px 14px;
+  background: #18181b;
 }
-.food-total strong {
-  font-size: clamp(28px, 3vw, 38px);
+.rngdle-score > span, .rngdle-roll > span {
+  display: block;
+  margin-bottom: 7px;
+  color: #777782;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.rngdle-score strong {
+  color: #efeff1;
+  font-size: clamp(27px, 3vw, 38px);
   line-height: 1;
   letter-spacing: -.025em;
   font-variant-numeric: tabular-nums;
 }
-.food-total span { color: #777782; font-size: 10px; }
+.rngdle-score small {
+  margin-left: 4px;
+  color: var(--rarity);
+  font-size: 9px;
+  font-weight: 850;
+}
+.rngdle-roll strong {
+  display: block;
+  color: var(--rarity);
+  font-size: 18px;
+  line-height: 1.1;
+  letter-spacing: .04em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.rngdle-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+.rngdle-facts > div {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  padding: 10px 12px 11px;
+}
+.rngdle-facts > div:last-child { border-right: 0; }
+.rngdle-facts dt {
+  margin-bottom: 4px;
+  color: #777782;
+  font-size: 7px;
+  font-weight: 850;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.rngdle-facts dd {
+  overflow: hidden;
+  margin: 0;
+  color: #dedee3;
+  font-size: 10px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rngdle-facts dd.positive { color: #74c69d; }
+.rngdle-facts .rarity-value {
+  color: var(--rarity);
+  text-transform: capitalize;
+}
+.foodguessr-card {
+  --food-accent: #b88adf;
+}
+.food-card-heading { box-shadow: inset 3px 0 0 var(--food-accent); }
+.food-completion {
+  flex: none;
+  min-width: 42px;
+  border: 1px solid #4b3d5b;
+  border-radius: 99px;
+  padding: 4px 7px;
+  background: #30283b;
+  color: #d4b4f3;
+  font-size: 9px;
+  font-weight: 850;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.food-score-summary {
+  padding: 17px 14px 10px;
+}
+.food-score-summary > span {
+  display: block;
+  margin-bottom: 7px;
+  color: #777782;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.food-score-summary > div {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.food-score-summary strong {
+  color: #efeff1;
+  font-size: clamp(30px, 3.2vw, 42px);
+  line-height: 1;
+  letter-spacing: -.025em;
+  font-variant-numeric: tabular-nums;
+}
+.food-score-summary small {
+  color: #777782;
+  font-size: 10px;
+  font-weight: 650;
+}
 .food-score-meter {
-  height: 4px;
-  margin-top: 12px;
+  height: 5px;
+  margin: 0 14px;
   border-radius: 99px;
   background: #323239;
   overflow: hidden;
@@ -659,62 +717,126 @@ h2 { font-size: 18px; }
   width: 100%;
   height: 100%;
   display: block;
+  border-radius: inherit;
   background: var(--food-accent);
   transform-origin: left;
 }
+.food-average {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 14px;
+  border: 1px solid #315548;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #1b2a26;
+}
+.food-average span {
+  color: #8aa69b;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.food-average strong {
+  color: #74c69d;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.food-average.below {
+  border-color: #5f3036;
+  background: #302529;
+}
+.food-average.below span { color: #ad8589; }
+.food-average.below strong { color: #eb727d; }
 .food-rounds {
-  margin: 16px 0 0;
-  border-top: 1px solid var(--border);
-  padding: 0;
+  margin: 0;
+  padding: 0 14px 4px;
   list-style: none;
 }
 .food-rounds li {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid var(--border);
+  padding: 9px 0 10px;
+}
+.food-rounds li > div {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  border-bottom: 1px solid var(--border);
-  padding: 8px 0;
+  gap: 14px;
 }
-.food-rounds span {
+.food-rounds li > div > span {
   color: #777782;
   font-size: 8px;
   font-weight: 850;
   letter-spacing: .08em;
+  text-transform: uppercase;
 }
 .food-rounds strong {
   color: #dedee3;
-  font-size: 12px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
-.food-average {
-  margin-top: 10px;
-  color: #74c69d;
+.food-rounds strong small {
+  color: #656570;
   font-size: 8px;
-  font-weight: 850;
-  letter-spacing: .04em;
-  text-align: right;
-  text-transform: uppercase;
+  font-weight: 650;
 }
-.food-average.below { color: #eb727d; }
+.food-round-meter {
+  display: block;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #303036;
+}
+.food-round-meter > span {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: var(--food-accent);
+  transform-origin: left;
+}
 .score-card-footer {
   min-width: 0;
   display: flex;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-top: 13px;
-  padding-top: 10px;
   border-top: 1px solid var(--border);
+  padding: 10px 14px;
+  background: #151517;
 }
-.score-card-footer > span { min-width: 0; display: grid; gap: 2px; }
-.score-card-footer strong {
+.score-card-player {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.score-card-player > span {
+  width: 27px;
+  height: 27px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: #30283b;
+  color: #c7a7f8;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.score-card-player > div { min-width: 0; display: grid; gap: 2px; }
+.score-card-player strong {
   overflow: hidden;
   color: #dedee3;
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.score-card-footer time { color: #777782; font-size: 8px; }
+.score-card-player time { color: #777782; font-size: 8px; }
 .score-card-footer button {
   flex: none;
   border: 1px solid transparent;

@@ -229,29 +229,48 @@ function RngdleCard({
   isAdmin: boolean;
   onDelete: () => void;
 }) {
+  const percentileLabel = score.percentile
+    ? `${score.percentile.direction === "top" ? "Top" : "Bottom"} ${score.percentile.value}%`
+    : "Not ranked";
   return (
     <article className={`score-card rngdle-card rarity-${score.rarity}`}>
-      <div className="rngdle-ticket-top">
-        <span>RNGdle</span>
-        <strong>{score.rarity}</strong>
-      </div>
-      <div
-        aria-label={`Roll ${score.roll}`}
-        className="rngdle-roll"
-        style={{ gridTemplateColumns: `repeat(${score.roll.length}, minmax(0, 1fr))` }}
-      >
-        {score.roll.split("").map((digit, index) => <span key={`${digit}-${index}`}>{digit}</span>)}
-      </div>
-      <div className="rngdle-prize">
-        <span>Energy points</span>
-        <strong>{formatScore(score.score)} <small>EP</small></strong>
-      </div>
-      <div className="rngdle-details">
-        <span>{score.percentile
-          ? `${score.percentile.direction === "top" ? "Top" : "Bottom"} ${score.percentile.value}%`
-          : "Unranked roll"}</span>
-        <span>{score.traitCount ? `${score.traitCount}+ traits` : "Traits hidden"}</span>
-      </div>
+      <header className="score-card-heading rngdle-heading">
+        <div>
+          <span className="score-game-label">RNGdle result</span>
+          <strong>One roll. Every pattern.</strong>
+        </div>
+        <span className="rngdle-rarity">{score.rarity}</span>
+      </header>
+
+      <section className="rngdle-primary">
+        <div className="rngdle-score">
+          <span>Energy points</span>
+          <strong>{formatScore(score.score)}</strong>
+          <small>EP</small>
+        </div>
+        <div aria-label={`Roll ${score.roll}`} className="rngdle-roll">
+          <span>Rolled number</span>
+          <strong>{score.roll}</strong>
+        </div>
+      </section>
+
+      <dl className="rngdle-facts">
+        <div>
+          <dt>Percentile</dt>
+          <dd className={score.percentile?.direction === "top" ? "positive" : ""}>
+            {percentileLabel}
+          </dd>
+        </div>
+        <div>
+          <dt>Matched traits</dt>
+          <dd>{score.traitCount ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Rarity</dt>
+          <dd className="rarity-value">{score.rarity}</dd>
+        </div>
+      </dl>
+
       <ScoreCardFooter deleting={deleting} isAdmin={isAdmin} onDelete={onDelete} score={score} />
     </article>
   );
@@ -269,35 +288,53 @@ function FoodGuessrCard({
   onDelete: () => void;
 }) {
   const percentage = Math.min(100, Math.round((score.score / score.maxScore) * 100));
+  const roundMaximum = score.maxScore / score.rounds.length;
   return (
     <article className="score-card foodguessr-card">
-      <div className="food-card-heading">
+      <header className="score-card-heading food-card-heading">
         <div>
-          <span>FoodGuessr</span>
-          <strong>Daily tasting</strong>
+          <span className="score-game-label">FoodGuessr Daily</span>
+          <strong>{formatShortDate(score.playedAt)} challenge</strong>
         </div>
-        <span>{formatShortDate(score.playedAt)}</span>
-      </div>
-      <div className="food-total">
-        <strong>{formatScore(score.score)}</strong>
-        <span>/ {formatScore(score.maxScore)}</span>
-      </div>
+        <span className="food-completion">{percentage}%</span>
+      </header>
+
+      <section className="food-score-summary">
+        <span>Total score</span>
+        <div>
+          <strong>{formatScore(score.score)}</strong>
+          <small>of {formatScore(score.maxScore)}</small>
+        </div>
+      </section>
       <div aria-label={`${percentage}% of the maximum score`} className="food-score-meter">
         <span style={{ transform: `scaleX(${percentage / 100})` }} />
       </div>
+
+      <div className={`food-average ${score.averageDelta !== undefined && score.averageDelta < 0 ? "below" : ""}`}>
+        <span>Daily average</span>
+        <strong>
+          {score.averageDelta === undefined
+            ? "Unavailable"
+            : `${score.averageDelta >= 0 ? "+" : "−"}${formatScore(Math.abs(score.averageDelta))}`}
+        </strong>
+      </div>
+
       <ol className="food-rounds">
         {score.rounds.map((round, index) => (
           <li key={index}>
-            <span>0{index + 1}</span>
-            <strong>{formatScore(round)}</strong>
+            <div>
+              <span>Round {index + 1}</span>
+              <strong>
+                {formatScore(round)} <small>/ {formatScore(roundMaximum)}</small>
+              </strong>
+            </div>
+            <span className="food-round-meter" role="presentation">
+              <span style={{ transform: `scaleX(${Math.min(1, round / roundMaximum)})` }} />
+            </span>
           </li>
         ))}
       </ol>
-      <div className={`food-average ${score.averageDelta !== undefined && score.averageDelta < 0 ? "below" : ""}`}>
-        {score.averageDelta === undefined
-          ? "Daily average unavailable"
-          : `${score.averageDelta >= 0 ? "+" : "−"}${formatScore(Math.abs(score.averageDelta))} vs daily average`}
-      </div>
+
       <ScoreCardFooter deleting={deleting} isAdmin={isAdmin} onDelete={onDelete} score={score} />
     </article>
   );
@@ -316,12 +353,15 @@ function ScoreCardFooter({
 }) {
   return (
     <footer className="score-card-footer" title={score.message.messageText}>
-      <span>
-        <strong>{score.message.senderDisplayName}</strong>
-        <time dateTime={new Date(score.message.timestamp).toISOString()}>
-          {formatMessageTime(score.message.timestamp)}
-        </time>
-      </span>
+      <div className="score-card-player">
+        <span aria-hidden="true">{score.message.senderDisplayName.slice(0, 1).toUpperCase()}</span>
+        <div>
+          <strong>{score.message.senderDisplayName}</strong>
+          <time dateTime={new Date(score.message.timestamp).toISOString()}>
+            Shared {formatMessageTime(score.message.timestamp)}
+          </time>
+        </div>
+      </div>
       {isAdmin && (
         <button
           aria-label={`Delete score from ${score.message.senderDisplayName}`}

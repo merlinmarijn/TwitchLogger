@@ -127,6 +127,13 @@ export class TwitchChatService {
     this.channelsByTwitchId = new Map(resolved.map((channel) => [channel.twitchId, channel]));
     await this.eventSub.setChannels(resolved);
     await this.ensureEventSubState();
+    if (this.eventSubRunning) {
+      await Promise.all(
+        resolved.map((channel) =>
+          this.repository.setConnectionStatus(channel.storageId, "connected"),
+        ),
+      );
+    }
   }
 
   private async ensureEventSubState() {

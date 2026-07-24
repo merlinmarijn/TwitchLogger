@@ -83,6 +83,8 @@ const measuredTables = [
   "chat_messages",
   "chat_raw_events",
   "chat_raw_event_chunks",
+  "chat_message_cold_catalog",
+  "chat_message_cold_chunks",
   "admin_jobs",
   "admin_audit_log",
 ] as const;

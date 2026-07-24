@@ -9,6 +9,10 @@ import {
   type MessageFilter,
 } from "../shared/messageFilters";
 import type { ChatRepository, ChannelStatus } from "./ChatRepository";
+import {
+  ColdMessageArchiveService,
+  type ColdArchiveCursor,
+} from "./ColdMessageArchiveService";
 import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
 import { compileMessageSelectionSql } from "./messageSearchSql";
@@ -53,7 +57,7 @@ interface MessageRow {
   sender_username: string;
   sender_display_name: string;
   message_text: string;
-  timestamp: string;
+  timestamp: string | number;
   badges: Array<{ setId: string; id: string; info: string }>;
   user_color: string | null;
   is_broadcaster: boolean;
@@ -68,11 +72,15 @@ interface MessageRow {
 export class PostgresStore implements ChatRepository {
   private poll?: ReturnType<typeof setInterval>;
   private channelSnapshot = "";
+  private readonly coldArchive: ColdMessageArchiveService;
 
   constructor(
     private readonly database: PostgresDatabase,
     private readonly logger: Logger,
-  ) {}
+    coldArchive?: ColdMessageArchiveService,
+  ) {
+    this.coldArchive = coldArchive ?? new ColdMessageArchiveService(database, logger);
+  }
 
   watchLoggingChannels(
     onUpdate: (channels: FollowedChannel[]) => void,
@@ -154,6 +162,16 @@ export class PostgresStore implements ChatRepository {
     const client = await this.database.pool.connect();
     try {
       await client.query("BEGIN");
+      const archived = await client.query(`
+        SELECT 1
+        FROM chat_message_cold_catalog
+        WHERE external_message_id = $1
+      `, [message.messageId]);
+      if (archived.rowCount) {
+        await client.query("ROLLBACK");
+        this.logger.debug({ messageId: message.messageId }, "Ignored archived duplicate chat message");
+        return;
+      }
       const result = await client.query<{ id: string }>(`
         INSERT INTO chat_messages (
           id, channel_id, platform, external_message_id, event_notification_id,
@@ -358,17 +376,25 @@ export class PostgresStore implements ChatRepository {
 
   async deleteMessages(messageIds: string[]) {
     if (messageIds.length === 0) return 0;
+    const deletedAt = Date.now();
     const result = await this.database.query<{ id: string }>(`
       UPDATE chat_messages
       SET deleted_at = $2
       WHERE id = ANY($1::text[]) AND deleted_at IS NULL
       RETURNING id
-    `, [messageIds, Date.now()]);
-    return result.rowCount ?? 0;
+    `, [messageIds, deletedAt]);
+    if ((result.rowCount ?? 0) === messageIds.length) return result.rowCount ?? 0;
+    const hotIds = new Set(result.rows.map((row) => row.id));
+    const coldDeleted = await this.coldArchive.deleteMessages(
+      messageIds.filter((id) => !hotIds.has(id)),
+      deletedAt,
+    );
+    return (result.rowCount ?? 0) + coldDeleted;
   }
 
   async hideMessageImages(images: HiddenImageInput[]) {
     let hidden = 0;
+    const coldCandidates: HiddenImageInput[] = [];
     for (const image of images) {
       const result = await this.database.query<{ id: string }>(`
         UPDATE chat_messages
@@ -388,9 +414,10 @@ export class PostgresStore implements ChatRepository {
           AND COALESCE(image_urls, '[]'::jsonb) ? $2::text
         RETURNING id
       `, [image.messageId, image.url]);
-      hidden += result.rowCount ?? 0;
+      if (result.rowCount) hidden += result.rowCount;
+      else coldCandidates.push(image);
     }
-    return hidden;
+    return hidden + await this.coldArchive.hideMessageImages(coldCandidates);
   }
 
   async pageMessages(args: MessagePageArgs, imagesOnly: boolean, gameScoresOnly = false) {
@@ -451,13 +478,60 @@ export class PostgresStore implements ChatRepository {
     const hasMore = consumedIndex >= 0 && (
       consumedIndex < result.rows.length - 1 || result.rows.length === scanLimit
     );
+    if (hasMore) {
+      return {
+        page,
+        isDone: false,
+        continueCursor: consumedRow
+          ? encodeMessageCursor(consumedRow)
+          : normalized.paginationOpts.cursor ?? "",
+      };
+    }
 
+    const coldCursor: ColdArchiveCursor | undefined = consumedRow
+      ? { timestamp: Number(consumedRow.timestamp), id: consumedRow.id }
+      : cursor;
+    const remaining = requested - page.length;
+    const cold = await this.coldArchive.pageRows({
+      ...(normalized.channelId ? { channelId: normalized.channelId } : {}),
+      ...(normalized.afterTimestamp ? { afterTimestamp: normalized.afterTimestamp } : {}),
+      ...(coldCursor ? { cursor: coldCursor } : {}),
+      imagesOnly,
+      limit: Math.max(1, remaining),
+      matches: (row) => {
+        if (gameScoresOnly) {
+          const text = row.message_text.toLowerCase();
+          if (!text.includes("rngdle") && !text.includes("foodguessr")) return false;
+        }
+        return matchesMessageSelection(
+          toClientMessage(row),
+          normalized.quickSearch,
+          filters,
+        );
+      },
+    });
+    if (remaining <= 0) {
+      return {
+        page,
+        isDone: cold.rows.length === 0 && !cold.hasMore,
+        continueCursor: consumedRow
+          ? encodeMessageCursor(consumedRow)
+          : normalized.paginationOpts.cursor ?? "",
+      };
+    }
+
+    const archivedRows = cold.rows.slice(0, remaining);
+    page.push(...archivedRows.map(toClientMessage));
+    const archivedCursor = archivedRows.at(-1) ??
+      (cold.rows.length === 0 ? cold.consumed : undefined);
     return {
       page,
-      isDone: !hasMore,
-      continueCursor: consumedRow
-        ? encodeMessageCursor(consumedRow)
-        : normalized.paginationOpts.cursor ?? "",
+      isDone: !cold.hasMore,
+      continueCursor: archivedCursor
+        ? encodeMessageCursor(archivedCursor)
+        : consumedRow
+          ? encodeMessageCursor(consumedRow)
+          : normalized.paginationOpts.cursor ?? "",
     };
   }
 
@@ -482,7 +556,7 @@ export class PostgresStore implements ChatRepository {
     const prefix = `${escapeLikeValue(query)}%`;
     const values: unknown[] = [contains, query, prefix];
     const conditions = [
-      "deleted_at IS NULL",
+      "sender.deleted_at IS NULL",
       `(lower(sender_username) LIKE $1 ESCAPE '\\' OR ` +
         `lower(sender_display_name) LIKE $1 ESCAPE '\\')`,
     ];
@@ -496,11 +570,19 @@ export class PostgresStore implements ChatRepository {
       sender_display_name: string;
       message_count: string;
     }>(`
+      WITH sender AS (
+        SELECT sender_username, sender_display_name, channel_id, timestamp, deleted_at
+        FROM chat_messages
+        UNION ALL
+        SELECT sender_username, sender_display_name, channel_id, timestamp, deleted_at
+        FROM chat_message_cold_catalog
+        WHERE sender_username IS NOT NULL AND sender_display_name IS NOT NULL
+      )
       SELECT
         sender_username,
         max(sender_display_name) AS sender_display_name,
         count(*) AS message_count
-      FROM chat_messages
+      FROM sender
       WHERE ${conditions.join(" AND ")}
       GROUP BY sender_username
       ORDER BY

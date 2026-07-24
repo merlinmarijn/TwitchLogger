@@ -5,6 +5,7 @@ import {
   createHttpServer,
   type ApplicationRuntimeState,
 } from "./httpServer";
+import { ColdMessageArchiveService } from "./ColdMessageArchiveService";
 import { createLogger } from "./logger";
 import { PostgresStore } from "./PostgresStore";
 import { RawEventArchiveService } from "./RawEventArchiveService";
@@ -24,6 +25,7 @@ const runtime: ApplicationRuntimeState = {
 let chat: TwitchChatService | undefined;
 let database: PostgresDatabase | undefined;
 let rawArchive: RawEventArchiveService | undefined;
+let coldArchive: ColdMessageArchiveService | undefined;
 let archiveReady = false;
 
 for (const warning of configuration.warnings) logger.warn({ warning }, "Configuration warning");
@@ -38,7 +40,8 @@ if (configuration.databaseUrl) {
   try {
     database = new PostgresDatabase(configuration.databaseUrl);
     await database.migrate();
-    const repository = new PostgresStore(database, logger);
+    coldArchive = new ColdMessageArchiveService(database, logger);
+    const repository = new PostgresStore(database, logger, coldArchive);
     runtime.database = database;
     runtime.store = repository;
   } catch (error) {
@@ -54,9 +57,13 @@ if (configuration.databaseUrl) {
 if (database && runtime.store) {
   try {
     rawArchive = new RawEventArchiveService(database, logger);
-    const result = await rawArchive.runOnce();
+    const rawResult = await rawArchive.runOnce();
+    const coldResult = await coldArchive!.runOnce();
     archiveReady = true;
-    logger.info(result, "Raw-event archive verification completed before ingestion");
+    logger.info(
+      { raw: rawResult, cold: coldResult },
+      "Archive verification completed before ingestion",
+    );
   } catch (error) {
     runtime.integrationError =
       "Raw Twitch event archival failed verification; ingestion is paused to protect source data";
@@ -86,6 +93,12 @@ if (configuration.options && runtime.store && archiveReady) {
         "Raw Twitch event archival failed verification; ingestion is paused to protect source data";
       logger.error({ err: error }, "Twitch ingestion paused after archive verification failure");
     });
+    coldArchive?.start((error) => {
+      chat?.pause();
+      runtime.integrationError =
+        "Cold chat archive failed verification; ingestion is paused to protect source data";
+      logger.error({ err: error }, "Twitch ingestion paused after cold archive failure");
+    });
   } catch (error) {
     runtime.integrationError = "Twitch integration failed to initialize; inspect server logs";
     runtime.auth = undefined;
@@ -97,6 +110,7 @@ if (configuration.options && runtime.store && archiveReady) {
 async function shutdown(signal: string) {
   logger.info({ signal }, "Shutting down Twitch worker");
   rawArchive?.stop();
+  coldArchive?.stop();
   abortController.abort();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await database?.close();

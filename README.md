@@ -156,6 +156,7 @@ npm test
 npm run lint
 npm run db:migrate
 npm run archive:verify
+npm run archive:verify-cold
 npm run start:worker
 ```
 
@@ -175,3 +176,16 @@ Legacy timestamp indexes and the unused `chat_tab_matches` cache are removed
 after the archive rollout. The retained partial keyset indexes cover live chat,
 channel, gallery, and score pagination while the trigram indexes continue to
 serve text and sender search.
+
+Canonical messages remain in the indexed hot table for 90 days. After the
+separate cold-archive gate is enabled, older complete UTC days are moved in the
+same transaction into verified Brotli chunks plus a small pagination catalog.
+The API transparently reads those chunks when hot results are exhausted, and
+archived moderation rewrites and re-verifies the affected chunk.
+
+Enable this tier only after its verification command succeeds:
+
+```powershell
+npm run archive:verify-cold
+npm run archive:enable-cold -- --confirm
+```

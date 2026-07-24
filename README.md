@@ -126,6 +126,12 @@ Use the base64 value for `TWITCH_TOKEN_ENCRYPTION_KEY` and the hex value for `IN
 - EventSub reconnects recreate desired subscriptions after a new welcome message.
 - Twitch-directed session reconnects preserve subscriptions without duplication.
 - PostgreSQL uniquely constrains `external_message_id` for durable deduplication.
+- Original Twitch EventSub envelopes are copied into sealed daily Brotli archive
+  chunks. Every chunk is decompressed and checked against its SHA-256 manifest
+  before its staging rows can be removed.
+- Raw source cleanup is fail-closed and disabled by default. If archival later
+  fails verification, Twitch ingestion pauses while existing chat reads remain
+  available.
 - Removed messages remain hidden tombstones so retried Twitch events cannot restore them.
 - Removed image URLs remain suppressed during later image reindex operations.
 - OAuth 401 responses trigger serialized refresh and one retry.
@@ -149,5 +155,18 @@ npm run build
 npm test
 npm run lint
 npm run db:migrate
+npm run archive:verify
 npm run start:worker
 ```
+
+After a new archival deployment, leave source cleanup disabled until
+`npm run archive:verify` reports `"verified": true` in production. Enable it
+explicitly only after taking a database backup:
+
+```powershell
+npm run archive:enable-cleanup -- --confirm
+```
+
+Cleanup only nulls redundant `raw_message_data` values after their verified
+archive chunk is committed. Canonical message columns used by chat, search,
+filters, galleries, scores, and moderation are not changed.

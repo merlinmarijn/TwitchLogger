@@ -150,41 +150,66 @@ export class PostgresStore implements ChatRepository {
   async insertMessage(channel: ResolvedChannel, message: TwitchChatMessage) {
     const imageUrls = extractImageUrls(message.messageText);
     const now = Date.now();
-    const result = await this.database.query<{ id: string }>(`
-      INSERT INTO chat_messages (
-        id, channel_id, platform, external_message_id, event_notification_id,
-        external_channel_id, channel_name, sender_id, sender_username,
-        sender_display_name, message_text, has_images, image_urls,
-        image_index_version, gallery_channel_id, timestamp, badges, user_color,
-        is_broadcaster, is_moderator, is_subscriber, is_vip, message_type,
-        metadata, raw_message_data, created_at
-      ) VALUES (
-        $1, $2, 'twitch', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
-        $13, $14, $15, $16::jsonb, $17, $18, $19, $20, $21, $22,
-        $23::jsonb, $24::jsonb, $25
-      )
-      ON CONFLICT (external_message_id) DO NOTHING
-      RETURNING id
-    `, [
-      randomUUID(), channel.storageId, message.messageId, message.eventNotificationId,
-      message.channelId, message.channelName, message.userId, message.username,
-      message.displayName, message.messageText, imageUrls.length > 0,
-      JSON.stringify(imageUrls), IMAGE_INDEX_VERSION,
-      imageUrls.length > 0 ? channel.storageId : null, message.messageTimestamp.getTime(),
-      JSON.stringify(message.badges), message.userColor ?? null, message.isBroadcaster,
-      message.isModerator, message.isSubscriber, message.isVip, message.messageType,
-      JSON.stringify(message.metadata), JSON.stringify(message.rawMessageData), now,
-    ]);
-    if (!result.rowCount) {
-      this.logger.debug({ messageId: message.messageId }, "Ignored duplicate chat message");
-      return;
+    const timestamp = message.messageTimestamp.getTime();
+    const client = await this.database.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<{ id: string }>(`
+        INSERT INTO chat_messages (
+          id, channel_id, platform, external_message_id, event_notification_id,
+          external_channel_id, channel_name, sender_id, sender_username,
+          sender_display_name, message_text, has_images, image_urls,
+          image_index_version, gallery_channel_id, timestamp, badges, user_color,
+          is_broadcaster, is_moderator, is_subscriber, is_vip, message_type,
+          metadata, raw_message_data, created_at
+        ) VALUES (
+          $1, $2, 'twitch', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
+          $13, $14, $15, $16::jsonb, $17, $18, $19, $20, $21, $22,
+          $23::jsonb, $24::jsonb, $25
+        )
+        ON CONFLICT (external_message_id) DO NOTHING
+        RETURNING id
+      `, [
+        randomUUID(), channel.storageId, message.messageId, message.eventNotificationId,
+        message.channelId, message.channelName, message.userId, message.username,
+        message.displayName, message.messageText, imageUrls.length > 0,
+        JSON.stringify(imageUrls), IMAGE_INDEX_VERSION,
+        imageUrls.length > 0 ? channel.storageId : null, timestamp,
+        JSON.stringify(message.badges), message.userColor ?? null, message.isBroadcaster,
+        message.isModerator, message.isSubscriber, message.isVip, message.messageType,
+        JSON.stringify(message.metadata), JSON.stringify(message.rawMessageData), now,
+      ]);
+      if (!result.rowCount) {
+        await client.query("ROLLBACK");
+        this.logger.debug({ messageId: message.messageId }, "Ignored duplicate chat message");
+        return;
+      }
+      await client.query(`
+        INSERT INTO chat_raw_events (
+          external_message_id, event_notification_id, channel_id,
+          timestamp, raw_message_data, created_at
+        ) VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+      `, [
+        message.messageId,
+        message.eventNotificationId,
+        channel.storageId,
+        timestamp,
+        JSON.stringify(message.rawMessageData),
+        now,
+      ]);
+      await client.query(`
+        UPDATE channels
+        SET last_message_at = $2, connection_status = 'connected',
+            connection_error = NULL, updated_at = $3
+        WHERE id = $1
+      `, [channel.storageId, timestamp, now]);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
     }
-    await this.database.query(`
-      UPDATE channels
-      SET last_message_at = $2, connection_status = 'connected',
-          connection_error = NULL, updated_at = $3
-      WHERE id = $1
-    `, [channel.storageId, message.messageTimestamp.getTime(), now]);
   }
 
   async ensurePlatformSeeded() {

@@ -7,6 +7,7 @@ import {
 } from "./httpServer";
 import { createLogger } from "./logger";
 import { PostgresStore } from "./PostgresStore";
+import { RawEventArchiveService } from "./RawEventArchiveService";
 import { EncryptedTokenStore } from "./twitch/EncryptedTokenStore";
 import { TwitchApiClient } from "./twitch/TwitchApiClient";
 import { TwitchAuthService } from "./twitch/TwitchAuthService";
@@ -22,6 +23,8 @@ const runtime: ApplicationRuntimeState = {
 };
 let chat: TwitchChatService | undefined;
 let database: PostgresDatabase | undefined;
+let rawArchive: RawEventArchiveService | undefined;
+let archiveReady = false;
 
 for (const warning of configuration.warnings) logger.warn({ warning }, "Configuration warning");
 if (configuration.issues.length > 0) {
@@ -48,9 +51,22 @@ if (configuration.databaseUrl) {
   }
 }
 
+if (database && runtime.store) {
+  try {
+    rawArchive = new RawEventArchiveService(database, logger);
+    const result = await rawArchive.runOnce();
+    archiveReady = true;
+    logger.info(result, "Raw-event archive verification completed before ingestion");
+  } catch (error) {
+    runtime.integrationError =
+      "Raw Twitch event archival failed verification; ingestion is paused to protect source data";
+    logger.error({ err: error }, "Raw-event archive initialization failed");
+  }
+}
+
 const server = await createHttpServer(configuration, runtime, logger);
 
-if (configuration.options && runtime.store) {
+if (configuration.options && runtime.store && archiveReady) {
   const options = configuration.options;
   try {
     const tokenStore = new EncryptedTokenStore(
@@ -64,6 +80,12 @@ if (configuration.options && runtime.store) {
     const eventSub = new TwitchEventSubClient(options.twitch.eventSubUrl, api, logger);
     chat = new TwitchChatService(auth, api, eventSub, runtime.store, logger);
     await chat.start(abortController.signal);
+    rawArchive?.start((error) => {
+      chat?.pause();
+      runtime.integrationError =
+        "Raw Twitch event archival failed verification; ingestion is paused to protect source data";
+      logger.error({ err: error }, "Twitch ingestion paused after archive verification failure");
+    });
   } catch (error) {
     runtime.integrationError = "Twitch integration failed to initialize; inspect server logs";
     runtime.auth = undefined;
@@ -74,6 +96,7 @@ if (configuration.options && runtime.store) {
 
 async function shutdown(signal: string) {
   logger.info({ signal }, "Shutting down Twitch worker");
+  rawArchive?.stop();
   abortController.abort();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await database?.close();

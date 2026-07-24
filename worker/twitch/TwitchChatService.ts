@@ -63,10 +63,15 @@ export class TwitchChatService {
   }
 
   stop() {
+    this.pause();
+    this.repository.close();
+  }
+
+  pause() {
     this.unsubscribeChannels?.();
+    this.unsubscribeChannels = undefined;
     this.eventSub.stop();
     this.eventSubRunning = false;
-    this.repository.close();
   }
 
   private async synchronizeChannels(channels: FollowedChannel[]) {

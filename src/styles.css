@@ -69,10 +69,8 @@ h2 { font-size: 18px; }
 .feed-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--border); background: #121214; }
 .feed-toolbar-right { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .toolbar-actions { display: flex; align-items: center; gap: 8px; }
-.view-tabs { display: flex; gap: 3px; border: 1px solid var(--border); border-radius: 8px; padding: 3px; background: #0e0e10; }
-.view-tabs button { min-height: 28px; display: flex; align-items: center; gap: 6px; border: 0; border-radius: 5px; padding: 4px 10px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 700; cursor: pointer; }
-.view-tabs button.selected { background: #323239; color: #fff; }
-.view-tabs button span { min-width: 17px; border-radius: 99px; padding: 1px 5px; background: var(--purple); color: #fff; font-size: 9px; text-align: center; }
+.filter-trigger { gap: 7px; }
+.filter-trigger-count { min-width: 18px; border-radius: 99px; padding: 1px 5px; background: var(--purple); color: #fff; font-size: 9px; text-align: center; }
 .search-group { min-width: min(290px, 36vw); display: grid; gap: 3px; }
 .search-field { height: 36px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 7px; padding: 0 6px 0 9px; background: var(--surface-2); transition: border-color 160ms ease, background-color 160ms ease; }
 .search-field:focus-within { border-color: #7957ad; background: #242429; }
@@ -111,6 +109,10 @@ h2 { font-size: 18px; }
 .checkbox { display: flex; align-items: flex-start; gap: 8px; color: #d4d4da; font-size: 12px; line-height: 1.4; }
 .checkbox input { margin-top: 2px; accent-color: var(--purple); }
 .filter-workspace { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); overflow: hidden; background: #0e0e10; }
+.filter-dialog { position: relative; width: min(1180px, 100%); height: min(760px, calc(100vh - 40px)); display: flex; overflow: hidden; border: 1px solid #414148; border-radius: 13px; background: #0e0e10; box-shadow: 0 24px 80px #000b; }
+.filter-dialog-close { position: absolute; z-index: 4; top: 12px; right: 12px; }
+.filter-dialog .filter-library-heading { padding-right: 0; }
+.filter-dialog .filter-editor-heading { padding-right: 44px; }
 .filter-library, .filter-editor { min-height: 0; overflow-y: auto; padding: 20px; }
 .filter-library { border-right: 1px solid var(--border); background: #151517; }
 .filter-library-heading, .filter-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -284,23 +286,22 @@ h2 { font-size: 18px; }
   .dashboard { display: block; }
   .channels-panel { border: 0; max-height: 300px; }
   .feed-panel { height: 70vh; }
-  .feed-panel.filters-view { height: auto; }
   .feed-toolbar { align-items: flex-start; flex-direction: column; }
   .feed-toolbar-right { width: 100%; align-items: stretch; }
-  .view-tabs { align-self: flex-start; }
   .toolbar-actions { width: 100%; flex-wrap: wrap; }
   .topbar { min-height: 72px; height: auto; padding-block: 10px; gap: 12px; }
   .topbar-actions { justify-content: flex-end; flex-wrap: wrap; }
   .search-group { width: 100%; min-width: 100%; }
   .search-field { height: 44px; }
-  .toolbar-actions > .button, .view-tabs button, .chat-tabs button, .edit-chat-tab { min-height: 44px; }
+  .toolbar-actions > .button, .chat-tabs button, .edit-chat-tab { min-height: 44px; }
   .topbar .auth-chip { min-height: 44px; display: inline-flex; align-items: center; }
   .message-row { grid-template-columns: 58px minmax(0, 1fr); }
   .bulk-action-bar { align-items: flex-start; flex-wrap: wrap; }
   .bulk-action-bar > div { width: 100%; margin-left: 0; }
   .channel-tag { display: none; }
-  .filter-workspace { display: block; overflow: visible; }
-  .filter-library, .filter-editor { overflow: visible; }
+  .filter-dialog { height: calc(100vh - 20px); border-radius: 10px; }
+  .filter-dialog .filter-workspace { display: block; overflow-y: auto; }
+  .filter-dialog .filter-library, .filter-dialog .filter-editor { overflow: visible; }
   .filter-library { border-right: 0; border-bottom: 1px solid var(--border); }
   .filter-action-picker > div { grid-template-columns: 1fr; }
   .filter-rule { grid-template-columns: 26px 1fr 30px; }

@@ -97,7 +97,7 @@ export default function App() {
   const channels = useQuery(api.channels.list, {}) ?? [];
   const serverChatTabs = useQuery(api.chatTabs.list, {});
   const [selectedChannelId, setSelectedChannelId] = useState<string>();
-  const [view, setView] = useState<"chat" | "filters">("chat");
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [querySearch, setQuerySearch] = useState("");
   const [filterState, setFilterState] = useState<FilterState>(loadSavedFilterState);
   const [legacyChatTabs, setLegacyChatTabs] = useState<ChatViewTab[]>(loadSavedChatTabs);
@@ -138,7 +138,7 @@ export default function App() {
   );
   const serverFiltering = Boolean(activeChatTab) || Boolean(querySearch.trim()) ||
     selectionFilters.length > 0;
-  const galleryActive = view === "chat" && activeChatTab?.layout === "gallery";
+  const galleryActive = activeChatTab?.layout === "gallery";
   const queryArgs = useMemo(
     () => ({
       ...(selectedChannelId ? { channelId: selectedChannelId } : {}),
@@ -163,7 +163,7 @@ export default function App() {
   const messageFeedKey = useMemo(() => JSON.stringify(queryArgs), [queryArgs]);
   const recentQuery = usePaginatedQuery(
     api.messages.page,
-    view === "chat" && !galleryActive ? queryArgs : "skip",
+    !galleryActive ? queryArgs : "skip",
     { initialNumItems: INITIAL_MESSAGE_COUNT },
   );
   const galleryQuery = usePaginatedQuery(
@@ -186,7 +186,7 @@ export default function App() {
   );
   const filterMatchCountResults = useQuery(
     api.messages.filterMatchCounts,
-    view === "filters" && filterState.filters.length > 0
+    filterDialogOpen && filterState.filters.length > 0
       ? {
           filters: filterState.filters,
           ...(selectedChannelId ? { channelId: selectedChannelId } : {}),
@@ -245,6 +245,15 @@ export default function App() {
   useEffect(() => {
     if (isAdmin) void ensureSeeded({}).catch((error: Error) => setNotice(error.message));
   }, [ensureSeeded, isAdmin]);
+
+  useEffect(() => {
+    if (!filterDialogOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFilterDialogOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [filterDialogOpen]);
 
   useEffect(() => {
     try {
@@ -391,7 +400,7 @@ export default function App() {
             onError={setNotice}
           />
 
-          <section className={`feed-panel ${view === "filters" ? "filters-view" : ""}`}>
+          <section className="feed-panel">
             <FeedToolbar
               activeFilterCount={activeFilters.length}
               channel={selectedChannel}
@@ -406,9 +415,8 @@ export default function App() {
                   : recentQuery.status === "LoadingFirstPage")
               }
               selectionMode={selectionMode}
-              view={view}
               onTextChange={setQuerySearch}
-              onViewChange={setView}
+              onOpenFilters={() => setFilterDialogOpen(true)}
               onPause={() => {
                 if (!paused) {
                   setPausedMessages(messages);
@@ -419,64 +427,49 @@ export default function App() {
               onClear={() => setClearBefore(Date.now())}
               onToggleSelection={() => setSelectionMode((current) => !current)}
             />
-            {view === "chat" ? (
-              <>
-                <ChatTabBar
-                  activeId={activeChatTab?.id ?? "all"}
-                  tabs={chatTabs}
-                  canEdit={isAdmin}
-                  onAdd={() => setEditingChatTab("new")}
-                  onEdit={setEditingChatTab}
-                  onSelect={setActiveChatTabId}
-                />
-                {activeChatTab?.layout === "gallery" ? (
-                  <ImageGallery
-                    historyEnabled={clearBefore === 0}
-                    key={`${messageFeedKey}:${selectionMode}`}
-                    loadMore={galleryQuery.loadMore}
-                    messages={sourceMessages}
-                    error={galleryQuery.error}
-                    isAdmin={isAdmin}
-                    onRetry={galleryQuery.retry}
-                    selectionMode={selectionMode}
-                    onDeleteMessages={deleteMessages}
-                    onHideImages={hideImages}
-                    paused={paused}
-                    serverFiltering={serverFiltering}
-                    status={galleryQuery.status}
-                  />
-                ) : (
-                  <MessageFeed
-                    badgesByChannel={badgesByChannel}
-                    emotesByChannel={emotesByChannel}
-                    highlightedIds={highlightedIds}
-                    historyEnabled={clearBefore === 0}
-                    key={`${messageFeedKey}:${selectionMode}`}
-                    loadMore={recentQuery.loadMore}
-                    messages={sourceMessages}
-                    error={recentQuery.error}
-                    isAdmin={isAdmin}
-                    onRetry={recentQuery.retry}
-                    selectionMode={selectionMode}
-                    onDeleteMessages={deleteMessages}
-                    onHideImages={hideImages}
-                    paused={paused}
-                    serverFiltering={serverFiltering}
-                    status={recentQuery.status}
-                  />
-                )}
-              </>
+            <ChatTabBar
+              activeId={activeChatTab?.id ?? "all"}
+              tabs={chatTabs}
+              canEdit={isAdmin}
+              onAdd={() => setEditingChatTab("new")}
+              onEdit={setEditingChatTab}
+              onSelect={setActiveChatTabId}
+            />
+            {activeChatTab?.layout === "gallery" ? (
+              <ImageGallery
+                historyEnabled={clearBefore === 0}
+                key={`${messageFeedKey}:${selectionMode}`}
+                loadMore={galleryQuery.loadMore}
+                messages={sourceMessages}
+                error={galleryQuery.error}
+                isAdmin={isAdmin}
+                onRetry={galleryQuery.retry}
+                selectionMode={selectionMode}
+                onDeleteMessages={deleteMessages}
+                onHideImages={hideImages}
+                paused={paused}
+                serverFiltering={serverFiltering}
+                status={galleryQuery.status}
+              />
             ) : (
-              <Suspense fallback={<div className="empty">Loading filter tools…</div>}>
-                <FilterWorkspace
-                  activeIds={filterState.activeIds}
-                  filters={filterState.filters}
-                  matchCounts={filterMatchCounts}
-                  onDelete={deleteFilter}
-                  onSave={saveFilter}
-                  onToggle={toggleFilter}
-                />
-              </Suspense>
+              <MessageFeed
+                badgesByChannel={badgesByChannel}
+                emotesByChannel={emotesByChannel}
+                highlightedIds={highlightedIds}
+                historyEnabled={clearBefore === 0}
+                key={`${messageFeedKey}:${selectionMode}`}
+                loadMore={recentQuery.loadMore}
+                messages={sourceMessages}
+                error={recentQuery.error}
+                isAdmin={isAdmin}
+                onRetry={recentQuery.retry}
+                selectionMode={selectionMode}
+                onDeleteMessages={deleteMessages}
+                onHideImages={hideImages}
+                paused={paused}
+                serverFiltering={serverFiltering}
+                status={recentQuery.status}
+              />
             )}
           </section>
         </main>
@@ -495,6 +488,40 @@ export default function App() {
             onDelete={deleteChatTab}
             onSave={saveChatTab}
           />
+        )}
+        {filterDialogOpen && (
+          <div
+            className="dialog-backdrop"
+            onMouseDown={() => setFilterDialogOpen(false)}
+            role="presentation"
+          >
+            <section
+              aria-label="Filters"
+              aria-modal="true"
+              className="filter-dialog"
+              onMouseDown={(event) => event.stopPropagation()}
+              role="dialog"
+            >
+              <button
+                aria-label="Close filters"
+                autoFocus
+                className="dialog-close filter-dialog-close"
+                onClick={() => setFilterDialogOpen(false)}
+              >
+                ×
+              </button>
+              <Suspense fallback={<div className="empty">Loading filter tools…</div>}>
+                <FilterWorkspace
+                  activeIds={filterState.activeIds}
+                  filters={filterState.filters}
+                  matchCounts={filterMatchCounts}
+                  onDelete={deleteFilter}
+                  onSave={saveFilter}
+                  onToggle={toggleFilter}
+                />
+              </Suspense>
+            </section>
+          </div>
         )}
       </div>
     </ErrorBoundary>
@@ -604,9 +631,8 @@ function FeedToolbar({
   resultCount,
   searching,
   selectionMode,
-  view,
   onTextChange,
-  onViewChange,
+  onOpenFilters,
   onPause,
   onClear,
   onToggleSelection,
@@ -619,9 +645,8 @@ function FeedToolbar({
   resultCount: number;
   searching: boolean;
   selectionMode: boolean;
-  view: "chat" | "filters";
   onTextChange: (text: string) => void;
-  onViewChange: (view: "chat" | "filters") => void;
+  onOpenFilters: () => void;
   onPause: () => void;
   onClear: () => void;
   onToggleSelection: () => void;
@@ -629,51 +654,37 @@ function FeedToolbar({
   return (
     <div className="feed-toolbar">
       <div>
-        <span className="eyebrow">{view === "chat" ? "Live feed" : "Filter studio"}</span>
-        <h1>{view === "chat" ? channel?.displayName ?? "All channels" : "Filters"}</h1>
+        <span className="eyebrow">Live feed</span>
+        <h1>{channel?.displayName ?? "All channels"}</h1>
       </div>
       <div className="feed-toolbar-right">
-        <div className="view-tabs" role="tablist" aria-label="Feed view">
-          <button
-            aria-selected={view === "chat"}
-            className={view === "chat" ? "selected" : ""}
-            onClick={() => onViewChange("chat")}
-            role="tab"
-          >
-            Chat
-          </button>
-          <button
-            aria-selected={view === "filters"}
-            className={view === "filters" ? "selected" : ""}
-            onClick={() => onViewChange("filters")}
-            role="tab"
-          >
-            Filters {activeFilterCount > 0 && <span>{activeFilterCount}</span>}
-          </button>
-        </div>
-        {view === "chat" && (
-          <div className="toolbar-actions">
-            <SearchField
-              onChange={onTextChange}
-              resultCount={resultCount}
-              searching={searching}
-              value={filterText}
-            />
-            <button className={`button ${paused ? "primary" : ""}`} onClick={onPause}>
-              {paused ? "Resume" : "Pause"}
-            </button>
-            <button className="button" onClick={onClear}>Clear view</button>
-            {isAdmin && (
-              <button
-                aria-pressed={selectionMode}
-                className={`button ${selectionMode ? "selection-active" : ""}`}
-                onClick={onToggleSelection}
-              >
-                {selectionMode ? "Done selecting" : "Bulk actions"}
-              </button>
+        <div className="toolbar-actions">
+          <SearchField
+            onChange={onTextChange}
+            resultCount={resultCount}
+            searching={searching}
+            value={filterText}
+          />
+          <button className="button filter-trigger" onClick={onOpenFilters}>
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="filter-trigger-count">{activeFilterCount}</span>
             )}
-          </div>
-        )}
+          </button>
+          <button className={`button ${paused ? "primary" : ""}`} onClick={onPause}>
+            {paused ? "Resume" : "Pause"}
+          </button>
+          <button className="button" onClick={onClear}>Clear view</button>
+          {isAdmin && (
+            <button
+              aria-pressed={selectionMode}
+              className={`button ${selectionMode ? "selection-active" : ""}`}
+              onClick={onToggleSelection}
+            >
+              {selectionMode ? "Done selecting" : "Bulk actions"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

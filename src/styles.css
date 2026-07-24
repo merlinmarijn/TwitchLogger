@@ -68,7 +68,7 @@ h2 { font-size: 18px; }
 .feed-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0e0e10; }
 .feed-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--border); background: #121214; }
 .feed-toolbar-right { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
-.toolbar-actions { display: flex; align-items: center; gap: 8px; }
+.toolbar-actions { display: flex; align-items: flex-start; gap: 8px; }
 .filter-trigger { gap: 7px; }
 .filter-trigger-count { min-width: 18px; border-radius: 99px; padding: 1px 5px; background: var(--purple); color: #fff; font-size: 9px; text-align: center; }
 .search-group { min-width: min(290px, 36vw); display: grid; gap: 3px; }

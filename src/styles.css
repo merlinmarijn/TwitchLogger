@@ -248,8 +248,8 @@ h2 { font-size: 18px; }
 .gallery-empty-icon { width: 44px; height: 44px; display: grid; place-items: center; border: 1px dashed #68499b; border-radius: 50%; font-size: 25px; }
 .gallery-history-loader { min-height: 42px; display: flex; align-items: center; justify-content: center; padding: 15px 0 4px; color: #777782; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
 .gallery-viewer { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: clamp(12px, 3vw, 32px); isolation: isolate; }
-.gallery-viewer-backdrop { position: absolute; inset: 0; z-index: -1; background: #08080bea; backdrop-filter: blur(10px) saturate(.7); }
-.gallery-viewer-surface { position: relative; width: min(94vw, 1600px); height: min(92vh, 1100px); min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #3a393f; border-radius: 9px; background: #111113; box-shadow: 0 36px 120px #000e; transform-origin: center; }
+.gallery-viewer-backdrop { position: absolute; inset: 0; z-index: -1; background: #08080bee; }
+.gallery-viewer-surface { position: relative; width: min(94vw, 1600px); height: min(92vh, 1100px); min-height: 0; display: flex; flex-direction: column; overflow: hidden; contain: layout paint; border: 1px solid #3a393f; border-radius: 9px; background: #111113; box-shadow: 0 28px 90px #000c; backface-visibility: hidden; transform-origin: center; }
 .gallery-viewer-canvas { min-height: 0; flex: 1; display: grid; place-items: center; overflow: hidden; background: #0b0b0d; }
 .gallery-viewer-canvas img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .gallery-viewer-close { position: absolute; z-index: 2; top: 12px; right: 12px; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid #4a4950; border-radius: 50%; padding: 0; background: #111114db; color: #efedf2; font-size: 23px; line-height: 1; cursor: pointer; transition: background 120ms, transform 120ms; }

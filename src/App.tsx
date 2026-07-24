@@ -1017,18 +1017,8 @@ function ImageGallery({
   const viewportRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLDivElement>(null);
   const historyLoadPendingRef = useRef(false);
-  const imageOpenerRef = useRef<HTMLButtonElement>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(() => new Set());
-  const [viewingImage, setViewingImage] = useState<{
-    image: GalleryImage;
-    originRect: DOMRect;
-  }>();
   const [moderationBusy, setModerationBusy] = useState(false);
-
-  const closeImageViewer = useCallback(() => {
-    setViewingImage(undefined);
-    window.requestAnimationFrame(() => imageOpenerRef.current?.focus());
-  }, []);
 
   const toggleSelected = (id: string) => {
     setSelectedImageIds((current) => {
@@ -1140,13 +1130,6 @@ function ImageGallery({
                 key={image.id}
                 selectable={selectionMode}
                 selected={selectedImageIds.has(image.id)}
-                onOpen={(trigger) => {
-                  imageOpenerRef.current = trigger;
-                  setViewingImage({
-                    image,
-                    originRect: trigger.getBoundingClientRect(),
-                  });
-                }}
                 onSelect={() => toggleSelected(image.id)}
                 onDeleteMessage={() => {
                   if (window.confirm("Permanently delete the message that contains this image?")) {
@@ -1177,14 +1160,6 @@ function ImageGallery({
           <span>All saved images loaded</span>
         ) : null}
       </div>
-      {viewingImage && createPortal(
-        <GalleryImageViewer
-          image={viewingImage.image}
-          originRect={viewingImage.originRect}
-          onDismiss={closeImageViewer}
-        />,
-        document.body,
-      )}
     </div>
   );
 }
@@ -1194,7 +1169,6 @@ function GalleryCard({
   isAdmin,
   selectable,
   selected,
-  onOpen,
   onSelect,
   onDeleteMessage,
   onHideImage,
@@ -1203,13 +1177,19 @@ function GalleryCard({
   isAdmin: boolean;
   selectable: boolean;
   selected: boolean;
-  onOpen: (trigger: HTMLButtonElement) => void;
   onSelect: () => void;
   onDeleteMessage: () => void;
   onHideImage: () => void;
 }) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [failed, setFailed] = useState(false);
+  const [viewerOriginRect, setViewerOriginRect] = useState<DOMRect>();
   const postedAt = new Date(image.message.timestamp);
+
+  const closeImageViewer = useCallback(() => {
+    setViewerOriginRect(undefined);
+    window.requestAnimationFrame(() => triggerRef.current?.focus());
+  }, []);
 
   return (
     <article className={`gallery-card ${selectable ? "moderation-selectable" : ""} ${selected ? "moderation-selected" : ""}`}>
@@ -1233,7 +1213,8 @@ function GalleryCard({
         aria-haspopup="dialog"
         aria-label={`View full-size image posted by ${image.message.senderDisplayName}`}
         className="gallery-image-trigger"
-        onClick={(event) => onOpen(event.currentTarget)}
+        onClick={(event) => setViewerOriginRect(event.currentTarget.getBoundingClientRect())}
+        ref={triggerRef}
         type="button"
       >
         {failed ? (
@@ -1258,6 +1239,14 @@ function GalleryCard({
           {postedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </time>
       </footer>
+      {viewerOriginRect && createPortal(
+        <GalleryImageViewer
+          image={image}
+          originRect={viewerOriginRect}
+          onDismiss={closeImageViewer}
+        />,
+        document.body,
+      )}
     </article>
   );
 }
@@ -1286,9 +1275,8 @@ function GalleryImageViewer({
     const sourceCenterY = originRect.top + originRect.height / 2;
     const targetCenterX = targetRect.left + targetRect.width / 2;
     const targetCenterY = targetRect.top + targetRect.height / 2;
-    const scaleX = Math.max(0.08, Math.min(1, originRect.width / targetRect.width));
-    const scaleY = Math.max(0.08, Math.min(1, originRect.height / targetRect.height));
-    return `translate(${sourceCenterX - targetCenterX}px, ${sourceCenterY - targetCenterY}px) scale(${scaleX}, ${scaleY})`;
+    const scale = Math.max(0.08, Math.min(1, originRect.width / targetRect.width));
+    return `translate3d(${sourceCenterX - targetCenterX}px, ${sourceCenterY - targetCenterY}px, 0) scale(${scale})`;
   }, [originRect]);
 
   const closeViewer = useCallback(() => {
@@ -1302,10 +1290,10 @@ function GalleryImageViewer({
 
     const animations: Promise<unknown>[] = [];
     const surfaceAnimation = surfaceRef.current?.animate([
-      { opacity: 1, transform: "translate(0, 0) scale(1)" },
+      { opacity: 1, transform: "translate3d(0, 0, 0) scale(1)" },
       { opacity: 0, transform: transitionTransform() },
     ], {
-      duration: 300,
+      duration: 240,
       easing: "cubic-bezier(.7, 0, .84, 0)",
       fill: "forwards",
     });
@@ -1315,7 +1303,7 @@ function GalleryImageViewer({
       { opacity: 1 },
       { opacity: 0 },
     ], {
-      duration: 220,
+      duration: 160,
       easing: "cubic-bezier(.7, 0, .84, 0)",
       fill: "forwards",
     });
@@ -1327,18 +1315,18 @@ function GalleryImageViewer({
   useLayoutEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     surfaceRef.current?.animate([
-      { opacity: 0.35, transform: transitionTransform() },
-      { opacity: 1, transform: "translate(0, 0) scale(1)" },
+      { opacity: 0.55, transform: transitionTransform() },
+      { opacity: 1, transform: "translate3d(0, 0, 0) scale(1)" },
     ], {
-      duration: 440,
-      easing: "cubic-bezier(.22, 1, .36, 1)",
+      duration: 360,
+      easing: "cubic-bezier(.16, 1, .3, 1)",
       fill: "both",
     });
     backdropRef.current?.animate([
       { opacity: 0 },
       { opacity: 1 },
     ], {
-      duration: 300,
+      duration: 180,
       easing: "cubic-bezier(.16, 1, .3, 1)",
       fill: "both",
     });

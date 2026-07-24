@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   useMutation,
   usePaginatedQuery,
@@ -981,8 +982,18 @@ function ImageGallery({
   const viewportRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLDivElement>(null);
   const historyLoadPendingRef = useRef(false);
+  const imageOpenerRef = useRef<HTMLButtonElement>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(() => new Set());
+  const [viewingImage, setViewingImage] = useState<{
+    image: GalleryImage;
+    originRect: DOMRect;
+  }>();
   const [moderationBusy, setModerationBusy] = useState(false);
+
+  const closeImageViewer = useCallback(() => {
+    setViewingImage(undefined);
+    window.requestAnimationFrame(() => imageOpenerRef.current?.focus());
+  }, []);
 
   const toggleSelected = (id: string) => {
     setSelectedImageIds((current) => {
@@ -1094,6 +1105,13 @@ function ImageGallery({
                 key={image.id}
                 selectable={selectionMode}
                 selected={selectedImageIds.has(image.id)}
+                onOpen={(trigger) => {
+                  imageOpenerRef.current = trigger;
+                  setViewingImage({
+                    image,
+                    originRect: trigger.getBoundingClientRect(),
+                  });
+                }}
                 onSelect={() => toggleSelected(image.id)}
                 onDeleteMessage={() => {
                   if (window.confirm("Permanently delete the message that contains this image?")) {
@@ -1124,6 +1142,14 @@ function ImageGallery({
           <span>All saved images loaded</span>
         ) : null}
       </div>
+      {viewingImage && createPortal(
+        <GalleryImageViewer
+          image={viewingImage.image}
+          originRect={viewingImage.originRect}
+          onDismiss={closeImageViewer}
+        />,
+        document.body,
+      )}
     </div>
   );
 }
@@ -1133,6 +1159,7 @@ function GalleryCard({
   isAdmin,
   selectable,
   selected,
+  onOpen,
   onSelect,
   onDeleteMessage,
   onHideImage,
@@ -1141,6 +1168,7 @@ function GalleryCard({
   isAdmin: boolean;
   selectable: boolean;
   selected: boolean;
+  onOpen: (trigger: HTMLButtonElement) => void;
   onSelect: () => void;
   onDeleteMessage: () => void;
   onHideImage: () => void;
@@ -1166,11 +1194,12 @@ function GalleryCard({
           { label: "Delete source message", danger: true, onClick: onDeleteMessage },
         ]} />
       )}
-      <a
-        aria-label={`Open image posted by ${image.message.senderDisplayName}`}
-        href={image.url}
-        rel="noreferrer"
-        target="_blank"
+      <button
+        aria-haspopup="dialog"
+        aria-label={`View full-size image posted by ${image.message.senderDisplayName}`}
+        className="gallery-image-trigger"
+        onClick={(event) => onOpen(event.currentTarget)}
+        type="button"
       >
         {failed ? (
           <span className="gallery-image-failed">Image unavailable</span>
@@ -1183,8 +1212,8 @@ function GalleryCard({
             src={image.previewUrl}
           />
         )}
-        <span className="gallery-open-hint">Open original ↗</span>
-      </a>
+        <span className="gallery-open-hint">View image</span>
+      </button>
       <footer>
         <span>
           <strong>{image.message.senderDisplayName}</strong>
@@ -1195,6 +1224,169 @@ function GalleryCard({
         </time>
       </footer>
     </article>
+  );
+}
+
+function GalleryImageViewer({
+  image,
+  originRect,
+  onDismiss,
+}: {
+  image: GalleryImage;
+  originRect: DOMRect;
+  onDismiss: () => void;
+}) {
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const closingRef = useRef(false);
+  const [failed, setFailed] = useState(false);
+
+  const transitionTransform = useCallback(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return "none";
+    const targetRect = surface.getBoundingClientRect();
+    const sourceCenterX = originRect.left + originRect.width / 2;
+    const sourceCenterY = originRect.top + originRect.height / 2;
+    const targetCenterX = targetRect.left + targetRect.width / 2;
+    const targetCenterY = targetRect.top + targetRect.height / 2;
+    const scaleX = Math.max(0.08, Math.min(1, originRect.width / targetRect.width));
+    const scaleY = Math.max(0.08, Math.min(1, originRect.height / targetRect.height));
+    return `translate(${sourceCenterX - targetCenterX}px, ${sourceCenterY - targetCenterY}px) scale(${scaleX}, ${scaleY})`;
+  }, [originRect]);
+
+  const closeViewer = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      onDismiss();
+      return;
+    }
+
+    const animations: Promise<unknown>[] = [];
+    const surfaceAnimation = surfaceRef.current?.animate([
+      { opacity: 1, transform: "translate(0, 0) scale(1)" },
+      { opacity: 0, transform: transitionTransform() },
+    ], {
+      duration: 300,
+      easing: "cubic-bezier(.7, 0, .84, 0)",
+      fill: "forwards",
+    });
+    if (surfaceAnimation) animations.push(surfaceAnimation.finished);
+
+    const backdropAnimation = backdropRef.current?.animate([
+      { opacity: 1 },
+      { opacity: 0 },
+    ], {
+      duration: 220,
+      easing: "cubic-bezier(.7, 0, .84, 0)",
+      fill: "forwards",
+    });
+    if (backdropAnimation) animations.push(backdropAnimation.finished);
+
+    void Promise.allSettled(animations).then(onDismiss);
+  }, [onDismiss, transitionTransform]);
+
+  useLayoutEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    surfaceRef.current?.animate([
+      { opacity: 0.35, transform: transitionTransform() },
+      { opacity: 1, transform: "translate(0, 0) scale(1)" },
+    ], {
+      duration: 440,
+      easing: "cubic-bezier(.22, 1, .36, 1)",
+      fill: "both",
+    });
+    backdropRef.current?.animate([
+      { opacity: 0 },
+      { opacity: 1 },
+    ], {
+      duration: 300,
+      easing: "cubic-bezier(.16, 1, .3, 1)",
+      fill: "both",
+    });
+  }, [transitionTransform]);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeButtonRef.current?.focus();
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeViewer();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusableElements = viewerRef.current?.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), a[href]",
+      );
+      if (!focusableElements?.length) return;
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [closeViewer]);
+
+  return (
+    <div
+      aria-label={`Image shared by ${image.message.senderDisplayName}`}
+      aria-modal="true"
+      className="gallery-viewer"
+      onMouseDown={(event) => {
+        if (!surfaceRef.current?.contains(event.target as Node)) closeViewer();
+      }}
+      ref={viewerRef}
+      role="dialog"
+    >
+      <div className="gallery-viewer-backdrop" ref={backdropRef} />
+      <article className="gallery-viewer-surface" ref={surfaceRef}>
+        <button
+          aria-label="Close image viewer"
+          className="gallery-viewer-close"
+          onClick={closeViewer}
+          ref={closeButtonRef}
+          type="button"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <div className="gallery-viewer-canvas">
+          {failed ? (
+            <span className="gallery-viewer-failed">Full-size image unavailable</span>
+          ) : (
+            <img
+              alt={`Shared by ${image.message.senderDisplayName} in ${image.message.channelName}`}
+              decoding="async"
+              onError={() => setFailed(true)}
+              src={image.previewUrl}
+            />
+          )}
+        </div>
+        <footer className="gallery-viewer-footer">
+          <span>
+            <strong>{image.message.senderDisplayName}</strong>
+            <small>#{image.message.channelName}</small>
+          </span>
+          <a href={image.url} rel="noreferrer" target="_blank">
+            Open original <span aria-hidden="true">↗</span>
+          </a>
+        </footer>
+      </article>
+    </div>
   );
 }
 

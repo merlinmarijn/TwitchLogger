@@ -68,6 +68,18 @@ describe("chat tabs", () => {
     expect(parseChatTabs(raw)).toEqual([{ ...legacyTab, layout: "chat" }]);
   });
 
+  it("round-trips game score room tabs", () => {
+    const scoresTab: ChatViewTab = {
+      id: "scores",
+      name: "High scores",
+      layout: "scores",
+      match: "any",
+      rules: [],
+    };
+    expect(parseChatTabs(serializeChatTabs([scoresTab]))).toEqual([scoresTab]);
+    expect(chatTabAsFilter(scoresTab).rules).toEqual([]);
+  });
+
   it("uses a tab as an additional show-only feed filter", () => {
     const messages = [
       { _id: "image", messageText: "look https://example.com/photo.png" },

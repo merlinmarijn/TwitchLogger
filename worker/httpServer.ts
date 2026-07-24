@@ -341,6 +341,11 @@ export function createHttpServer(
       runtime.store!.pageMessages(request.body as MessagePageArgs, true), logger);
   });
 
+  app.post("/api/data/messages/page-game-scores", async (request, response) => {
+    await sendData(response, runtime, () =>
+      runtime.store!.pageMessages(request.body as MessagePageArgs, false, true), logger);
+  });
+
   app.post("/api/data/messages/suggestions", async (request, response) => {
     await sendData(response, runtime, () =>
       runtime.store!.suggestMessageFilters(request.body as MessageSuggestionArgs), logger);

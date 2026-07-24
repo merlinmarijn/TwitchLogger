@@ -105,6 +105,7 @@ export const api = {
   messages: {
     page: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page", "POST", 2_000),
     pageImages: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page-images", "POST", 4_000),
+    pageGameScores: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page-game-scores", "POST", 5_000),
     suggestions: operation<{
       text: string;
       channelId?: string;

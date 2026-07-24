@@ -9,7 +9,7 @@ import { upgradeGalleryFilterPattern } from "../shared/imageUrls";
 export interface ChatViewTab {
   id: string;
   name: string;
-  layout: "chat" | "gallery";
+  layout: "chat" | "gallery" | "scores";
   match: FilterMatchMode;
   rules: FilterRule[];
   revision?: number;
@@ -59,9 +59,9 @@ export function parseChatTabs(raw: string | null): ChatViewTab[] {
       return [{
         id: filter.id,
         name: filter.name,
-        layout: candidateFilters.find((candidate) => candidate.id === filter.id)?.layout === "gallery"
-          ? "gallery"
-          : "chat",
+        layout: parseTabLayout(
+          candidateFilters.find((candidate) => candidate.id === filter.id)?.layout,
+        ),
         match: filter.match,
         rules: filter.rules,
       }];
@@ -77,4 +77,8 @@ export function serializeChatTabs(tabs: ChatViewTab[]) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function parseTabLayout(value: unknown): ChatViewTab["layout"] {
+  return value === "gallery" || value === "scores" ? value : "chat";
 }

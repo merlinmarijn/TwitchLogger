@@ -30,7 +30,7 @@ const MAX_CHAT_TABS = 20;
 const chatTabInputValidator = v.object({
   id: v.string(),
   name: v.string(),
-  layout: v.union(v.literal("chat"), v.literal("gallery")),
+  layout: v.union(v.literal("chat"), v.literal("gallery"), v.literal("scores")),
   match: v.union(v.literal("all"), v.literal("any")),
   rules: v.array(filterRuleValidator),
 });
@@ -38,7 +38,7 @@ const chatTabInputValidator = v.object({
 export interface ChatTabInput {
   id: string;
   name: string;
-  layout: "chat" | "gallery";
+  layout: "chat" | "gallery" | "scores";
   match: FilterMatchMode;
   rules: FilterRule[];
 }

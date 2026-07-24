@@ -54,6 +54,7 @@ import {
 } from "./smartSearch";
 
 const FilterWorkspace = lazy(() => import("./FilterWorkspace"));
+const GameScoreRoom = lazy(() => import("./GameScoreRoom"));
 const INITIAL_MESSAGE_COUNT = 50;
 const HISTORY_PAGE_SIZE = 100;
 const MAX_BULK_ITEMS = 100;
@@ -156,6 +157,7 @@ export default function App() {
   const serverFiltering = Boolean(activeChatTab) || Boolean(querySearch.trim()) ||
     serverSelectionFilters.length > 0;
   const galleryActive = activeChatTab?.layout === "gallery";
+  const scoresActive = activeChatTab?.layout === "scores";
   const queryArgs = useMemo(
     () => ({
       ...(selectedChannelId ? { channelId: selectedChannelId } : {}),
@@ -180,7 +182,7 @@ export default function App() {
   const messageFeedKey = useMemo(() => JSON.stringify(queryArgs), [queryArgs]);
   const recentQuery = usePaginatedQuery(
     api.messages.page,
-    !galleryActive ? queryArgs : "skip",
+    !galleryActive && !scoresActive ? queryArgs : "skip",
     { initialNumItems: INITIAL_MESSAGE_COUNT },
   );
   const galleryQuery = usePaginatedQuery(
@@ -188,11 +190,24 @@ export default function App() {
     galleryActive ? queryArgs : "skip",
     { initialNumItems: 50 },
   );
+  const gameScoresQuery = usePaginatedQuery(
+    api.messages.pageGameScores,
+    scoresActive ? queryArgs : "skip",
+    { initialNumItems: 250 },
+  );
   const messages: ChatMessage[] = useMemo(
     () => galleryActive
       ? galleryQuery.results
-      : [...recentQuery.results].reverse(),
-    [galleryActive, galleryQuery.results, recentQuery.results],
+      : scoresActive
+        ? gameScoresQuery.results
+        : [...recentQuery.results].reverse(),
+    [
+      galleryActive,
+      galleryQuery.results,
+      gameScoresQuery.results,
+      recentQuery.results,
+      scoresActive,
+    ],
   );
   const sourceMessages = paused && pausedMessageKey === messageFeedKey
     ? pausedMessages
@@ -223,10 +238,10 @@ export default function App() {
   const hideImagesMutation = useMutation(api.messages.hideImages);
   const isAdmin = Boolean(adminAccess?.authenticated);
   const visibleChannelIds = useMemo(
-    () => galleryActive
+    () => galleryActive || scoresActive
       ? []
       : [...new Set(messages.map((message) => message.externalChannelId))],
-    [galleryActive, messages],
+    [galleryActive, messages, scoresActive],
   );
   const emotesByChannel = useThirdPartyEmotes(visibleChannelIds);
   const badgesByChannel = useTwitchBadges(visibleChannelIds);
@@ -433,8 +448,11 @@ export default function App() {
                 Boolean(querySearch || searchTokens.length > 0) &&
                 (galleryActive
                   ? galleryQuery.status === "LoadingFirstPage"
-                  : recentQuery.status === "LoadingFirstPage")
+                  : scoresActive
+                    ? gameScoresQuery.status === "LoadingFirstPage"
+                    : recentQuery.status === "LoadingFirstPage")
               }
+              allowBulkActions={!scoresActive}
               selectionMode={selectionMode}
               onSearchMatchChange={setSearchMatch}
               onSearchTokensChange={setSearchTokens}
@@ -474,6 +492,21 @@ export default function App() {
                 serverFiltering={serverFiltering}
                 status={galleryQuery.status}
               />
+            ) : activeChatTab?.layout === "scores" ? (
+              <Suspense fallback={<div className="empty">Opening the score room…</div>}>
+                <GameScoreRoom
+                  error={gameScoresQuery.error}
+                  historyEnabled={clearBefore === 0}
+                  isAdmin={isAdmin}
+                  key={messageFeedKey}
+                  loadMore={gameScoresQuery.loadMore}
+                  messages={sourceMessages}
+                  onDeleteMessage={(messageId) => deleteMessages([messageId])}
+                  onRetry={gameScoresQuery.retry}
+                  paused={paused}
+                  status={gameScoresQuery.status}
+                />
+              </Suspense>
             ) : (
               <MessageFeed
                 badgesByChannel={badgesByChannel}
@@ -647,6 +680,7 @@ function ChannelSidebar({
 
 function FeedToolbar({
   activeFilterCount,
+  allowBulkActions,
   channel,
   channelId,
   channels,
@@ -667,6 +701,7 @@ function FeedToolbar({
   onToggleSelection,
 }: {
   activeFilterCount: number;
+  allowBulkActions: boolean;
   channel?: Channel;
   channelId?: string;
   channels: Channel[];
@@ -716,7 +751,7 @@ function FeedToolbar({
             {paused ? "Resume" : "Pause"}
           </button>
           <button className="button" onClick={onClear}>Clear view</button>
-          {isAdmin && (
+          {isAdmin && allowBulkActions && (
             <button
               aria-pressed={selectionMode}
               className={`button ${selectionMode ? "selection-active" : ""}`}

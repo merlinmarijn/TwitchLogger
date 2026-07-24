@@ -90,6 +90,15 @@ describe("PostgreSQL message pagination", () => {
     expect(calls[0].values).toContain("%alice%");
     expect(calls[0].values.at(-1)).toBe(51);
   });
+
+  it("limits the score-room page to candidate game shares", async () => {
+    const { calls, store } = createStore([{ rowCount: 0, rows: [] }]);
+
+    await store.pageMessages({ paginationOpts: { numItems: 250 } }, false, true);
+
+    expect(calls[0].text).toContain("message_text ILIKE '%RNGdle%'");
+    expect(calls[0].text).toContain("message_text ILIKE '%FoodGuessr%'");
+  });
 });
 
 describe("PostgreSQL smart-search suggestions", () => {

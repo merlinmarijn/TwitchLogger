@@ -51,6 +51,15 @@ export function ChatTabBar({
                 <path d="M2.5 2.5h11v11h-11zM4.5 10l2-2 1.5 1.5 2.5-3 2 2.5M5.5 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
               </svg>
             )}
+            {tab.layout === "scores" && (
+              <svg
+                aria-hidden="true"
+                className="tab-gallery-icon"
+                viewBox="0 0 16 16"
+              >
+                <path d="M5 2.5h6v2.2c0 2.2-1.3 3.8-3 3.8s-3-1.6-3-3.8V2.5ZM5 4H2.5v.8c0 1.5.9 2.5 2.5 2.7M11 4h2.5v.8c0 1.5-.9 2.5-2.5 2.7M8 8.5v2.2M5.5 13.5h5M6 10.7h4v2.8H6z" />
+              </svg>
+            )}
             {tab.name}
           </button>
         ))}
@@ -87,12 +96,22 @@ export function ChatTabDialog({
     ? "Give the tab a name."
     : draft.rules.map(filterRuleError).find(Boolean);
 
-  const applyTemplate = (template: "images" | "mentions" | "custom") => {
+  const applyTemplate = (template: "images" | "scores" | "mentions" | "custom") => {
     if (template === "images") {
       setDraft((current) => ({
         ...current,
         name: current.name || "Images",
         layout: "gallery",
+        match: "any",
+        rules: [],
+      }));
+      return;
+    }
+    if (template === "scores") {
+      setDraft((current) => ({
+        ...current,
+        name: current.name || "High scores",
+        layout: "scores",
         match: "any",
         rules: [],
       }));
@@ -137,6 +156,7 @@ export function ChatTabDialog({
           <div className="chat-tab-templates">
             <span>Quick start</span>
             <button onClick={() => applyTemplate("images")}>Image gallery</button>
+            <button onClick={() => applyTemplate("scores")}>Game scores</button>
             <button onClick={() => applyTemplate("mentions")}>Mentions</button>
             <button onClick={() => applyTemplate("custom")}>Custom</button>
           </div>
@@ -176,6 +196,16 @@ export function ChatTabDialog({
               <strong>Image gallery</strong>
               <span>Pull direct image links into a visual wall.</span>
             </label>
+            <label className={draft.layout === "scores" ? "selected" : ""}>
+              <input
+                checked={draft.layout === "scores"}
+                name="tab-layout"
+                onChange={() => setDraft({ ...draft, layout: "scores" })}
+                type="radio"
+              />
+              <strong>Game score room</strong>
+              <span>Parse score shares into game cards and unofficial rankings.</span>
+            </label>
           </div>
         </fieldset>
 
@@ -183,7 +213,9 @@ export function ChatTabDialog({
           allowEmpty
           emptyMessage={draft.layout === "gallery"
             ? "No conditions. This gallery shows every image in the selected channel."
-            : "No conditions. This tab shows every message in the selected channel."}
+            : draft.layout === "scores"
+              ? "No conditions. Recognized game scores from the selected channel appear here."
+              : "No conditions. This tab shows every message in the selected channel."}
           match={draft.match}
           rules={draft.rules}
           onMatchChange={(match) => setDraft({ ...draft, match })}

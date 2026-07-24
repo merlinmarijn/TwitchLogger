@@ -80,7 +80,7 @@ export default defineSchema({
   chatTabs: defineTable({
     clientId: v.string(),
     name: v.string(),
-    layout: v.union(v.literal("chat"), v.literal("gallery")),
+    layout: v.union(v.literal("chat"), v.literal("gallery"), v.literal("scores")),
     match: v.union(v.literal("all"), v.literal("any")),
     rules: v.array(filterRule),
     revision: v.number(),

@@ -8,7 +8,7 @@ PostgreSQL is now the live store for:
 
 - channels and logging state;
 - chat messages, image metadata, and deduplication;
-- saved chat/gallery tabs;
+- saved chat, gallery, and game-score tabs;
 - dashboard queries, search, filtering, and pagination;
 - `/admin` authentication, sessions, metrics, audit events, and maintenance jobs.
 

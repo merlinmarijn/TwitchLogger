@@ -30,7 +30,7 @@ export interface MessagePageArgs {
 export interface ChatTabInput {
   id: string;
   name: string;
-  layout: "chat" | "gallery";
+  layout: "chat" | "gallery" | "scores";
   match: "all" | "any";
   rules: FilterRule[];
 }
@@ -270,7 +270,7 @@ export class PostgresStore implements ChatRepository {
 
   async listChatTabs() {
     const result = await this.database.query<{
-      client_id: string; name: string; layout: "chat" | "gallery";
+      client_id: string; name: string; layout: "chat" | "gallery" | "scores";
       match: "all" | "any"; rules: FilterRule[]; revision: string;
       indexed_revision: string | null; index_status: "building" | "ready";
     }>(`
@@ -368,7 +368,7 @@ export class PostgresStore implements ChatRepository {
     return hidden;
   }
 
-  async pageMessages(args: MessagePageArgs, imagesOnly: boolean) {
+  async pageMessages(args: MessagePageArgs, imagesOnly: boolean, gameScoresOnly = false) {
     const normalized = validateMessagePageArgs(args);
     const requested = normalized.paginationOpts.numItems;
     const values: unknown[] = [];
@@ -382,6 +382,9 @@ export class PostgresStore implements ChatRepository {
       conditions.push(`timestamp > $${values.length}`);
     }
     if (imagesOnly) conditions.push("has_images = true");
+    if (gameScoresOnly) {
+      conditions.push("(message_text ILIKE '%RNGdle%' OR message_text ILIKE '%FoodGuessr%')");
+    }
     const cursor = decodeMessageCursor(normalized.paginationOpts.cursor);
     if (cursor) {
       values.push(cursor.timestamp, cursor.id);
@@ -523,7 +526,7 @@ export class PostgresStore implements ChatRepository {
 
   private async loadTab(clientId: string): Promise<ChatTabInput | undefined> {
     const result = await this.database.query<{
-      client_id: string; name: string; layout: "chat" | "gallery";
+      client_id: string; name: string; layout: "chat" | "gallery" | "scores";
       match: "all" | "any"; rules: FilterRule[];
     }>("SELECT client_id, name, layout, match, rules FROM chat_tabs WHERE client_id = $1", [clientId]);
     const row = result.rows[0];
@@ -568,7 +571,8 @@ function tabAsFilter(tab: ChatTabInput): MessageFilter {
 function validateTab(tab: ChatTabInput) {
   if (!tab || !Array.isArray(tab.rules)) throw new Error("Invalid chat tab");
   const name = tab.name.trim();
-  if (!tab.id || tab.id.length > 100 || !name || name.length > 40 || tab.rules.length > 20) {
+  if (!["chat", "gallery", "scores"].includes(tab.layout) ||
+      !tab.id || tab.id.length > 100 || !name || name.length > 40 || tab.rules.length > 20) {
     throw new Error("Invalid chat tab");
   }
   validateMessageFilters([{

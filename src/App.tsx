@@ -6,7 +6,6 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -42,15 +41,20 @@ import {
   highlightedMessageIds,
   parseFilterState,
   serializeFilterState,
+  type FilterMatchMode,
   type FilterState,
   type MessageFilter,
 } from "./filters";
 import { workerUrl } from "./runtimeConfig";
+import SearchComposer from "./SearchComposer";
+import {
+  buildSmartSearchFilter,
+  type SmartSearchToken,
+} from "./smartSearch";
 
 const FilterWorkspace = lazy(() => import("./FilterWorkspace"));
 const INITIAL_MESSAGE_COUNT = 50;
 const HISTORY_PAGE_SIZE = 100;
-const SEARCH_DEBOUNCE_MS = 200;
 const MAX_BULK_ITEMS = 100;
 
 interface TwitchAuthStatus {
@@ -99,6 +103,8 @@ export default function App() {
   const [selectedChannelId, setSelectedChannelId] = useState<string>();
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [querySearch, setQuerySearch] = useState("");
+  const [searchTokens, setSearchTokens] = useState<SmartSearchToken[]>([]);
+  const [searchMatch, setSearchMatch] = useState<FilterMatchMode>("all");
   const [filterState, setFilterState] = useState<FilterState>(loadSavedFilterState);
   const [legacyChatTabs, setLegacyChatTabs] = useState<ChatViewTab[]>(loadSavedChatTabs);
   const chatTabMigrationStartedRef = useRef(false);
@@ -136,8 +142,18 @@ export default function App() {
     () => activeFilters.filter((filter) => filter.action !== "highlight"),
     [activeFilters],
   );
+  const smartSearchFilter = useMemo(
+    () => buildSmartSearchFilter(searchTokens, searchMatch),
+    [searchMatch, searchTokens],
+  );
+  const serverSelectionFilters = useMemo(
+    () => smartSearchFilter
+      ? [...selectionFilters, smartSearchFilter]
+      : selectionFilters,
+    [selectionFilters, smartSearchFilter],
+  );
   const serverFiltering = Boolean(activeChatTab) || Boolean(querySearch.trim()) ||
-    selectionFilters.length > 0;
+    serverSelectionFilters.length > 0;
   const galleryActive = activeChatTab?.layout === "gallery";
   const queryArgs = useMemo(
     () => ({
@@ -148,7 +164,7 @@ export default function App() {
         tabIndexRevision: activeTabIndexRevision,
       } : {}),
       ...(querySearch.trim() ? { quickSearch: querySearch } : {}),
-      ...(selectionFilters.length > 0 ? { filters: selectionFilters } : {}),
+      ...(serverSelectionFilters.length > 0 ? { filters: serverSelectionFilters } : {}),
       ...(clearBefore > 0 ? { afterTimestamp: clearBefore } : {}),
     }),
     [
@@ -156,7 +172,7 @@ export default function App() {
       activeTabIndexRevision,
       selectedChannelId,
       querySearch,
-      selectionFilters,
+      serverSelectionFilters,
       clearBefore,
     ],
   );
@@ -404,17 +420,23 @@ export default function App() {
             <FeedToolbar
               activeFilterCount={activeFilters.length}
               channel={selectedChannel}
+              channelId={selectedChannelId}
+              channels={channels}
               paused={paused}
               filterText={querySearch}
               isAdmin={isAdmin}
               resultCount={sourceMessages.length}
+              searchMatch={searchMatch}
+              searchTokens={searchTokens}
               searching={
-                Boolean(querySearch) &&
+                Boolean(querySearch || searchTokens.length > 0) &&
                 (galleryActive
                   ? galleryQuery.status === "LoadingFirstPage"
                   : recentQuery.status === "LoadingFirstPage")
               }
               selectionMode={selectionMode}
+              onSearchMatchChange={setSearchMatch}
+              onSearchTokensChange={setSearchTokens}
               onTextChange={setQuerySearch}
               onOpenFilters={() => setFilterDialogOpen(true)}
               onPause={() => {
@@ -625,12 +647,18 @@ function ChannelSidebar({
 function FeedToolbar({
   activeFilterCount,
   channel,
+  channelId,
+  channels,
   paused,
   filterText,
   isAdmin,
   resultCount,
+  searchMatch,
+  searchTokens,
   searching,
   selectionMode,
+  onSearchMatchChange,
+  onSearchTokensChange,
   onTextChange,
   onOpenFilters,
   onPause,
@@ -639,12 +667,18 @@ function FeedToolbar({
 }: {
   activeFilterCount: number;
   channel?: Channel;
+  channelId?: string;
+  channels: Channel[];
   paused: boolean;
   filterText: string;
   isAdmin: boolean;
   resultCount: number;
+  searchMatch: FilterMatchMode;
+  searchTokens: SmartSearchToken[];
   searching: boolean;
   selectionMode: boolean;
+  onSearchMatchChange: (match: FilterMatchMode) => void;
+  onSearchTokensChange: (tokens: SmartSearchToken[]) => void;
   onTextChange: (text: string) => void;
   onOpenFilters: () => void;
   onPause: () => void;
@@ -659,10 +693,16 @@ function FeedToolbar({
       </div>
       <div className="feed-toolbar-right">
         <div className="toolbar-actions">
-          <SearchField
+          <SearchComposer
+            channelId={channelId}
+            channels={channels}
+            match={searchMatch}
             onChange={onTextChange}
+            onMatchChange={onSearchMatchChange}
+            onTokensChange={onSearchTokensChange}
             resultCount={resultCount}
             searching={searching}
+            tokens={searchTokens}
             value={filterText}
           />
           <button className="button filter-trigger" onClick={onOpenFilters}>
@@ -686,83 +726,6 @@ function FeedToolbar({
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function SearchField({
-  value,
-  searching,
-  resultCount,
-  onChange,
-}: {
-  value: string;
-  searching: boolean;
-  resultCount: number;
-  onChange: (value: string) => void;
-}) {
-  const [draft, setDraft] = useState(value);
-  const inputId = useId();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const pending = searching || draft !== value;
-
-  useEffect(() => {
-    if (draft === value) return;
-    const timeout = window.setTimeout(() => onChange(draft), SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timeout);
-  }, [draft, onChange, value]);
-
-  useEffect(() => {
-    const focusSearch = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey ||
-          isEditableTarget(event.target)) return;
-      event.preventDefault();
-      inputRef.current?.focus();
-    };
-    window.addEventListener("keydown", focusSearch);
-    return () => window.removeEventListener("keydown", focusSearch);
-  }, []);
-
-  const clear = () => {
-    setDraft("");
-    onChange("");
-    inputRef.current?.focus();
-  };
-
-  return (
-    <div className="search-group">
-      <div className="search-field">
-        <span aria-hidden="true" className="search-icon">⌕</span>
-        <label className="visually-hidden" htmlFor={inputId}>Search saved messages</label>
-        <input
-          aria-busy={pending}
-          autoComplete="off"
-          id={inputId}
-          maxLength={200}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && draft) clear();
-          }}
-          placeholder="Search messages, senders, or channels"
-          ref={inputRef}
-          type="search"
-          value={draft}
-        />
-        {draft ? (
-          <button aria-label="Clear search" className="search-clear" onClick={clear} type="button">
-            ×
-          </button>
-        ) : (
-          <kbd aria-hidden="true">/</kbd>
-        )}
-      </div>
-      <span aria-live="polite" className="search-status">
-        {pending
-          ? "Searching…"
-          : value
-            ? `${resultCount} loaded ${resultCount === 1 ? "match" : "matches"}`
-            : "Search all saved history"}
-      </span>
     </div>
   );
 }
@@ -1533,15 +1496,6 @@ function AddChannelDialog({
         <div className="dialog-actions"><button type="button" className="button" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>{saving ? "Adding…" : "Add channel"}</button></div>
       </form>
     </div>
-  );
-}
-
-function isEditableTarget(target: EventTarget | null) {
-  return target instanceof HTMLElement && (
-    target.isContentEditable ||
-    target.tagName === "INPUT" ||
-    target.tagName === "TEXTAREA" ||
-    target.tagName === "SELECT"
   );
 }
 

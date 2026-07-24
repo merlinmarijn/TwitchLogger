@@ -150,6 +150,12 @@ function matchesRule(message: FilterableMessage, rule: FilterRule) {
     );
     return rule.operator === "notHas" ? !hasBadge : hasBadge;
   }
+  if (rule.field === "sender" &&
+      (rule.operator === "equals" || rule.operator === "notEquals")) {
+    const matchesSender = normalize(message.senderUsername) === value ||
+      normalize(message.senderDisplayName) === value;
+    return rule.operator === "notEquals" ? !matchesSender : matchesSender;
+  }
 
   const candidate = normalize(fieldText(message, rule.field));
   switch (rule.operator) {

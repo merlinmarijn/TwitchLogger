@@ -41,6 +41,15 @@ describe("message filters", () => {
     expect(matchesMessageFilter(messages[1], filter)).toBe(false);
   });
 
+  it("matches an exact sender against either username or display name", () => {
+    expect(matchesMessageFilter(messages[0], makeFilter({
+      rules: [{ id: "sender", field: "sender", operator: "equals", value: "friendly_mod" }],
+    }))).toBe(true);
+    expect(matchesMessageFilter(messages[0], makeFilter({
+      rules: [{ id: "sender", field: "sender", operator: "equals", value: "friendly" }],
+    }))).toBe(false);
+  });
+
   it("matches whole words next to punctuation without treating values as regex", () => {
     expect(matchesMessageFilter(messages[0], makeFilter({
       rules: [{ id: "word", field: "message", operator: "wholeWord", value: "chat" }],

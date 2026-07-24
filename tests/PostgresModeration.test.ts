@@ -92,6 +92,33 @@ describe("PostgreSQL message pagination", () => {
   });
 });
 
+describe("PostgreSQL smart-search suggestions", () => {
+  it("returns ranked user matches and scopes them to the selected channel", async () => {
+    const { calls, store } = createStore([{
+      rowCount: 1,
+      rows: [{
+        sender_username: "alice",
+        sender_display_name: "Alice",
+        message_count: "42",
+      }],
+    }]);
+
+    await expect(store.suggestMessageFilters({
+      text: "Ali",
+      channelId: "channel",
+      limit: 20,
+    })).resolves.toEqual({
+      query: "ali",
+      channelId: "channel",
+      users: [{ username: "alice", displayName: "Alice", messageCount: 42 }],
+    });
+
+    expect(calls[0].text).toContain("lower(sender_username)");
+    expect(calls[0].text).toContain("GROUP BY sender_username");
+    expect(calls[0].values).toEqual(["%ali%", "ali", "ali%", "channel", 10]);
+  });
+});
+
 function makeMessageRow(id: string, timestamp: number, messageText = "message") {
   return {
     id,

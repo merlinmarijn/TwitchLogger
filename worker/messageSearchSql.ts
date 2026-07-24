@@ -126,6 +126,18 @@ function compileRule(
       complete: true,
     };
   }
+  if (rule.field === "sender" &&
+      (rule.operator === "equals" || rule.operator === "notEquals")) {
+    const parameter = bind(value);
+    const matches = [
+      `lower(sender_username) = ${parameter}`,
+      `lower(sender_display_name) = ${parameter}`,
+    ].join(" OR ");
+    return {
+      sql: rule.operator === "notEquals" ? `NOT (${matches})` : `(${matches})`,
+      complete: true,
+    };
+  }
 
   const field = fieldExpression(rule.field);
   if (!field) return { complete: false };

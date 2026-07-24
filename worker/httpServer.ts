@@ -13,6 +13,7 @@ import type {
   ChatTabInput,
   HiddenImageInput,
   MessagePageArgs,
+  MessageSuggestionArgs,
   PostgresStore,
 } from "./PostgresStore";
 import {
@@ -338,6 +339,11 @@ export function createHttpServer(
   app.post("/api/data/messages/page-images", async (request, response) => {
     await sendData(response, runtime, () =>
       runtime.store!.pageMessages(request.body as MessagePageArgs, true), logger);
+  });
+
+  app.post("/api/data/messages/suggestions", async (request, response) => {
+    await sendData(response, runtime, () =>
+      runtime.store!.suggestMessageFilters(request.body as MessageSuggestionArgs), logger);
   });
 
   app.post("/api/data/messages/filter-counts", async (request, response) => {

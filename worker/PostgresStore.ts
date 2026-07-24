@@ -40,6 +40,12 @@ export interface HiddenImageInput {
   url: string;
 }
 
+export interface MessageSuggestionArgs {
+  text: string;
+  channelId?: string;
+  limit?: number;
+}
+
 interface MessageRow {
   id: string;
   external_channel_id: string;
@@ -427,6 +433,70 @@ export class PostgresStore implements ChatRepository {
     };
   }
 
+  async suggestMessageFilters(args: MessageSuggestionArgs) {
+    const query = typeof args?.text === "string" ? args.text.trim().toLowerCase() : "";
+    if (query.length < 3) {
+      return {
+        query,
+        ...(args?.channelId ? { channelId: args.channelId } : {}),
+        users: [],
+      };
+    }
+    if (query.length > 80) throw new Error("Suggestion text is limited to 80 characters");
+    if (args?.channelId !== undefined &&
+        (typeof args.channelId !== "string" || args.channelId.length > 200)) {
+      throw new Error("Invalid channel");
+    }
+    const requestedLimit = args?.limit ?? 5;
+    if (!Number.isFinite(requestedLimit)) throw new Error("Invalid suggestion limit");
+    const limit = Math.max(1, Math.min(Math.floor(requestedLimit), 10));
+    const contains = `%${escapeLikeValue(query)}%`;
+    const prefix = `${escapeLikeValue(query)}%`;
+    const values: unknown[] = [contains, query, prefix];
+    const conditions = [
+      "deleted_at IS NULL",
+      `(lower(sender_username) LIKE $1 ESCAPE '\\' OR ` +
+        `lower(sender_display_name) LIKE $1 ESCAPE '\\')`,
+    ];
+    if (args.channelId) {
+      values.push(args.channelId);
+      conditions.push(`channel_id = $${values.length}`);
+    }
+    values.push(limit);
+    const result = await this.database.query<{
+      sender_username: string;
+      sender_display_name: string;
+      message_count: string;
+    }>(`
+      SELECT
+        sender_username,
+        max(sender_display_name) AS sender_display_name,
+        count(*) AS message_count
+      FROM chat_messages
+      WHERE ${conditions.join(" AND ")}
+      GROUP BY sender_username
+      ORDER BY
+        CASE
+          WHEN lower(sender_username) = $2 THEN 0
+          WHEN lower(sender_username) LIKE $3 ESCAPE '\\' THEN 1
+          ELSE 2
+        END,
+        count(*) DESC,
+        max(timestamp) DESC
+      LIMIT $${values.length}
+    `, values);
+
+    return {
+      query,
+      ...(args.channelId ? { channelId: args.channelId } : {}),
+      users: result.rows.map((row) => ({
+        username: row.sender_username,
+        displayName: row.sender_display_name,
+        messageCount: Number(row.message_count),
+      })),
+    };
+  }
+
   async filterMatchCounts(args: {
     channelId?: string; filters: MessageFilter[]; afterTimestamp?: number;
   }) {
@@ -512,6 +582,10 @@ function validateTab(tab: ChatTabInput) {
 
 function asError(error: unknown) {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function escapeLikeValue(value: string) {
+  return value.replace(/[\\%_]/g, "\\$&");
 }
 
 function validateMessagePageArgs(args: MessagePageArgs) {

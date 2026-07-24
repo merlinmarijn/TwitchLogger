@@ -81,7 +81,6 @@ const measuredTables = [
   "channels",
   "chat_tabs",
   "chat_messages",
-  "chat_tab_matches",
   "chat_raw_events",
   "chat_raw_event_chunks",
   "admin_jobs",
@@ -480,7 +479,6 @@ export class AdminService {
   private async runViewRefresh(id: string) {
     const count = await this.database.query<{ count: string }>("SELECT count(*) FROM chat_tabs");
     const total = Number(count.rows[0]?.count ?? 0);
-    await this.database.query("DELETE FROM chat_tab_matches");
     await this.database.query(`
       UPDATE chat_tabs SET indexed_revision = revision, index_status = 'ready', updated_at = $1
     `, [Date.now()]);

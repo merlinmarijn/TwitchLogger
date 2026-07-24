@@ -170,3 +170,8 @@ npm run archive:enable-cleanup -- --confirm
 Cleanup only nulls redundant `raw_message_data` values after their verified
 archive chunk is committed. Canonical message columns used by chat, search,
 filters, galleries, scores, and moderation are not changed.
+
+Legacy timestamp indexes and the unused `chat_tab_matches` cache are removed
+after the archive rollout. The retained partial keyset indexes cover live chat,
+channel, gallery, and score pagination while the trigram indexes continue to
+serve text and sender search.

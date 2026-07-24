@@ -45,6 +45,7 @@ interface ArchiveChunkRow {
 export interface RawArchiveRunResult {
   chunksCreated: number;
   messagesArchived: number;
+  sourcesStaged: number;
   sourcesCleared: number;
   cleanupEnabled: boolean;
 }
@@ -96,6 +97,9 @@ export class RawEventArchiveService {
     let sourcesCleared = cleanupEnabled
       ? await this.clearPreviouslyVerifiedSources()
       : 0;
+    const sourcesStaged = cleanupEnabled
+      ? await this.stageUnarchivedSources()
+      : 0;
     const cutoff = startOfUtcDay(Date.now());
 
     for (let index = 0; index < MAX_STARTUP_CHUNKS; index += 1) {
@@ -114,10 +118,11 @@ export class RawEventArchiveService {
     const result = {
       chunksCreated,
       messagesArchived,
+      sourcesStaged,
       sourcesCleared,
       cleanupEnabled,
     };
-    if (chunksCreated > 0 || sourcesCleared > 0) {
+    if (chunksCreated > 0 || sourcesStaged > 0 || sourcesCleared > 0) {
       this.logger.info(result, "Raw Twitch events archived and verified");
     }
     return result;
@@ -128,6 +133,29 @@ export class RawEventArchiveService {
       SELECT enabled FROM archive_settings WHERE key = 'raw_source_cleanup'
     `);
     return result.rows[0]?.enabled === true;
+  }
+
+  private async stageUnarchivedSources() {
+    const result = await this.database.query(`
+      INSERT INTO chat_raw_events (
+        external_message_id, event_notification_id, channel_id,
+        timestamp, raw_message_data, created_at
+      )
+      SELECT
+        message.external_message_id,
+        message.event_notification_id,
+        message.channel_id,
+        message.timestamp,
+        message.raw_message_data,
+        message.created_at
+      FROM chat_messages AS message
+      LEFT JOIN chat_raw_events AS staged
+        ON staged.external_message_id = message.external_message_id
+      WHERE message.raw_message_data IS NOT NULL
+        AND staged.external_message_id IS NULL
+      ON CONFLICT (external_message_id) DO NOTHING
+    `);
+    return result.rowCount ?? 0;
   }
 
   private async oldestSealedGroup(cutoff: number) {

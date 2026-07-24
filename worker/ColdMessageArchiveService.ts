@@ -5,6 +5,10 @@ import {
   constants as zlibConstants,
 } from "node:zlib";
 import { promisify } from "node:util";
+import {
+  extractImageUrls,
+  IMAGE_INDEX_VERSION,
+} from "../shared/imageUrls";
 import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
 
@@ -105,7 +109,7 @@ export class ColdMessageArchiveService {
 
   constructor(
     private readonly database: PostgresDatabase,
-    private readonly logger: Logger,
+    private readonly logger?: Logger,
   ) {}
 
   start(onFatalError: (error: Error) => void) {
@@ -114,7 +118,7 @@ export class ColdMessageArchiveService {
         if (this.stopped) return;
         this.stop();
         const error = asError(cause);
-        this.logger.error(
+        this.logger?.error(
           { err: error },
           "Cold-message archival failed; Twitch ingestion must remain paused",
         );
@@ -262,8 +266,118 @@ export class ColdMessageArchiveService {
       messagesArchived += archived;
     }
     const result = { enabled, chunksCreated, messagesArchived };
-    if (chunksCreated > 0) this.logger.info(result, "Canonical chat messages moved to cold archive");
+    if (chunksCreated > 0) {
+      this.logger?.info(result, "Canonical chat messages moved to cold archive");
+    }
     return result;
+  }
+
+  async reindexImages(options: {
+    isCancelled?: () => Promise<boolean>;
+    onProgress?: (processed: number) => Promise<void>;
+  } = {}) {
+    const chunks = await this.database.query<{ id: string }>(`
+      SELECT id FROM chat_message_cold_chunks ORDER BY period_start, first_timestamp, id
+    `);
+    let processed = 0;
+    let changed = 0;
+    for (const chunk of chunks.rows) {
+      if (await options.isCancelled?.()) break;
+      const messages = await this.database.query<{ id: string }>(`
+        SELECT id
+        FROM chat_message_cold_catalog
+        WHERE chunk_id = $1 AND deleted_at IS NULL
+        ORDER BY id
+      `, [chunk.id]);
+      changed += await this.mutateMessages(
+        messages.rows.map((message) => message.id),
+        (record) => {
+          const hidden = new Set(record.hidden_image_urls);
+          const imageUrls = extractImageUrls(record.message_text)
+            .filter((url) => !hidden.has(url));
+          const hasImages = imageUrls.length > 0;
+          const galleryChannelId = hasImages ? record.channel_id : null;
+          const isChanged =
+            JSON.stringify(record.image_urls ?? []) !== JSON.stringify(imageUrls) ||
+            record.has_images !== hasImages ||
+            record.gallery_channel_id !== galleryChannelId ||
+            record.image_index_version !== IMAGE_INDEX_VERSION;
+          if (!isChanged) return false;
+          record.image_urls = imageUrls;
+          record.has_images = hasImages;
+          record.gallery_channel_id = galleryChannelId;
+          record.image_index_version = IMAGE_INDEX_VERSION;
+          return true;
+        },
+      );
+      processed += messages.rows.length;
+      await options.onProgress?.(processed);
+    }
+    return { processed, changed };
+  }
+
+  async inspectIntegrity(issueLimit = 100) {
+    if (issueLimit <= 0) return { checked: 0, issues: [] };
+    const chunks = await this.database.query<ColdChunkRow>(`
+      SELECT id, message_count, uncompressed_bytes, compressed_bytes, sha256, payload
+      FROM chat_message_cold_chunks
+      ORDER BY period_start, first_timestamp, id
+    `);
+    const issues: Array<{ id: string; issue: string }> = [];
+    let checked = 0;
+    for (const chunk of chunks.rows) {
+      let records: ArchivedMessageRow[];
+      try {
+        records = await verifyStoredChunk(chunk);
+      } catch (error) {
+        issues.push({
+          id: chunk.id,
+          issue: `Archive verification failed: ${asError(error).message}`,
+        });
+        continue;
+      }
+      const catalog = await this.database.query<{
+        id: string;
+        channel_id: string;
+        timestamp: string;
+        has_images: boolean;
+        deleted_at: string | null;
+      }>(`
+        SELECT id, channel_id, timestamp, has_images, deleted_at
+        FROM chat_message_cold_catalog
+        WHERE chunk_id = $1
+      `, [chunk.id]);
+      const catalogById = new Map(catalog.rows.map((row) => [row.id, row]));
+      for (const record of records) {
+        checked += 1;
+        const entry = catalogById.get(record.id);
+        const hidden = new Set(record.hidden_image_urls);
+        const expectedImages = extractImageUrls(record.message_text)
+          .filter((url) => !hidden.has(url));
+        const catalogDeletedAt = entry?.deleted_at === null
+          ? null
+          : Number(entry?.deleted_at);
+        if (
+          !entry ||
+          entry.channel_id !== record.channel_id ||
+          Number(entry.timestamp) !== record.timestamp ||
+          entry.has_images !== record.has_images ||
+          catalogDeletedAt !== record.deleted_at
+        ) {
+          issues.push({ id: record.id, issue: "Cold catalog does not match its archive record" });
+        } else if (
+          JSON.stringify(record.image_urls ?? []) !== JSON.stringify(expectedImages) ||
+          record.has_images !== (expectedImages.length > 0)
+        ) {
+          issues.push({ id: record.id, issue: "Cold image metadata does not match indexed URLs" });
+        }
+        if (issues.length >= issueLimit) return { checked, issues };
+      }
+      if (catalog.rows.length !== records.length && issues.length < issueLimit) {
+        issues.push({ id: chunk.id, issue: "Cold archive and catalog counts differ" });
+      }
+    }
+    return { checked, issues };
   }
 
   private async isEnabled() {

@@ -9,6 +9,7 @@ import {
 } from "node:crypto";
 import QRCode from "qrcode";
 import { extractImageUrls, IMAGE_INDEX_VERSION } from "../shared/imageUrls";
+import { ColdMessageArchiveService } from "./ColdMessageArchiveService";
 import type { PostgresDatabase } from "./database";
 
 const PASSWORD_COST = 16_384;
@@ -430,7 +431,10 @@ export class AdminService {
 
   private async runImageReindex(id: string) {
     const count = await this.database.query<{ count: string }>(`
-      SELECT count(*) FROM chat_messages WHERE deleted_at IS NULL
+      SELECT
+        (SELECT count(*) FROM chat_messages WHERE deleted_at IS NULL) +
+        (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL)
+        AS count
     `);
     const total = Number(count.rows[0]?.count ?? 0);
     await this.database.query(`
@@ -476,6 +480,18 @@ export class AdminService {
       }
       await yieldToEventLoop();
     }
+    const hotCurrent = current;
+    const cold = new ColdMessageArchiveService(this.database);
+    await cold.reindexImages({
+      isCancelled: () => this.isCancelling(id),
+      onProgress: async (processed) => {
+        current = hotCurrent + processed;
+        await this.database.query(`
+          UPDATE admin_jobs SET current = $2, updated_at = $3 WHERE id = $1
+        `, [id, current, Date.now()]);
+        await yieldToEventLoop();
+      },
+    });
   }
 
   private async runViewRefresh(id: string) {
@@ -491,7 +507,10 @@ export class AdminService {
 
   private async runIntegrityScan(id: string) {
     const totalResult = await this.database.query<{ count: string }>(`
-      SELECT count(*) FROM chat_messages WHERE deleted_at IS NULL
+      SELECT
+        (SELECT count(*) FROM chat_messages WHERE deleted_at IS NULL) +
+        (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL)
+        AS count
     `);
     const total = Number(totalResult.rows[0]?.count ?? 0);
     const issues = await this.database.query<{ id: string; issue: string }>(`
@@ -507,12 +526,15 @@ export class AdminService {
       )
       LIMIT 100
     `);
-    const samples = issues.rows.slice(0, 10).map((row) => `${row.issue}: ${row.id}`);
+    const cold = await new ColdMessageArchiveService(this.database)
+      .inspectIntegrity(Math.max(0, 100 - issues.rows.length));
+    const allIssues = [...issues.rows, ...cold.issues];
+    const samples = allIssues.slice(0, 10).map((row) => `${row.issue}: ${row.id}`);
     await this.database.query(`
       UPDATE admin_jobs SET total = $2, current = $2, metadata = $3::jsonb,
         detail = $4, updated_at = $5 WHERE id = $1
-    `, [id, total, JSON.stringify({ issues: issues.rows.length, samples }),
-      `Integrity scan complete · ${issues.rows.length} ${issues.rows.length === 1 ? "issue" : "issues"}`,
+    `, [id, total, JSON.stringify({ issues: allIssues.length, samples }),
+      `Integrity scan complete · ${allIssues.length} ${allIssues.length === 1 ? "issue" : "issues"}`,
       Date.now()]);
   }
 

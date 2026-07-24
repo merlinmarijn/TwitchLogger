@@ -6,6 +6,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -97,7 +98,6 @@ export default function App() {
   const serverChatTabs = useQuery(api.chatTabs.list, {});
   const [selectedChannelId, setSelectedChannelId] = useState<string>();
   const [view, setView] = useState<"chat" | "filters">("chat");
-  const [quickSearch, setQuickSearch] = useState("");
   const [querySearch, setQuerySearch] = useState("");
   const [filterState, setFilterState] = useState<FilterState>(loadSavedFilterState);
   const [legacyChatTabs, setLegacyChatTabs] = useState<ChatViewTab[]>(loadSavedChatTabs);
@@ -213,11 +213,6 @@ export default function App() {
   );
   const emotesByChannel = useThirdPartyEmotes(visibleChannelIds);
   const badgesByChannel = useTwitchBadges(visibleChannelIds);
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setQuerySearch(quickSearch), SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timeout);
-  }, [quickSearch]);
 
   const loadAdminAccess = useCallback(() => {
     void fetch(`${workerUrl}/api/admin/auth/status`, { credentials: "include" })
@@ -401,11 +396,18 @@ export default function App() {
               activeFilterCount={activeFilters.length}
               channel={selectedChannel}
               paused={paused}
-              filterText={quickSearch}
+              filterText={querySearch}
               isAdmin={isAdmin}
+              resultCount={sourceMessages.length}
+              searching={
+                Boolean(querySearch) &&
+                (galleryActive
+                  ? galleryQuery.status === "LoadingFirstPage"
+                  : recentQuery.status === "LoadingFirstPage")
+              }
               selectionMode={selectionMode}
               view={view}
-              onTextChange={setQuickSearch}
+              onTextChange={setQuerySearch}
               onViewChange={setView}
               onPause={() => {
                 if (!paused) {
@@ -433,7 +435,9 @@ export default function App() {
                     key={`${messageFeedKey}:${selectionMode}`}
                     loadMore={galleryQuery.loadMore}
                     messages={sourceMessages}
+                    error={galleryQuery.error}
                     isAdmin={isAdmin}
+                    onRetry={galleryQuery.retry}
                     selectionMode={selectionMode}
                     onDeleteMessages={deleteMessages}
                     onHideImages={hideImages}
@@ -450,7 +454,9 @@ export default function App() {
                     key={`${messageFeedKey}:${selectionMode}`}
                     loadMore={recentQuery.loadMore}
                     messages={sourceMessages}
+                    error={recentQuery.error}
                     isAdmin={isAdmin}
+                    onRetry={recentQuery.retry}
                     selectionMode={selectionMode}
                     onDeleteMessages={deleteMessages}
                     onHideImages={hideImages}
@@ -595,6 +601,8 @@ function FeedToolbar({
   paused,
   filterText,
   isAdmin,
+  resultCount,
+  searching,
   selectionMode,
   view,
   onTextChange,
@@ -608,6 +616,8 @@ function FeedToolbar({
   paused: boolean;
   filterText: string;
   isAdmin: boolean;
+  resultCount: number;
+  searching: boolean;
   selectionMode: boolean;
   view: "chat" | "filters";
   onTextChange: (text: string) => void;
@@ -643,14 +653,12 @@ function FeedToolbar({
         </div>
         {view === "chat" && (
           <div className="toolbar-actions">
-            <label className="search-field">
-              <span>⌕</span>
-              <input
-                value={filterText}
-                onChange={(event) => onTextChange(event.target.value)}
-                placeholder="Search messages, senders, or channels"
-              />
-            </label>
+            <SearchField
+              onChange={onTextChange}
+              resultCount={resultCount}
+              searching={searching}
+              value={filterText}
+            />
             <button className={`button ${paused ? "primary" : ""}`} onClick={onPause}>
               {paused ? "Resume" : "Pause"}
             </button>
@@ -671,10 +679,89 @@ function FeedToolbar({
   );
 }
 
+function SearchField({
+  value,
+  searching,
+  resultCount,
+  onChange,
+}: {
+  value: string;
+  searching: boolean;
+  resultCount: number;
+  onChange: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const inputId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const pending = searching || draft !== value;
+
+  useEffect(() => {
+    if (draft === value) return;
+    const timeout = window.setTimeout(() => onChange(draft), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [draft, onChange, value]);
+
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey ||
+          isEditableTarget(event.target)) return;
+      event.preventDefault();
+      inputRef.current?.focus();
+    };
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
+
+  const clear = () => {
+    setDraft("");
+    onChange("");
+    inputRef.current?.focus();
+  };
+
+  return (
+    <div className="search-group">
+      <div className="search-field">
+        <span aria-hidden="true" className="search-icon">⌕</span>
+        <label className="visually-hidden" htmlFor={inputId}>Search saved messages</label>
+        <input
+          aria-busy={pending}
+          autoComplete="off"
+          id={inputId}
+          maxLength={200}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && draft) clear();
+          }}
+          placeholder="Search messages, senders, or channels"
+          ref={inputRef}
+          type="search"
+          value={draft}
+        />
+        {draft ? (
+          <button aria-label="Clear search" className="search-clear" onClick={clear} type="button">
+            ×
+          </button>
+        ) : (
+          <kbd aria-hidden="true">/</kbd>
+        )}
+      </div>
+      <span aria-live="polite" className="search-status">
+        {pending
+          ? "Searching…"
+          : value
+            ? `${resultCount} loaded ${resultCount === 1 ? "match" : "matches"}`
+            : "Search all saved history"}
+      </span>
+    </div>
+  );
+}
+
 function MessageFeed({
   messages,
+  error,
   paused,
   isAdmin,
+  onRetry,
   selectionMode,
   onDeleteMessages,
   onHideImages,
@@ -687,8 +774,10 @@ function MessageFeed({
   status,
 }: {
   messages: ChatMessage[];
+  error?: string;
   paused: boolean;
   isAdmin: boolean;
+  onRetry: () => void;
   selectionMode: boolean;
   onDeleteMessages: (messageIds: string[]) => Promise<void>;
   onHideImages: (images: Array<{ messageId: string; url: string }>) => Promise<void>;
@@ -813,6 +902,13 @@ function MessageFeed({
         </div>
         {status === "LoadingFirstPage" ? (
           <div className="empty">Loading messages…</div>
+        ) : status === "Error" ? (
+          <div className="empty" role="alert">
+            <span aria-hidden="true" className="empty-icon">!</span>
+            <strong>Could not load messages</strong>
+            <span>{error ?? "The message service is unavailable."}</span>
+            <button className="button" onClick={onRetry}>Try again</button>
+          </div>
         ) : messages.length === 0 ? (
           <div className="empty">
             <span className="empty-icon">⌁</span>
@@ -879,7 +975,9 @@ function MessageFeed({
 
 function ImageGallery({
   messages,
+  error,
   isAdmin,
+  onRetry,
   selectionMode,
   onDeleteMessages,
   onHideImages,
@@ -890,7 +988,9 @@ function ImageGallery({
   status,
 }: {
   messages: ChatMessage[];
+  error?: string;
   isAdmin: boolean;
+  onRetry: () => void;
   selectionMode: boolean;
   onDeleteMessages: (messageIds: string[]) => Promise<void>;
   onHideImages: (images: Array<{ messageId: string; url: string }>) => Promise<void>;
@@ -986,6 +1086,13 @@ function ImageGallery({
       )}
       {status === "LoadingFirstPage" ? (
         <div className="empty">Loading artwork…</div>
+      ) : status === "Error" ? (
+        <div className="empty gallery-empty" role="alert">
+          <span aria-hidden="true" className="empty-icon gallery-empty-icon">!</span>
+          <strong>Could not load the gallery</strong>
+          <span>{error ?? "The message service is unavailable."}</span>
+          <button className="button" onClick={onRetry}>Try again</button>
+        </div>
       ) : images.length === 0 &&
           (!historyEnabled || status === "Exhausted") ? (
         <div className="empty gallery-empty">
@@ -1415,6 +1522,15 @@ function AddChannelDialog({
         <div className="dialog-actions"><button type="button" className="button" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>{saving ? "Adding…" : "Add channel"}</button></div>
       </form>
     </div>
+  );
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
   );
 }
 

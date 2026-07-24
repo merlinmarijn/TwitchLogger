@@ -1,14 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { extractImageUrls, IMAGE_INDEX_VERSION, upgradeGalleryFilterPattern } from "../shared/imageUrls";
 import {
+  filterRuleError,
   matchesMessageFilter,
   matchesMessageSelection,
+  operatorsForField,
   type FilterRule,
   type MessageFilter,
 } from "../shared/messageFilters";
 import type { ChatRepository, ChannelStatus } from "./ChatRepository";
 import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
+import { compileMessageSelectionSql } from "./messageSearchSql";
 import type { FollowedChannel, ResolvedChannel, TwitchChatMessage } from "./types";
 
 const twitchLoginPattern = /^[a-z0-9_]{1,25}$/;
@@ -360,23 +363,32 @@ export class PostgresStore implements ChatRepository {
   }
 
   async pageMessages(args: MessagePageArgs, imagesOnly: boolean) {
-    const requested = Math.max(1, Math.min(Math.floor(args.paginationOpts.numItems), MAX_MESSAGE_SCAN));
+    const normalized = validateMessagePageArgs(args);
+    const requested = normalized.paginationOpts.numItems;
     const values: unknown[] = [];
     const conditions: string[] = ["deleted_at IS NULL"];
-    if (args.channelId) {
-      values.push(args.channelId);
+    if (normalized.channelId) {
+      values.push(normalized.channelId);
       conditions.push(`channel_id = $${values.length}`);
     }
-    if (args.afterTimestamp && Number.isFinite(args.afterTimestamp)) {
-      values.push(args.afterTimestamp);
+    if (normalized.afterTimestamp) {
+      values.push(normalized.afterTimestamp);
       conditions.push(`timestamp > $${values.length}`);
     }
     if (imagesOnly) conditions.push("has_images = true");
-    const tab = args.tabId ? await this.loadTab(args.tabId) : undefined;
-    const filters = [...(args.filters ?? [])];
+    const cursor = decodeMessageCursor(normalized.paginationOpts.cursor);
+    if (cursor) {
+      values.push(cursor.timestamp, cursor.id);
+      conditions.push(`(timestamp, id) < ($${values.length - 1}, $${values.length})`);
+    }
+    const tab = normalized.tabId ? await this.loadTab(normalized.tabId) : undefined;
+    if (normalized.tabId && !tab) throw new Error("Unknown chat tab");
+    const filters = [...normalized.filters];
     if (tab) filters.push(tabAsFilter(tab));
-    const selectionActive = Boolean(args.quickSearch?.trim()) || filters.some((filter) => filter.action !== "highlight");
-    const scanLimit = selectionActive ? MAX_MESSAGE_SCAN : requested;
+    const selection = compileMessageSelectionSql(normalized.quickSearch, filters, values.length);
+    conditions.push(...selection.sql);
+    values.push(...selection.values);
+    const scanLimit = selection.requiresPostFilter ? MAX_MESSAGE_SCAN : requested + 1;
     values.push(scanLimit);
     const result = await this.database.query<MessageRow>(`
       SELECT id, external_channel_id, channel_name, sender_username,
@@ -388,14 +400,30 @@ export class PostgresStore implements ChatRepository {
       ORDER BY timestamp DESC, id DESC
       LIMIT $${values.length}
     `, values);
-    const matching = result.rows
-      .map(toClientMessage)
-      .filter((message) => matchesMessageSelection(message, args.quickSearch ?? "", filters));
-    const page = matching.slice(0, requested);
+
+    const page = [];
+    let consumedRow: MessageRow | undefined;
+    for (const row of result.rows) {
+      const message = toClientMessage(row);
+      if (!selection.requiresPostFilter ||
+          matchesMessageSelection(message, normalized.quickSearch, filters)) {
+        page.push(message);
+        consumedRow = row;
+        if (page.length === requested) break;
+      }
+    }
+    if (page.length < requested) consumedRow = result.rows.at(-1);
+    const consumedIndex = consumedRow ? result.rows.indexOf(consumedRow) : -1;
+    const hasMore = consumedIndex >= 0 && (
+      consumedIndex < result.rows.length - 1 || result.rows.length === scanLimit
+    );
+
     return {
       page,
-      isDone: result.rows.length < scanLimit || page.length < requested,
-      continueCursor: String(page.length),
+      isDone: !hasMore,
+      continueCursor: consumedRow
+        ? encodeMessageCursor(consumedRow)
+        : normalized.paginationOpts.cursor ?? "",
     };
   }
 
@@ -405,7 +433,7 @@ export class PostgresStore implements ChatRepository {
     const page = await this.pageMessages({
       channelId: args.channelId,
       afterTimestamp: args.afterTimestamp,
-      paginationOpts: { numItems: 500 },
+      paginationOpts: { numItems: 250 },
     }, false);
     return args.filters.map((filter) => ({
       id: filter.id,
@@ -468,12 +496,104 @@ function tabAsFilter(tab: ChatTabInput): MessageFilter {
 }
 
 function validateTab(tab: ChatTabInput) {
+  if (!tab || !Array.isArray(tab.rules)) throw new Error("Invalid chat tab");
   const name = tab.name.trim();
   if (!tab.id || tab.id.length > 100 || !name || name.length > 40 || tab.rules.length > 20) {
     throw new Error("Invalid chat tab");
   }
+  validateMessageFilters([{
+    id: tab.id,
+    name,
+    action: "show",
+    match: tab.match,
+    rules: tab.rules,
+  }]);
 }
 
 function asError(error: unknown) {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function validateMessagePageArgs(args: MessagePageArgs) {
+  if (!args || !args.paginationOpts) throw new Error("Message pagination is required");
+  const numItems = Number(args.paginationOpts.numItems);
+  if (!Number.isInteger(numItems) || numItems < 1 || numItems > 250) {
+    throw new Error("Message pages are limited to 250 items");
+  }
+  const quickSearch = typeof args.quickSearch === "string" ? args.quickSearch.trim() : "";
+  if (quickSearch.length > 200) throw new Error("Search text is limited to 200 characters");
+  const filters = args.filters ?? [];
+  validateMessageFilters(filters);
+  if (args.channelId !== undefined &&
+      (typeof args.channelId !== "string" || args.channelId.length > 200)) {
+    throw new Error("Invalid channel");
+  }
+  if (args.tabId !== undefined &&
+      (typeof args.tabId !== "string" || args.tabId.length > 100)) {
+    throw new Error("Invalid chat tab");
+  }
+  if (args.afterTimestamp !== undefined &&
+      (!Number.isFinite(args.afterTimestamp) || args.afterTimestamp < 0)) {
+    throw new Error("Invalid message timestamp cutoff");
+  }
+  return {
+    ...(args.channelId ? { channelId: args.channelId } : {}),
+    ...(args.tabId ? { tabId: args.tabId } : {}),
+    quickSearch,
+    filters,
+    ...(args.afterTimestamp ? { afterTimestamp: args.afterTimestamp } : {}),
+    paginationOpts: {
+      numItems,
+      ...(args.paginationOpts.cursor ? { cursor: args.paginationOpts.cursor } : {}),
+    },
+  };
+}
+
+function validateMessageFilters(filters: MessageFilter[]) {
+  if (!Array.isArray(filters) || filters.length > 100) {
+    throw new Error("Too many message filters");
+  }
+  for (const filter of filters) {
+    if (!filter || typeof filter.id !== "string" || filter.id.length > 100 ||
+        typeof filter.name !== "string" || filter.name.length > 80 ||
+        !["show", "hide", "highlight"].includes(filter.action) ||
+        !["all", "any"].includes(filter.match) ||
+        !Array.isArray(filter.rules) || filter.rules.length > 20) {
+      throw new Error("Invalid message filter");
+    }
+    for (const rule of filter.rules) {
+      if (!rule || typeof rule.id !== "string" || rule.id.length > 100 ||
+          typeof rule.value !== "string" || rule.value.length > 200 ||
+          !operatorsForField(rule.field).includes(rule.operator) ||
+          filterRuleError(rule)) {
+        throw new Error("Invalid message filter rule");
+      }
+    }
+  }
+}
+
+interface MessageCursor {
+  timestamp: number;
+  id: string;
+}
+
+function encodeMessageCursor(row: Pick<MessageRow, "timestamp" | "id">) {
+  return Buffer.from(JSON.stringify({
+    timestamp: Number(row.timestamp),
+    id: row.id,
+  } satisfies MessageCursor)).toString("base64url");
+}
+
+function decodeMessageCursor(value?: string | null): MessageCursor | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as MessageCursor;
+    if (!Number.isFinite(parsed.timestamp) || parsed.timestamp < 0 ||
+        typeof parsed.id !== "string" || parsed.id.length > 200) {
+      throw new Error();
+    }
+    return parsed;
+  } catch {
+    throw new Error("Invalid message cursor");
+  }
 }

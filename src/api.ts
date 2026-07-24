@@ -43,7 +43,7 @@ export interface ChatBadgeDefinition {
 export interface ApiOperation<Args, Result> {
   path: string;
   method: "GET" | "POST";
-  poll?: boolean;
+  pollIntervalMs?: number;
   _args?: Args;
   _result?: Result;
 }
@@ -54,8 +54,12 @@ export interface PaginationResult<T> {
   continueCursor: string;
 }
 
-function operation<Args, Result>(path: string, method: "GET" | "POST", poll = false) {
-  return { path, method, poll } as ApiOperation<Args, Result>;
+function operation<Args, Result>(
+  path: string,
+  method: "GET" | "POST",
+  pollIntervalMs?: number,
+) {
+  return { path, method, pollIntervalMs } as ApiOperation<Args, Result>;
 }
 
 type MessagePageArgs = {
@@ -74,22 +78,22 @@ export const api = {
     ensureSeeded: operation<Record<string, never>, null>("/api/data/platforms/ensure-seeded", "POST"),
   },
   channels: {
-    list: operation<Record<string, never>, Channel[]>("/api/data/channels", "GET", true),
+    list: operation<Record<string, never>, Channel[]>("/api/data/channels", "GET", 5_000),
     add: operation<{ platform: "twitch"; username: string; displayName?: string; loggingEnabled: boolean }, string>("/api/data/channels/add", "POST"),
     setLogging: operation<{ id: string; enabled: boolean }, null>("/api/data/channels/set-logging", "POST"),
     reconnect: operation<{ id: string }, null>("/api/data/channels/reconnect", "POST"),
     remove: operation<{ id: string }, null>("/api/data/channels/remove", "POST"),
   },
   chatTabs: {
-    list: operation<Record<string, never>, ChatViewTab[]>("/api/data/chat-tabs", "GET", true),
+    list: operation<Record<string, never>, ChatViewTab[]>("/api/data/chat-tabs", "GET", 10_000),
     save: operation<{ tab: Pick<ChatViewTab, "id" | "name" | "layout" | "match" | "rules"> }, null>("/api/data/chat-tabs/save", "POST"),
     importLocal: operation<{ tabs: Array<Pick<ChatViewTab, "id" | "name" | "layout" | "match" | "rules">> }, null>("/api/data/chat-tabs/import", "POST"),
     remove: operation<{ id: string }, null>("/api/data/chat-tabs/remove", "POST"),
   },
   messages: {
-    page: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page", "POST", true),
-    pageImages: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page-images", "POST", true),
-    filterMatchCounts: operation<{ channelId?: string; filters: MessageFilter[]; afterTimestamp?: number }, Array<{ id: string; count: number }>>("/api/data/messages/filter-counts", "POST", true),
+    page: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page", "POST", 2_000),
+    pageImages: operation<MessagePageArgs, PaginationResult<ChatMessage>>("/api/data/messages/page-images", "POST", 4_000),
+    filterMatchCounts: operation<{ channelId?: string; filters: MessageFilter[]; afterTimestamp?: number }, Array<{ id: string; count: number }>>("/api/data/messages/filter-counts", "POST", 15_000),
     delete: operation<{ messageIds: string[] }, { deleted: number }>("/api/data/messages/delete", "POST"),
     hideImages: operation<{
       images: Array<{ messageId: string; url: string }>;

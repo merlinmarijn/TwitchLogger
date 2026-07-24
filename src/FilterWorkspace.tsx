@@ -38,7 +38,20 @@ export default function FilterWorkspace({
       ? { ...filters[0], rules: filters[0].rules.map((rule) => ({ ...rule })) }
       : createEmptyFilter(),
   );
+  const [librarySearch, setLibrarySearch] = useState("");
   const active = useMemo(() => new Set(activeIds), [activeIds]);
+  const visibleFilters = useMemo(() => {
+    const query = librarySearch.trim().toLowerCase();
+    if (!query) return filters;
+    return filters.filter((filter) =>
+      [
+        filter.name,
+        filter.action,
+        filter.match,
+        ...filter.rules.flatMap((rule) => [rule.field, rule.operator, rule.value]),
+      ].some((value) => value.toLowerCase().includes(query)),
+    );
+  }, [filters, librarySearch]);
   const draftIsSaved = filters.some((filter) => filter.id === draft.id);
   const editorError = !draft.name.trim()
     ? "Give the filter a name."
@@ -79,8 +92,33 @@ export default function FilterWorkspace({
             <button onClick={() => applyStarter("commands")}>Hide bot commands</button>
           </div>
         ) : (
-          <div className="filter-preset-list">
-            {filters.map((filter) => (
+          <>
+            <label className="filter-library-search">
+              <span className="visually-hidden">Search saved filters</span>
+              <input
+                onChange={(event) => setLibrarySearch(event.target.value)}
+                placeholder="Find a saved filter"
+                type="search"
+                value={librarySearch}
+              />
+              {librarySearch && (
+                <button
+                  aria-label="Clear saved-filter search"
+                  onClick={() => setLibrarySearch("")}
+                  type="button"
+                >
+                  ×
+                </button>
+              )}
+            </label>
+            {visibleFilters.length === 0 ? (
+              <div className="filter-library-empty compact">
+                <strong>No matching filters</strong>
+                <span>Try a name, field, action, or rule value.</span>
+              </div>
+            ) : (
+              <div className="filter-preset-list">
+                {visibleFilters.map((filter) => (
               <div
                 className={`filter-preset ${draft.id === filter.id ? "selected" : ""}`}
                 key={filter.id}
@@ -105,8 +143,10 @@ export default function FilterWorkspace({
                   <span>{active.has(filter.id) ? "Applied" : "Off"}</span>
                 </label>
               </div>
-            ))}
-          </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {filters.length > 0 && (

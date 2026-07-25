@@ -1441,6 +1441,7 @@ function MessageRow({
     message.metadata?.fragments,
     emotes,
   );
+  const postedAt = new Date(message.timestamp);
   return (
     <article className={`message-row ${highlighted ? "filter-highlighted" : ""} ${selectable ? "moderation-selectable" : ""} ${selected ? "moderation-selected" : ""}`}>
       {selectable && (
@@ -1461,12 +1462,21 @@ function MessageRow({
           { label: "Delete message", danger: true, onClick: onDelete },
         ]} />
       )}
-      <time dateTime={new Date(message.timestamp).toISOString()}>
-        {new Date(message.timestamp).toLocaleTimeString([], {
+      <time
+        className="message-timestamp"
+        dateTime={postedAt.toISOString()}
+        title={postedAt.toLocaleString()}
+      >
+        <span>{postedAt.toLocaleDateString([], {
+          day: "2-digit",
+          month: "2-digit",
+          year: "2-digit",
+        })}</span>
+        <span>{postedAt.toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
-        })}
+        })}</span>
       </time>
       <span className="channel-tag">#{message.channelName}</span>
       <div className="message-content">

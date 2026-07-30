@@ -94,7 +94,9 @@ export function buildSmartSearchSuggestions({
 
   const suggestions: SmartSearchSuggestion[] = [
     suggestion("Search", "message", "contains", value, `Message: “${value}”`, "Search message text"),
+    suggestion("Search", "message", "notContains", value, `Message does not contain “${value}”`, "Exclude matching message text"),
     suggestion("Search", "sender", "contains", value, `Sender contains “${value}”`, "Search usernames and display names"),
+    suggestion("Search", "sender", "notContains", value, `Sender does not contain “${value}”`, "Exclude matching usernames and display names"),
   ];
   if (["image", "images", "photo", "picture", "gallery"].some((keyword) =>
     keyword.includes(normalized))) {
@@ -106,6 +108,14 @@ export function buildSmartSearchSuggestions({
         "image",
         "Messages with image links",
         "Supported image links",
+      ),
+      suggestion(
+        "Tags",
+        "image",
+        "notHas",
+        "image",
+        "Messages without image links",
+        "Exclude supported image links",
       ),
     );
   }
@@ -122,6 +132,18 @@ export function buildSmartSearchSuggestions({
         "equals",
         user.username,
         `User: ${user.displayName}`,
+      ),
+    });
+    suggestions.push({
+      id: `user-exclude:${user.username.toLowerCase()}`,
+      group: "People",
+      title: `Exclude ${user.displayName}`,
+      description: `@${user.username} · Exclude this person`,
+      token: createSmartSearchToken(
+        "sender",
+        "notEquals",
+        user.username,
+        `Exclude: ${user.displayName}`,
       ),
     });
   }
@@ -142,6 +164,18 @@ export function buildSmartSearchSuggestions({
         `Channel: ${channel.displayName}`,
       ),
     });
+    suggestions.push({
+      id: `channel-exclude:${channel._id}`,
+      group: "Channels",
+      title: `Exclude ${channel.displayName}`,
+      description: `#${channel.username}`,
+      token: createSmartSearchToken(
+        "channel",
+        "notEquals",
+        channel.displayName,
+        `Exclude channel: ${channel.displayName}`,
+      ),
+    });
   }
 
   for (const role of roleOptions.filter((option) =>
@@ -152,6 +186,18 @@ export function buildSmartSearchSuggestions({
       title: role.label,
       description: "Twitch role",
       token: createSmartSearchToken("role", "equals", role.value, `Role: ${role.label}`),
+    });
+    suggestions.push({
+      id: `role-exclude:${role.value}`,
+      group: "Tags",
+      title: `Not ${role.label}`,
+      description: "Exclude this Twitch role",
+      token: createSmartSearchToken(
+        "role",
+        "notEquals",
+        role.value,
+        `Not role: ${role.label}`,
+      ),
     });
   }
 
@@ -165,10 +211,23 @@ export function buildSmartSearchSuggestions({
       description: "Twitch badge",
       token: createSmartSearchToken("badge", "has", badge.value, `Badge: ${badge.label}`),
     });
+    suggestions.push({
+      id: `badge-exclude:${badge.value}`,
+      group: "Tags",
+      title: `Without ${badge.label}`,
+      description: "Exclude this Twitch badge",
+      token: createSmartSearchToken(
+        "badge",
+        "notHas",
+        badge.value,
+        `Without badge: ${badge.label}`,
+      ),
+    });
   }
   if (matchingBadges.length === 0) {
     suggestions.push(
       suggestion("Tags", "badge", "has", value, `Badge: “${value}”`, "Match a badge name or value"),
+      suggestion("Tags", "badge", "notHas", value, `Without badge “${value}”`, "Exclude a badge name or value"),
     );
   }
 
@@ -184,6 +243,18 @@ export function buildSmartSearchSuggestions({
         "equals",
         messageType.value,
         `Type: ${messageType.label}`,
+      ),
+    });
+    suggestions.push({
+      id: `message-type-exclude:${messageType.value}`,
+      group: "Message types",
+      title: `Not ${messageType.label}`,
+      description: "Exclude this message type",
+      token: createSmartSearchToken(
+        "messageType",
+        "notEquals",
+        messageType.value,
+        `Not type: ${messageType.label}`,
       ),
     });
   }

@@ -52,6 +52,12 @@ import {
   buildSmartSearchFilter,
   type SmartSearchToken,
 } from "./smartSearch";
+import {
+  parseUserSettings,
+  serializeUserSettings,
+  USER_SETTINGS_STORAGE_KEY,
+  type UserSettings,
+} from "./userSettings";
 
 const FilterWorkspace = lazy(() => import("./FilterWorkspace"));
 const GameScoreRoom = lazy(() => import("./GameScoreRoom"));
@@ -89,6 +95,14 @@ function loadSavedChatTabs() {
   }
 }
 
+function loadSavedUserSettings() {
+  try {
+    return parseUserSettings(localStorage.getItem(USER_SETTINGS_STORAGE_KEY));
+  } catch {
+    return parseUserSettings(null);
+  }
+}
+
 function tabInput(tab: ChatViewTab) {
   return {
     id: tab.id,
@@ -119,6 +133,8 @@ export default function App() {
   const [auth, setAuth] = useState<TwitchAuthStatus>();
   const [adminAccess, setAdminAccess] = useState<AdminAccessStatus>();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [userSettings, setUserSettings] = useState<UserSettings>(loadSavedUserSettings);
   const [notice, setNotice] = useState<string>();
   const [selectionMode, setSelectionMode] = useState(false);
   const chatTabs = serverChatTabs === undefined ||
@@ -296,6 +312,14 @@ export default function App() {
   }, [filterState]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(USER_SETTINGS_STORAGE_KEY, serializeUserSettings(userSettings));
+    } catch (error) {
+      console.warn("Could not persist user settings", error);
+    }
+  }, [userSettings]);
+
+  useEffect(() => {
     if (!isAdmin || serverChatTabs === undefined || legacyChatTabs.length === 0 ||
         chatTabMigrationStartedRef.current) return;
     chatTabMigrationStartedRef.current = true;
@@ -430,6 +454,7 @@ export default function App() {
             onSelect={setSelectedChannelId}
             onAdd={() => setDialogOpen(true)}
             onError={setNotice}
+            onOpenSettings={() => setSettingsDialogOpen(true)}
           />
 
           <section className="feed-panel">
@@ -523,6 +548,9 @@ export default function App() {
                 onDeleteMessages={deleteMessages}
                 onHideImages={hideImages}
                 paused={paused}
+                renderInlineImages={
+                  activeChatTab === undefined && userSettings.inlineImagesInAllChat
+                }
                 serverFiltering={serverFiltering}
                 status={recentQuery.status}
               />
@@ -543,6 +571,13 @@ export default function App() {
             onClose={() => setEditingChatTab(undefined)}
             onDelete={deleteChatTab}
             onSave={saveChatTab}
+          />
+        )}
+        {settingsDialogOpen && (
+          <SettingsDialog
+            onChange={setUserSettings}
+            onClose={() => setSettingsDialogOpen(false)}
+            settings={userSettings}
           />
         )}
         {filterDialogOpen && (
@@ -591,6 +626,7 @@ function ChannelSidebar({
   onSelect,
   onAdd,
   onError,
+  onOpenSettings,
 }: {
   channels: Channel[];
   selectedChannelId?: string;
@@ -598,6 +634,7 @@ function ChannelSidebar({
   onSelect: (id?: string) => void;
   onAdd: () => void;
   onError: (message: string) => void;
+  onOpenSettings: () => void;
 }) {
   const setLogging = useMutation(api.channels.setLogging);
   const reconnect = useMutation(api.channels.reconnect);
@@ -669,11 +706,19 @@ function ChannelSidebar({
       {channels.length === 0 && (
         <div className="empty compact"><strong>No channels yet</strong><span>{isAdmin ? "Add one to begin logging." : "An admin can add the first channel."}</span></div>
       )}
-      {isAdmin ? (
-        <button className="button add-channel" onClick={onAdd}>+ Add channel</button>
-      ) : (
-        <a className="button add-channel" href="/admin">Admin sign in</a>
-      )}
+      <div className="sidebar-footer">
+        <button className="settings-button" onClick={onOpenSettings} type="button">
+          <svg aria-hidden="true" viewBox="0 0 16 16">
+            <path d="M6.6 1.8h2.8l.4 1.6c.3.1.6.3.9.5l1.6-.5 1.4 2.4-1.2 1.1v1.2l1.2 1.1-1.4 2.4-1.6-.5-.9.5-.4 1.6H6.6l-.4-1.6-.9-.5-1.6.5-1.4-2.4 1.2-1.1V6.9L2.3 5.8l1.4-2.4 1.6.5.9-.5.4-1.6ZM8 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z" />
+          </svg>
+          Settings
+        </button>
+        {isAdmin ? (
+          <button className="button add-channel" onClick={onAdd}>+ Add channel</button>
+        ) : (
+          <a className="button add-channel" href="/admin">Admin sign in</a>
+        )}
+      </div>
     </aside>
   );
 }
@@ -780,6 +825,7 @@ function MessageFeed({
   badgesByChannel,
   historyEnabled,
   loadMore,
+  renderInlineImages,
   serverFiltering,
   status,
 }: {
@@ -796,6 +842,7 @@ function MessageFeed({
   badgesByChannel: ReadonlyMap<string, ReadonlyMap<string, ChatBadgeDefinition>>;
   historyEnabled: boolean;
   loadMore: (numItems: number) => void;
+  renderInlineImages: boolean;
   serverFiltering: boolean;
   status: PaginationStatus;
 }) {
@@ -944,6 +991,7 @@ function MessageFeed({
               isAdmin={isAdmin}
               key={message._id}
               message={message}
+              renderInlineImages={renderInlineImages}
               selectable={selectionMode}
               selected={selectedIds.has(message._id)}
               onSelect={() => toggleSelected(message._id)}
@@ -1424,6 +1472,7 @@ function MessageRow({
   onSelect,
   onDelete,
   onHideImages,
+  renderInlineImages,
 }: {
   message: ChatMessage;
   emotes?: ReadonlyMap<string, ThirdPartyEmote>;
@@ -1435,6 +1484,7 @@ function MessageRow({
   onSelect: () => void;
   onDelete: () => void;
   onHideImages: () => void;
+  renderInlineImages: boolean;
 }) {
   const messageParts = buildMessageParts(
     message.messageText,
@@ -1442,6 +1492,10 @@ function MessageRow({
     emotes,
   );
   const postedAt = new Date(message.timestamp);
+  const inlineImages = useMemo(
+    () => renderInlineImages ? buildGalleryImages([message], workerUrl) : [],
+    [message, renderInlineImages],
+  );
   return (
     <article className={`message-row ${highlighted ? "filter-highlighted" : ""} ${selectable ? "moderation-selectable" : ""} ${selected ? "moderation-selected" : ""}`}>
       {selectable && (
@@ -1509,8 +1563,112 @@ function MessageRow({
           )}
         </div>
         <p>{renderMessageParts(messageParts)}</p>
+        {inlineImages.length > 0 && (
+          <div className="message-inline-images">
+            {inlineImages.map((image) => (
+              <InlineChatImage image={image} key={image.id} />
+            ))}
+          </div>
+        )}
       </div>
     </article>
+  );
+}
+
+function InlineChatImage({ image }: { image: GalleryImage }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <a className="inline-image-fallback" href={image.url} rel="noreferrer" target="_blank">
+        Image preview unavailable — open original
+      </a>
+    );
+  }
+  return (
+    <a
+      className="message-inline-image"
+      href={image.url}
+      rel="noreferrer"
+      target="_blank"
+      title="Open original image"
+    >
+      <img
+        alt={`Image shared by ${image.message.senderDisplayName}`}
+        decoding="async"
+        loading="lazy"
+        onError={() => setFailed(true)}
+        src={image.previewUrl}
+      />
+    </a>
+  );
+}
+
+function SettingsDialog({
+  onChange,
+  onClose,
+  settings,
+}: {
+  onChange: (settings: UserSettings) => void;
+  onClose: () => void;
+  settings: UserSettings;
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={onClose} role="presentation">
+      <section
+        aria-labelledby="settings-dialog-title"
+        aria-modal="true"
+        className="dialog settings-dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="settings-dialog-heading">
+          <div>
+            <span className="eyebrow">This browser</span>
+            <h2 id="settings-dialog-title">Settings</h2>
+            <p>These preferences are saved only on this device.</p>
+          </div>
+          <button
+            aria-label="Close settings"
+            autoFocus
+            className="dialog-close"
+            onClick={onClose}
+            type="button"
+          >
+            {"\u00d7"}
+          </button>
+        </div>
+        <label className="settings-option">
+          <span>
+            <strong>Show images in All chat</strong>
+            <small>
+              Automatically load supported image links inside their chat message.
+            </small>
+          </span>
+          <input
+            checked={settings.inlineImagesInAllChat}
+            onChange={(event) => onChange({
+              ...settings,
+              inlineImagesInAllChat: event.target.checked,
+            })}
+            type="checkbox"
+          />
+        </label>
+        <div className="settings-privacy-note">
+          When enabled, image hosts can receive your browser's request as previews load.
+        </div>
+        <div className="dialog-actions">
+          <button className="button primary" onClick={onClose} type="button">Done</button>
+        </div>
+      </section>
+    </div>
   );
 }
 

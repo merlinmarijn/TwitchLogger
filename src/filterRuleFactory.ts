@@ -7,6 +7,7 @@ export function createFilterRule(
   const defaults: Partial<Record<FilterField, string>> = {
     role: "moderator",
     messageType: "text",
+    image: "image",
   };
   return {
     id,

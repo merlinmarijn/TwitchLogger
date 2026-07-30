@@ -96,6 +96,19 @@ export function buildSmartSearchSuggestions({
     suggestion("Search", "message", "contains", value, `Message: “${value}”`, "Search message text"),
     suggestion("Search", "sender", "contains", value, `Sender contains “${value}”`, "Search usernames and display names"),
   ];
+  if (["image", "images", "photo", "picture", "gallery"].some((keyword) =>
+    keyword.includes(normalized))) {
+    suggestions.push(
+      suggestion(
+        "Tags",
+        "image",
+        "has",
+        "image",
+        "Messages with image links",
+        "Supported image links",
+      ),
+    );
+  }
 
   for (const user of users.slice(0, 5)) {
     suggestions.push({

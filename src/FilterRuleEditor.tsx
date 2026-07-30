@@ -15,6 +15,7 @@ const fieldLabels: Record<FilterField, string> = {
   role: "Role",
   badge: "Badge",
   messageType: "Message type",
+  image: "Image link",
 };
 
 const operatorLabels: Record<FilterOperator, string> = {
@@ -169,6 +170,16 @@ function RuleValueInput({
           <option value="user_intro">First-time chatter</option>
           <option value="power_ups_message_effect">Power-up effect</option>
           <option value="power_ups_gigantified_emote">Gigantified emote</option>
+        </select>
+      </label>
+    );
+  }
+  if (rule.field === "image") {
+    return (
+      <label>
+        <span>Link type</span>
+        <select disabled value="image">
+          <option value="image">Supported image link</option>
         </select>
       </label>
     );

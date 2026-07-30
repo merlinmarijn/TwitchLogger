@@ -126,6 +126,12 @@ function compileRule(
       complete: true,
     };
   }
+  if (rule.field === "image") {
+    return {
+      sql: rule.operator === "notHas" ? "NOT has_images" : "has_images",
+      complete: true,
+    };
+  }
   if (rule.field === "sender" &&
       (rule.operator === "equals" || rule.operator === "notEquals")) {
     const parameter = bind(value);

@@ -50,6 +50,22 @@ describe("message filters", () => {
     }))).toBe(false);
   });
 
+  it("filters messages by supported image links", () => {
+    const withImages = makeFilter({
+      rules: [{ id: "image", field: "image", operator: "has", value: "image" }],
+    });
+    const withoutImages = makeFilter({
+      rules: [{ id: "image", field: "image", operator: "notHas", value: "image" }],
+    });
+    const imageMessage = makeMessage({
+      messageText: "look https://example.test/artwork.webp",
+    });
+
+    expect(matchesMessageFilter(imageMessage, withImages)).toBe(true);
+    expect(matchesMessageFilter(messages[0], withImages)).toBe(false);
+    expect(matchesMessageFilter(imageMessage, withoutImages)).toBe(false);
+  });
+
   it("matches whole words next to punctuation without treating values as regex", () => {
     expect(matchesMessageFilter(messages[0], makeFilter({
       rules: [{ id: "word", field: "message", operator: "wholeWord", value: "chat" }],

@@ -18,6 +18,7 @@ const filterRule = v.object({
     v.literal("role"),
     v.literal("badge"),
     v.literal("messageType"),
+    v.literal("image"),
   ),
   operator: v.union(
     v.literal("contains"),

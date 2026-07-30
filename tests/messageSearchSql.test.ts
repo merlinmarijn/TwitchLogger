@@ -44,6 +44,18 @@ describe("PostgreSQL message selection", () => {
     expect(result.requiresPostFilter).toBe(false);
   });
 
+  it("pushes image-link filters into the stored image flag", () => {
+    const result = compileMessageSelectionSql("", [
+      makeFilter({
+        rules: [{ id: "image", field: "image", operator: "has", value: "image" }],
+      }),
+    ]);
+
+    expect(result.sql).toEqual(["((has_images))"]);
+    expect(result.values).toEqual([]);
+    expect(result.requiresPostFilter).toBe(false);
+  });
+
   it("keeps JavaScript regular expressions as a bounded post-filter", () => {
     const result = compileMessageSelectionSql("", [
       makeFilter({

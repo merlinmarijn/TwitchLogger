@@ -27,6 +27,7 @@ export interface SmartSearchSuggestion {
   title: string;
   description: string;
   token: SmartSearchToken;
+  excludeToken: SmartSearchToken;
   count?: number;
 }
 
@@ -93,10 +94,26 @@ export function buildSmartSearchSuggestions({
   if (!normalized) return [];
 
   const suggestions: SmartSearchSuggestion[] = [
-    suggestion("Search", "message", "contains", value, `Message: “${value}”`, "Search message text"),
-    suggestion("Search", "message", "notContains", value, `Message does not contain “${value}”`, "Exclude matching message text"),
-    suggestion("Search", "sender", "contains", value, `Sender contains “${value}”`, "Search usernames and display names"),
-    suggestion("Search", "sender", "notContains", value, `Sender does not contain “${value}”`, "Exclude matching usernames and display names"),
+    suggestion(
+      "Search",
+      "message",
+      "contains",
+      "notContains",
+      value,
+      `Message: “${value}”`,
+      "Search message text",
+      `Message does not contain “${value}”`,
+    ),
+    suggestion(
+      "Search",
+      "sender",
+      "contains",
+      "notContains",
+      value,
+      `Sender contains “${value}”`,
+      "Search usernames and display names",
+      `Sender does not contain “${value}”`,
+    ),
   ];
   if (["image", "images", "photo", "picture", "gallery"].some((keyword) =>
     keyword.includes(normalized))) {
@@ -105,17 +122,11 @@ export function buildSmartSearchSuggestions({
         "Tags",
         "image",
         "has",
+        "notHas",
         "image",
         "Messages with image links",
         "Supported image links",
-      ),
-      suggestion(
-        "Tags",
-        "image",
-        "notHas",
-        "image",
         "Messages without image links",
-        "Exclude supported image links",
       ),
     );
   }
@@ -133,13 +144,7 @@ export function buildSmartSearchSuggestions({
         user.username,
         `User: ${user.displayName}`,
       ),
-    });
-    suggestions.push({
-      id: `user-exclude:${user.username.toLowerCase()}`,
-      group: "People",
-      title: `Exclude ${user.displayName}`,
-      description: `@${user.username} · Exclude this person`,
-      token: createSmartSearchToken(
+      excludeToken: createSmartSearchToken(
         "sender",
         "notEquals",
         user.username,
@@ -163,13 +168,7 @@ export function buildSmartSearchSuggestions({
         channel.displayName,
         `Channel: ${channel.displayName}`,
       ),
-    });
-    suggestions.push({
-      id: `channel-exclude:${channel._id}`,
-      group: "Channels",
-      title: `Exclude ${channel.displayName}`,
-      description: `#${channel.username}`,
-      token: createSmartSearchToken(
+      excludeToken: createSmartSearchToken(
         "channel",
         "notEquals",
         channel.displayName,
@@ -186,13 +185,7 @@ export function buildSmartSearchSuggestions({
       title: role.label,
       description: "Twitch role",
       token: createSmartSearchToken("role", "equals", role.value, `Role: ${role.label}`),
-    });
-    suggestions.push({
-      id: `role-exclude:${role.value}`,
-      group: "Tags",
-      title: `Not ${role.label}`,
-      description: "Exclude this Twitch role",
-      token: createSmartSearchToken(
+      excludeToken: createSmartSearchToken(
         "role",
         "notEquals",
         role.value,
@@ -210,13 +203,7 @@ export function buildSmartSearchSuggestions({
       title: badge.label,
       description: "Twitch badge",
       token: createSmartSearchToken("badge", "has", badge.value, `Badge: ${badge.label}`),
-    });
-    suggestions.push({
-      id: `badge-exclude:${badge.value}`,
-      group: "Tags",
-      title: `Without ${badge.label}`,
-      description: "Exclude this Twitch badge",
-      token: createSmartSearchToken(
+      excludeToken: createSmartSearchToken(
         "badge",
         "notHas",
         badge.value,
@@ -226,8 +213,16 @@ export function buildSmartSearchSuggestions({
   }
   if (matchingBadges.length === 0) {
     suggestions.push(
-      suggestion("Tags", "badge", "has", value, `Badge: “${value}”`, "Match a badge name or value"),
-      suggestion("Tags", "badge", "notHas", value, `Without badge “${value}”`, "Exclude a badge name or value"),
+      suggestion(
+        "Tags",
+        "badge",
+        "has",
+        "notHas",
+        value,
+        `Badge: “${value}”`,
+        "Match a badge name or value",
+        `Without badge “${value}”`,
+      ),
     );
   }
 
@@ -244,13 +239,7 @@ export function buildSmartSearchSuggestions({
         messageType.value,
         `Type: ${messageType.label}`,
       ),
-    });
-    suggestions.push({
-      id: `message-type-exclude:${messageType.value}`,
-      group: "Message types",
-      title: `Not ${messageType.label}`,
-      description: "Exclude this message type",
-      token: createSmartSearchToken(
+      excludeToken: createSmartSearchToken(
         "messageType",
         "notEquals",
         messageType.value,
@@ -287,19 +276,28 @@ export function createSmartSearchToken(
 function suggestion(
   group: SmartSearchSuggestionGroup,
   field: FilterField,
-  operator: FilterOperator,
+  filterOperator: FilterOperator,
+  excludeOperator: FilterOperator,
   value: string,
   title: string,
   description: string,
+  excludeLabel: string,
 ): SmartSearchSuggestion {
-  const token = createSmartSearchToken(field, operator, value, title);
-  return { id: token.id, group, title, description, token };
+  const token = createSmartSearchToken(field, filterOperator, value, title);
+  return {
+    id: token.id,
+    group,
+    title,
+    description,
+    token,
+    excludeToken: createSmartSearchToken(field, excludeOperator, value, excludeLabel),
+  };
 }
 
 function deduplicateSuggestions(suggestions: SmartSearchSuggestion[]) {
   const seen = new Set<string>();
   return suggestions.filter((suggestion) => {
-    const key = suggestion.token.id;
+    const key = `${suggestion.token.id}:${suggestion.excludeToken.id}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

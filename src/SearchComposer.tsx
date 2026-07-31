@@ -46,6 +46,7 @@ export default function SearchComposer({
   const [suggestionText, setSuggestionText] = useState("");
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [activeSide, setActiveSide] = useState<"filter" | "exclude">("filter");
   const inputId = useId();
   const listboxId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -98,15 +99,16 @@ export default function SearchComposer({
     return () => window.removeEventListener("keydown", focusSearch);
   }, []);
 
-  const addSuggestion = (suggestion: SmartSearchSuggestion) => {
-    if (!tokens.some((token) => token.id === suggestion.token.id)) {
-      onTokensChange([...tokens, suggestion.token]);
+  const addSuggestion = (token: SmartSearchToken) => {
+    if (!tokens.some((candidate) => candidate.id === token.id)) {
+      onTokensChange([...tokens, token]);
     }
     setDraft("");
     setSuggestionText("");
     onChange("");
     setOpen(false);
     setActiveIndex(0);
+    setActiveSide("filter");
     inputRef.current?.focus();
   };
 
@@ -121,6 +123,7 @@ export default function SearchComposer({
     onChange("");
     setOpen(false);
     setActiveIndex(0);
+    setActiveSide("filter");
   };
 
   const clear = () => {
@@ -142,9 +145,20 @@ export default function SearchComposer({
         (current - 1 + visibleSuggestions.length) % visibleSuggestions.length);
       return;
     }
+    if (event.key === "ArrowLeft" && visibleSuggestions.length > 0) {
+      event.preventDefault();
+      setActiveSide("filter");
+      return;
+    }
+    if (event.key === "ArrowRight" && visibleSuggestions.length > 0) {
+      event.preventDefault();
+      setActiveSide("exclude");
+      return;
+    }
     if (event.key === "Enter" && visibleSuggestions.length > 0) {
       event.preventDefault();
-      addSuggestion(visibleSuggestions[safeActiveIndex]);
+      const suggestion = visibleSuggestions[safeActiveIndex];
+      addSuggestion(activeSide === "filter" ? suggestion.token : suggestion.excludeToken);
       return;
     }
     if (event.key === "Backspace" && !draft && tokens.length > 0) {
@@ -188,7 +202,7 @@ export default function SearchComposer({
           <input
             aria-activedescendant={
               visibleSuggestions.length > 0
-                ? `${listboxId}-option-${safeActiveIndex}`
+                ? `${listboxId}-option-${safeActiveIndex}-${activeSide}`
                 : undefined
             }
             aria-autocomplete="list"
@@ -202,6 +216,7 @@ export default function SearchComposer({
               setDraft(event.target.value);
               setOpen(true);
               setActiveIndex(0);
+              setActiveSide("filter");
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
@@ -260,38 +275,63 @@ export default function SearchComposer({
               {groupItems.map((suggestion) => {
                 const index = visibleSuggestions.indexOf(suggestion);
                 return (
-                  <button
-                    aria-selected={index === safeActiveIndex}
-                    className={index === safeActiveIndex ? "selected" : ""}
-                    id={`${listboxId}-option-${index}`}
-                    key={suggestion.id}
-                    onClick={() => addSuggestion(suggestion)}
-                    onMouseEnter={() => setActiveIndex(index)}
-                    role="option"
-                    type="button"
-                  >
-                    <span className="search-suggestion-type">
-                      {suggestion.group === "People"
-                        ? "@"
-                        : suggestion.group === "Channels"
-                          ? "#"
-                          : suggestion.group === "Tags"
-                            ? "TAG"
-                            : suggestion.group === "Message types"
-                              ? "TYPE"
-                              : "⌕"}
-                    </span>
-                    <span className="search-suggestion-copy">
-                      <strong>{suggestion.title}</strong>
-                      <small>{suggestion.description}</small>
-                    </span>
-                    {suggestion.count !== undefined ? (
-                      <span className="search-suggestion-count">
-                        {formatCount(suggestion.count)}
+                  <div className="search-suggestion-row" key={suggestion.id} role="presentation">
+                    <button
+                      aria-label={`Filter by ${suggestion.title}`}
+                      aria-selected={index === safeActiveIndex && activeSide === "filter"}
+                      className={`search-suggestion-filter ${
+                        index === safeActiveIndex && activeSide === "filter" ? "selected" : ""
+                      }`}
+                      id={`${listboxId}-option-${index}-filter`}
+                      onClick={() => addSuggestion(suggestion.token)}
+                      onMouseEnter={() => {
+                        setActiveIndex(index);
+                        setActiveSide("filter");
+                      }}
+                      role="option"
+                      type="button"
+                    >
+                      <span className="search-suggestion-type">
+                        {suggestion.group === "People"
+                          ? "@"
+                          : suggestion.group === "Channels"
+                            ? "#"
+                            : suggestion.group === "Tags"
+                              ? "TAG"
+                              : suggestion.group === "Message types"
+                                ? "TYPE"
+                                : "⌕"}
                       </span>
-                    ) : null}
-                    <span aria-hidden="true" className="search-suggestion-add">＋</span>
-                  </button>
+                      <span className="search-suggestion-copy">
+                        <strong>{suggestion.title}</strong>
+                        <small>{suggestion.description}</small>
+                      </span>
+                      {suggestion.count !== undefined ? (
+                        <span className="search-suggestion-count">
+                          {formatCount(suggestion.count)}
+                        </span>
+                      ) : null}
+                      <span aria-hidden="true" className="search-suggestion-action">Filter ＋</span>
+                    </button>
+                    <button
+                      aria-label={suggestion.excludeToken.label}
+                      aria-selected={index === safeActiveIndex && activeSide === "exclude"}
+                      className={`search-suggestion-exclude ${
+                        index === safeActiveIndex && activeSide === "exclude" ? "selected" : ""
+                      }`}
+                      id={`${listboxId}-option-${index}-exclude`}
+                      onClick={() => addSuggestion(suggestion.excludeToken)}
+                      onMouseEnter={() => {
+                        setActiveIndex(index);
+                        setActiveSide("exclude");
+                      }}
+                      role="option"
+                      title={suggestion.excludeToken.label}
+                      type="button"
+                    >
+                      Exclude <span aria-hidden="true">−</span>
+                    </button>
+                  </div>
                 );
               })}
             </div>

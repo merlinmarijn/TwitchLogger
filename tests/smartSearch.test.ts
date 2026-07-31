@@ -58,16 +58,16 @@ describe("smart search", () => {
     );
     expect(suggestions).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        title: "Message does not contain “mod”",
-        token: expect.objectContaining({
+        title: "Message: “mod”",
+        excludeToken: expect.objectContaining({
           field: "message",
           operator: "notContains",
           value: "mod",
         }),
       }),
       expect.objectContaining({
-        title: "Sender does not contain “mod”",
-        token: expect.objectContaining({
+        title: "Sender contains “mod”",
+        excludeToken: expect.objectContaining({
           field: "sender",
           operator: "notContains",
           value: "mod",
@@ -82,8 +82,8 @@ describe("smart search", () => {
         }),
       }),
       expect.objectContaining({
-        title: "Exclude Mod Viewer",
-        token: expect.objectContaining({
+        title: "Mod Viewer",
+        excludeToken: expect.objectContaining({
           field: "sender",
           operator: "notEquals",
           value: "mod_viewer",
@@ -94,24 +94,24 @@ describe("smart search", () => {
         token: expect.objectContaining({ field: "role", value: "moderator" }),
       }),
       expect.objectContaining({
-        title: "Not Moderator",
-        token: expect.objectContaining({
+        title: "Moderator",
+        excludeToken: expect.objectContaining({
           field: "role",
           operator: "notEquals",
           value: "moderator",
         }),
       }),
       expect.objectContaining({
-        title: "Exclude ModCentral",
-        token: expect.objectContaining({
+        title: "ModCentral",
+        excludeToken: expect.objectContaining({
           field: "channel",
           operator: "notEquals",
           value: "ModCentral",
         }),
       }),
       expect.objectContaining({
-        title: "Without Moderator badge",
-        token: expect.objectContaining({
+        title: "Moderator badge",
+        excludeToken: expect.objectContaining({
           field: "badge",
           operator: "notHas",
           value: "moderator",
@@ -133,9 +133,10 @@ describe("smart search", () => {
         token: expect.objectContaining({ field: "image", operator: "has" }),
       }),
       expect.objectContaining({
-        title: "Messages without image links",
-        token: expect.objectContaining({ field: "image", operator: "notHas" }),
+        title: "Messages with image links",
+        excludeToken: expect.objectContaining({ field: "image", operator: "notHas" }),
       }),
     ]));
+    expect(suggestions).toHaveLength(4);
   });
 });

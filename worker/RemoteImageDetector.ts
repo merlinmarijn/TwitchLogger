@@ -121,20 +121,20 @@ export async function resolveImageIndexes(
   detector: RemoteImageDetectorLike,
   candidates: readonly ImageIndexCandidate[],
   concurrency = 8,
+  onProgress?: (completed: number) => void | Promise<void>,
 ): Promise<string[][]> {
   const results = new Array<string[]>(candidates.length);
-  let nextIndex = 0;
-  const workers = Array.from(
-    { length: Math.min(Math.max(1, concurrency), candidates.length) },
-    async () => {
-      while (nextIndex < candidates.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        results[index] = await resolveImageIndex(detector, candidates[index]);
-      }
-    },
-  );
-  await Promise.all(workers);
+  const batchSize = Math.max(1, concurrency);
+  for (let offset = 0; offset < candidates.length; offset += batchSize) {
+    const resolved = await Promise.all(
+      candidates.slice(offset, offset + batchSize)
+        .map((candidate) => resolveImageIndex(detector, candidate)),
+    );
+    resolved.forEach((imageUrls, index) => {
+      results[offset + index] = imageUrls;
+    });
+    await onProgress?.(Math.min(candidates.length, offset + resolved.length));
+  }
   return results;
 }
 

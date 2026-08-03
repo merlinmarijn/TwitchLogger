@@ -23,7 +23,7 @@ const ENROLLMENT_LIFETIME_MS = 10 * 60 * 1_000;
 const SETTINGS_KEY = "super-admin";
 const METRICS_KEY = "global";
 const STATS_KEY = "latest";
-const JOB_BATCH_SIZE = 100;
+const JOB_BATCH_SIZE = 32;
 
 type AuthState =
   | { configured: false; totpEnabled: false; authRevision: 0 }
@@ -321,12 +321,24 @@ export class AdminService {
         throw new AdminAuthError("Wait for the active maintenance operation to finish", 409);
       }
       const now = Date.now();
+      let total: number | null = null;
+      let detail = definition.detail;
+      if (kind === "image_reindex") {
+        const count = await client.query<{ count: string }>(`
+          SELECT
+            (SELECT count(*) FROM chat_messages WHERE deleted_at IS NULL) +
+            (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL)
+            AS count
+        `);
+        total = Number(count.rows[0]?.count ?? 0);
+        detail = `Indexing ${total} saved messages`;
+      }
       await client.query(`
         INSERT INTO admin_jobs (
           id, kind, status, title, detail, current, total, unit, cursor,
           metadata, requested_by, created_at, updated_at
-        ) VALUES ($1, $2, 'queued', $3, $4, 0, NULL, $5, NULL, $6::jsonb, $7, $8, $8)
-      `, [id, kind, definition.title, definition.detail, definition.unit,
+        ) VALUES ($1, $2, 'queued', $3, $4, 0, $5, $6, NULL, $7::jsonb, $8, $9, $9)
+      `, [id, kind, definition.title, detail, total, definition.unit,
         JSON.stringify({}), "super-admin", now]);
       await insertAudit(client, "job.started", definition.title, "super-admin");
       await client.query("COMMIT");
@@ -400,7 +412,7 @@ export class AdminService {
   private dispatchJob(id: string) {
     if (this.runningJobs.has(id)) return;
     this.runningJobs.add(id);
-    setImmediate(() => void this.runJob(id).finally(() => this.runningJobs.delete(id)));
+    void this.runJob(id).finally(() => this.runningJobs.delete(id));
   }
 
   private async runJob(id: string) {
@@ -436,19 +448,27 @@ export class AdminService {
   }
 
   private async runImageReindex(id: string) {
-    const count = await this.database.query<{ count: string }>(`
-      SELECT
-        (SELECT count(*) FROM chat_messages WHERE deleted_at IS NULL) +
-        (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL)
-        AS count
-    `);
-    const total = Number(count.rows[0]?.count ?? 0);
-    await this.database.query(`
-      UPDATE admin_jobs SET total = $2, current = 0, cursor = NULL,
-        detail = $3, updated_at = $4 WHERE id = $1
-    `, [id, total, `Indexing ${total} saved messages`, Date.now()]);
-    let cursor = "";
-    let current = 0;
+    const jobResult = await this.database.query<{
+      current: string;
+      cursor: string | null;
+      total: string | null;
+    }>("SELECT current, cursor, total FROM admin_jobs WHERE id = $1", [id]);
+    const job = jobResult.rows[0];
+    if (!job) return;
+    let cursor = job.cursor ?? "";
+    let current = Number(job.current);
+    if (job.total === null) {
+      const count = await this.database.query<{ count: string }>(`
+        SELECT
+          (SELECT count(*) FROM chat_messages WHERE deleted_at IS NULL) +
+          (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL)
+          AS count
+      `);
+      const total = Number(count.rows[0]?.count ?? 0);
+      await this.database.query(`
+        UPDATE admin_jobs SET total = $2, detail = $3, updated_at = $4 WHERE id = $1
+      `, [id, total, `Indexing ${total} saved messages`, Date.now()]);
+    }
     while (true) {
       if (await this.isCancelling(id)) return;
       const page = await this.database.query<ImageReindexRow>(`
@@ -465,6 +485,12 @@ export class AdminService {
           indexedImageUrls: message.image_urls,
           hiddenImageUrls: message.hidden_image_urls,
         })),
+        8,
+        createProgressReporter(async (completed) => {
+          await this.database.query(`
+            UPDATE admin_jobs SET current = $2, updated_at = $3 WHERE id = $1
+          `, [id, current + completed, Date.now()]);
+        }),
       );
       if (await this.isCancelling(id)) return;
       const client = await this.database.pool.connect();
@@ -493,7 +519,14 @@ export class AdminService {
       }
       await yieldToEventLoop();
     }
-    const hotCurrent = current;
+    const hotCount = await this.database.query<{ count: string }>(`
+      SELECT count(*) AS count FROM chat_messages WHERE deleted_at IS NULL
+    `);
+    const hotCurrent = Number(hotCount.rows[0]?.count ?? current);
+    current = hotCurrent;
+    await this.database.query(`
+      UPDATE admin_jobs SET current = $2, updated_at = $3 WHERE id = $1
+    `, [id, current, Date.now()]);
     const cold = new ColdMessageArchiveService(this.database);
     await cold.reindexImages({
       isCancelled: () => this.isCancelling(id),
@@ -790,6 +823,19 @@ async function insertAudit(
 
 function yieldToEventLoop() {
   return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+function createProgressReporter(
+  report: (completed: number) => Promise<void>,
+  intervalMs = 1_000,
+) {
+  let lastReportedAt = 0;
+  return async (completed: number) => {
+    const now = Date.now();
+    if (now - lastReportedAt < intervalMs) return;
+    lastReportedAt = now;
+    await report(completed);
+  };
 }
 
 function secretMatches(supplied: string, expected: string) {

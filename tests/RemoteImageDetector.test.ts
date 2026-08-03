@@ -89,4 +89,18 @@ describe("remote image detection", () => {
     ])).resolves.toEqual([[imageUrl], []]);
     expect(detector.detectImageUrls).toHaveBeenCalledTimes(2);
   });
+
+  it("reports progress after each bounded reindex wave", async () => {
+    const progress: number[] = [];
+    const detector = { detectImageUrls: vi.fn(async () => []) };
+    const candidates = Array.from({ length: 5 }, (_value, index) => ({
+      messageText: `message ${index}`,
+    }));
+
+    await resolveImageIndexes(detector, candidates, 2, (completed) => {
+      progress.push(completed);
+    });
+
+    expect(progress).toEqual([2, 4, 5]);
+  });
 });

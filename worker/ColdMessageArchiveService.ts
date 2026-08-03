@@ -306,6 +306,10 @@ export class ColdMessageArchiveService {
               indexedImageUrls: record.image_urls ?? [],
               hiddenImageUrls: record.hidden_image_urls,
             })),
+            8,
+            createProgressReporter(async (completed) => {
+              await options.onProgress?.(processed + completed);
+            }),
           )
         : records.map((record) => mergeIndexedImageUrls(
             record.message_text,
@@ -638,6 +642,19 @@ export class ColdMessageArchiveService {
       this.decodedChunks.delete(this.decodedChunks.keys().next().value!);
     }
   }
+}
+
+function createProgressReporter(
+  report: (completed: number) => Promise<void>,
+  intervalMs = 1_000,
+) {
+  let lastReportedAt = 0;
+  return async (completed: number) => {
+    const now = Date.now();
+    if (now - lastReportedAt < intervalMs) return;
+    lastReportedAt = now;
+    await report(completed);
+  };
 }
 
 export async function encodeColdMessageChunk(records: ArchivedMessageRow[]) {

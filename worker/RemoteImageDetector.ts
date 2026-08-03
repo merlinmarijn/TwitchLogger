@@ -1,8 +1,8 @@
 import { lookup } from "node:dns/promises";
 import { request as requestHttp } from "node:http";
 import { request as requestHttps } from "node:https";
-import { BlockList, isIP } from "node:net";
-import { extractHttpUrls } from "../shared/imageUrls";
+import { BlockList, isIP, type LookupFunction } from "node:net";
+import { extractHttpUrls, mergeIndexedImageUrls } from "../shared/imageUrls";
 
 const MAX_CANDIDATES_PER_MESSAGE = 4;
 const MAX_REDIRECTS = 4;
@@ -42,6 +42,12 @@ for (const [network, prefix] of [
 
 export interface RemoteImageDetectorLike {
   detectImageUrls(messageText: string, knownImageUrls?: readonly string[]): Promise<string[]>;
+}
+
+export interface ImageIndexCandidate {
+  messageText: string;
+  indexedImageUrls?: readonly string[];
+  hiddenImageUrls?: readonly string[];
 }
 
 type ImageProbe = (url: URL) => Promise<boolean>;
@@ -91,6 +97,47 @@ export class RemoteImageDetector implements RemoteImageDetectorLike {
   }
 }
 
+export async function resolveImageIndex(
+  detector: RemoteImageDetectorLike,
+  candidate: ImageIndexCandidate,
+): Promise<string[]> {
+  const indexed = mergeIndexedImageUrls(
+    candidate.messageText,
+    candidate.indexedImageUrls,
+    candidate.hiddenImageUrls,
+  );
+  const detected = await detector.detectImageUrls(
+    candidate.messageText,
+    [...indexed, ...(candidate.hiddenImageUrls ?? [])],
+  );
+  return mergeIndexedImageUrls(
+    candidate.messageText,
+    [...indexed, ...detected],
+    candidate.hiddenImageUrls,
+  );
+}
+
+export async function resolveImageIndexes(
+  detector: RemoteImageDetectorLike,
+  candidates: readonly ImageIndexCandidate[],
+  concurrency = 8,
+): Promise<string[][]> {
+  const results = new Array<string[]>(candidates.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), candidates.length) },
+    async () => {
+      while (nextIndex < candidates.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await resolveImageIndex(detector, candidates[index]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 export function isImageContentType(value: string | undefined): boolean {
   return value?.split(";", 1)[0].trim().toLowerCase().startsWith("image/") ?? false;
 }
@@ -104,6 +151,16 @@ export function isPublicInternetAddress(address: string): boolean {
     normalized,
     family === 4 ? "ipv4" : "ipv6",
   );
+}
+
+export function createPinnedLookup(address: string, family: number): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address, family }]);
+      return;
+    }
+    callback(null, address, family);
+  };
 }
 
 async function probeImageUrl(url: URL): Promise<boolean> {
@@ -146,9 +203,7 @@ async function requestHeaders(
         ...(method === "GET" ? { range: "bytes=0-0" } : {}),
         "user-agent": "TwitchLogger/0.1 image-detector",
       },
-      lookup: (_hostname, _options, callback) => {
-        callback(null, selected.address, selected.family);
-      },
+      lookup: createPinnedLookup(selected.address, selected.family),
     }, (response) => {
       if (settled) return;
       settled = true;

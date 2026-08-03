@@ -63,7 +63,7 @@ const operations: Array<{
     kind: "image_reindex",
     number: "01",
     title: "Re-index image links",
-    description: "Re-read every message, extract supported artwork links, and refresh gallery membership.",
+    description: "Re-read every message, inspect linked files, and refresh gallery membership.",
     impact: "Writes message metadata",
   },
   {

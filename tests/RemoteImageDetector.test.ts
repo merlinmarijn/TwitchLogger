@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { extractHttpUrls, mergeIndexedImageUrls } from "../shared/imageUrls";
 import {
+  createPinnedLookup,
   isImageContentType,
   isPublicInternetAddress,
   RemoteImageDetector,
+  resolveImageIndexes,
 } from "../worker/RemoteImageDetector";
 
 describe("remote image detection", () => {
@@ -59,5 +61,32 @@ describe("remote image detection", () => {
     await expect(detector.detectImageUrls(message, ["https://cdn.example/known.png"]))
       .resolves.toEqual(["https://cdn.example/extensionless"]);
     expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the pinned address in Node's single and all-address lookup modes", async () => {
+    const lookup = createPinnedLookup("1.1.1.1", 4);
+    await expect(new Promise((resolve, reject) => lookup(
+      "example.test",
+      { all: true },
+      (error, address) => error ? reject(error) : resolve(address),
+    ))).resolves.toEqual([{ address: "1.1.1.1", family: 4 }]);
+    await expect(new Promise((resolve, reject) => lookup(
+      "example.test",
+      { all: false },
+      (error, address, family) => error ? reject(error) : resolve({ address, family }),
+    ))).resolves.toEqual({ address: "1.1.1.1", family: 4 });
+  });
+
+  it("backfills extensionless image links while preserving hidden-image moderation", async () => {
+    const imageUrl = "https://segs.lol/i7Ekz1";
+    const detector = {
+      detectImageUrls: vi.fn(async () => [imageUrl]),
+    };
+
+    await expect(resolveImageIndexes(detector, [
+      { messageText: imageUrl },
+      { messageText: imageUrl, hiddenImageUrls: [imageUrl] },
+    ])).resolves.toEqual([[imageUrl], []]);
+    expect(detector.detectImageUrls).toHaveBeenCalledTimes(2);
   });
 });

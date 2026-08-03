@@ -8,9 +8,14 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import QRCode from "qrcode";
-import { IMAGE_INDEX_VERSION, mergeIndexedImageUrls } from "../shared/imageUrls";
+import { IMAGE_INDEX_VERSION } from "../shared/imageUrls";
 import { ColdMessageArchiveService } from "./ColdMessageArchiveService";
 import type { PostgresDatabase } from "./database";
+import {
+  RemoteImageDetector,
+  resolveImageIndexes,
+  type RemoteImageDetectorLike,
+} from "./RemoteImageDetector";
 
 const PASSWORD_COST = 16_384;
 const SESSION_LIFETIME_MS = 12 * 60 * 60 * 1_000;
@@ -57,7 +62,7 @@ type AdminJobStatus =
 const jobDefinitions: Record<AdminJobKind, { title: string; detail: string; unit: string }> = {
   image_reindex: {
     title: "Re-index image links",
-    detail: "Rebuilds extracted image metadata and gallery membership for every visible message.",
+    detail: "Rechecks saved links and rebuilds image metadata and gallery membership.",
     unit: "messages",
   },
   view_reindex: {
@@ -98,6 +103,7 @@ export class AdminService {
     private readonly database: PostgresDatabase,
     private readonly setupSecret: string,
     private readonly encryptionKey: Buffer,
+    private readonly remoteImageDetector: RemoteImageDetectorLike = new RemoteImageDetector(),
   ) {
     this.signingKey = createHmac("sha256", encryptionKey)
       .update("twitch-logger/admin/session/v1")
@@ -452,15 +458,20 @@ export class AdminService {
         ORDER BY id LIMIT $2
       `, [cursor, JOB_BATCH_SIZE]);
       if (page.rows.length === 0) break;
+      const resolvedImageUrls = await resolveImageIndexes(
+        this.remoteImageDetector,
+        page.rows.map((message) => ({
+          messageText: message.message_text,
+          indexedImageUrls: message.image_urls,
+          hiddenImageUrls: message.hidden_image_urls,
+        })),
+      );
+      if (await this.isCancelling(id)) return;
       const client = await this.database.pool.connect();
       try {
         await client.query("BEGIN");
-        for (const message of page.rows) {
-          const imageUrls = mergeIndexedImageUrls(
-            message.message_text,
-            message.image_urls,
-            message.hidden_image_urls,
-          );
+        for (const [index, message] of page.rows.entries()) {
+          const imageUrls = resolvedImageUrls[index];
           await client.query(`
             UPDATE chat_messages
             SET has_images = $2, image_urls = $3::jsonb, image_index_version = $4,
@@ -486,6 +497,7 @@ export class AdminService {
     const cold = new ColdMessageArchiveService(this.database);
     await cold.reindexImages({
       isCancelled: () => this.isCancelling(id),
+      remoteImageDetector: this.remoteImageDetector,
       onProgress: async (processed) => {
         current = hotCurrent + processed;
         await this.database.query(`

@@ -11,6 +11,10 @@ import {
 } from "../shared/imageUrls";
 import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
+import {
+  resolveImageIndexes,
+  type RemoteImageDetectorLike,
+} from "./RemoteImageDetector";
 
 const compress = promisify(brotliCompress);
 const decompress = promisify(brotliDecompress);
@@ -275,6 +279,7 @@ export class ColdMessageArchiveService {
   async reindexImages(options: {
     isCancelled?: () => Promise<boolean>;
     onProgress?: (processed: number) => Promise<void>;
+    remoteImageDetector?: RemoteImageDetectorLike;
   } = {}) {
     const chunks = await this.database.query<{ id: string }>(`
       SELECT id FROM chat_message_cold_chunks ORDER BY period_start, first_timestamp, id
@@ -289,12 +294,33 @@ export class ColdMessageArchiveService {
         WHERE chunk_id = $1 AND deleted_at IS NULL
         ORDER BY id
       `, [chunk.id]);
+      const messageIds = new Set(messages.rows.map((message) => message.id));
+      const loaded = await this.loadChunks([chunk.id]);
+      const records = (loaded.get(chunk.id) ?? [])
+        .filter((record) => messageIds.has(record.id));
+      const resolvedImageUrls = options.remoteImageDetector
+        ? await resolveImageIndexes(
+            options.remoteImageDetector,
+            records.map((record) => ({
+              messageText: record.message_text,
+              indexedImageUrls: record.image_urls ?? [],
+              hiddenImageUrls: record.hidden_image_urls,
+            })),
+          )
+        : records.map((record) => mergeIndexedImageUrls(
+            record.message_text,
+            record.image_urls ?? [],
+            record.hidden_image_urls,
+          ));
+      const resolvedById = new Map(
+        records.map((record, index) => [record.id, resolvedImageUrls[index]]),
+      );
       changed += await this.mutateMessages(
-        messages.rows.map((message) => message.id),
+        [...messageIds],
         (record) => {
           const imageUrls = mergeIndexedImageUrls(
             record.message_text,
-            record.image_urls ?? [],
+            [...(record.image_urls ?? []), ...(resolvedById.get(record.id) ?? [])],
             record.hidden_image_urls,
           );
           const hasImages = imageUrls.length > 0;

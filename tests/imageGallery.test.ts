@@ -64,6 +64,21 @@ describe("image gallery", () => {
     )).toEqual(["https://kappa.lol/SlNGUz"]);
   });
 
+  it("extracts extensionless Bluesky CDN feed images for galleries and previews", () => {
+    const url = "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:23reh4wn7sc7wtcurl575tox/bafkreiefmuwe3ky6csho2szr4wsbllknenc6fl3pbaemwy3uyc2re7u5ma";
+    const message = {
+      _id: "bluesky",
+      messageText: `Image: ${url}`,
+      timestamp: 1,
+    } as ChatMessage;
+
+    expect(extractImageUrls(message.messageText)).toEqual([url]);
+    expect(buildGalleryImages([message])[0]).toMatchObject({
+      url,
+      previewUrl: url,
+    });
+  });
+
   it("routes Imgur page previews through the worker and keeps the post as the link", () => {
     const url = "https://imgur.com/a/I5kYHtp";
     const message = {

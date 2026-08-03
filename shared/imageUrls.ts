@@ -16,20 +16,26 @@ const IMGUR_RESERVED_PATHS = new Set([
 ]);
 const KAPPA_LOL_HOSTS = new Set(["kappa.lol", "www.kappa.lol"]);
 const KAPPA_LOL_IMAGE_PATH_PATTERN = /^\/[a-z\d]+\/?$/i;
+const BSKY_IMAGE_HOSTS = new Set(["cdn.bsky.app"]);
+const BSKY_FEED_IMAGE_PATH_PATTERN =
+  /^\/img\/feed_thumbnail\/plain\/[^/]+\/[^/]+\/?$/i;
 const TOUHOU_WIKI_IMAGE_HOSTS = new Set(["en.touhouwiki.net"]);
 const TRAILING_PUNCTUATION = /[),.!;:\]}]+$/;
 
-export const IMAGE_INDEX_VERSION = 3;
+export const IMAGE_INDEX_VERSION = 4;
 
 export const LEGACY_IMAGE_GALLERY_FILTER_PATTERN =
   "/https?:\\/\\/[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#][^\\s<>\"']*)?/i";
-const PREVIOUS_IMAGE_GALLERY_FILTER_PATTERN =
+const OLDER_IMAGE_GALLERY_FILTER_PATTERN =
   "/(?:https?:\\/\\/[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#][^\\s<>\"']*)?|https?:\\/\\/(?:www\\.)?imgur\\.com\\/(?:a|gallery)\\/[a-z\\d]+(?:[?#][^\\s<>\"']*)?)/i";
-export const IMAGE_GALLERY_FILTER_PATTERN =
+const PREVIOUS_IMAGE_GALLERY_FILTER_PATTERN =
   "/https?:\\/\\/(?:[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#][^\\s<>\"']*)?|(?:www\\.)?(?:imgur\\.com\\/(?:a|gallery)\\/|kappa\\.lol\\/)[a-z\\d]+(?:[?#][^\\s<>\"']*)?)/i";
+export const IMAGE_GALLERY_FILTER_PATTERN =
+  "/https?:\\/\\/(?:[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#]\\S*)?|(?:www\\.)?(?:imgur\\.com\\/(?:a|gallery)\\/|kappa\\.lol\\/)\\w+|cdn\\.bsky\\.app\\/img\\/feed_thumbnail\\/plain\\/\\S+)/i";
 
 export function upgradeGalleryFilterPattern(value: string): string {
   return value === LEGACY_IMAGE_GALLERY_FILTER_PATTERN ||
+      value === OLDER_IMAGE_GALLERY_FILTER_PATTERN ||
       value === PREVIOUS_IMAGE_GALLERY_FILTER_PATTERN
     ? IMAGE_GALLERY_FILTER_PATTERN
     : value;
@@ -54,6 +60,12 @@ export function isKappaLolImage(url: URL): boolean {
     KAPPA_LOL_IMAGE_PATH_PATTERN.test(url.pathname);
 }
 
+export function isBskyFeedImage(url: URL): boolean {
+  return url.protocol === "https:" &&
+    BSKY_IMAGE_HOSTS.has(url.hostname.toLowerCase()) &&
+    BSKY_FEED_IMAGE_PATH_PATTERN.test(url.pathname);
+}
+
 export function isTouhouWikiImage(url: URL): boolean {
   return url.protocol === "https:" &&
     TOUHOU_WIKI_IMAGE_HOSTS.has(url.hostname.toLowerCase()) &&
@@ -69,7 +81,7 @@ export function extractImageUrls(messageText: string): string[] {
       const parsed = new URL(candidate);
       if ((parsed.protocol === "http:" || parsed.protocol === "https:") &&
           (IMAGE_PATH_PATTERN.test(parsed.pathname) || pixivArtworkId(parsed) ||
-            isImgurPost(parsed) || isKappaLolImage(parsed))) {
+            isImgurPost(parsed) || isKappaLolImage(parsed) || isBskyFeedImage(parsed))) {
         urls.add(parsed.href);
       }
     } catch {

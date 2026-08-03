@@ -104,6 +104,21 @@ describe("chat tabs", () => {
       .toEqual([album]);
   });
 
+  it("upgrades legacy image gallery rules to match Bluesky CDN images", () => {
+    const legacyGallery = {
+      ...tab,
+      rules: [{ ...tab.rules[0], value: LEGACY_IMAGE_GALLERY_FILTER_PATTERN }],
+    };
+    const image = {
+      _id: "bluesky",
+      messageText: "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:23reh4wn7sc7wtcurl575tox/bafkreiefmuwe3ky6csho2szr4wsbllknenc6fl3pbaemwy3uyc2re7u5ma",
+    } as ChatMessage;
+
+    expect(tabMatchesMessage(legacyGallery, image)).toBe(true);
+    expect(applyMessageFilters([image], "", [chatTabAsFilter(legacyGallery)]).messages)
+      .toEqual([image]);
+  });
+
   it("rebuilds only when matching conditions change", () => {
     const renamedAndRelayouted = { ...tab, name: "Renamed", layout: "chat" as const };
     expect(tabConditionsKey(renamedAndRelayouted)).toBe(tabConditionsKey(tab));

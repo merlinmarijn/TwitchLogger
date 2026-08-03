@@ -130,6 +130,21 @@ export function buildSmartSearchSuggestions({
       ),
     );
   }
+  if (["link", "links", "url", "urls", "website"].some((keyword) =>
+    keyword.includes(normalized))) {
+    suggestions.push(
+      suggestion(
+        "Tags",
+        "link",
+        "has",
+        "notHas",
+        "link",
+        "Messages with links",
+        "Any HTTP or HTTPS link",
+        "Messages without links",
+      ),
+    );
+  }
 
   for (const user of users.slice(0, 5)) {
     suggestions.push({

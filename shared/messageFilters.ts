@@ -1,4 +1,4 @@
-import { extractImageUrls } from "./imageUrls";
+import { containsLink, extractImageUrls } from "./imageUrls";
 
 export const FILTER_FIELDS = [
   "message",
@@ -8,6 +8,7 @@ export const FILTER_FIELDS = [
   "badge",
   "messageType",
   "image",
+  "link",
 ] as const;
 export const FILTER_OPERATORS = [
   "contains",
@@ -69,7 +70,9 @@ export interface FilterResult<T extends FilterableMessage> {
 
 export function operatorsForField(field: FilterField): FilterOperator[] {
   if (field === "role") return ["equals", "notEquals"];
-  if (field === "badge" || field === "image") return ["has", "notHas"];
+  if (field === "badge" || field === "image" || field === "link") {
+    return ["has", "notHas"];
+  }
   return [
     "contains",
     "notContains",
@@ -158,6 +161,10 @@ function matchesRule(message: FilterableMessage, rule: FilterRule) {
     const hasImage = message.hasImages ??
       extractImageUrls(message.messageText).length > 0;
     return rule.operator === "notHas" ? !hasImage : hasImage;
+  }
+  if (rule.field === "link") {
+    const hasLink = containsLink(message.messageText);
+    return rule.operator === "notHas" ? !hasLink : hasLink;
   }
   if (rule.field === "sender" &&
       (rule.operator === "equals" || rule.operator === "notEquals")) {

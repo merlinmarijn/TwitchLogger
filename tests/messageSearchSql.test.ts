@@ -56,6 +56,18 @@ describe("PostgreSQL message selection", () => {
     expect(result.requiresPostFilter).toBe(false);
   });
 
+  it("pushes any-link filters into a message-text URL match", () => {
+    const result = compileMessageSelectionSql("", [
+      makeFilter({
+        rules: [{ id: "link", field: "link", operator: "has", value: "link" }],
+      }),
+    ]);
+
+    expect(result.sql.join(" ")).toContain("message_text ~*");
+    expect(result.values).toEqual(["https?://[^[:space:]<>\"']+"]);
+    expect(result.requiresPostFilter).toBe(false);
+  });
+
   it("keeps JavaScript regular expressions as a bounded post-filter", () => {
     const result = compileMessageSelectionSql("", [
       makeFilter({

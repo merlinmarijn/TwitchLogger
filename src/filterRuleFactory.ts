@@ -8,6 +8,7 @@ export function createFilterRule(
     role: "moderator",
     messageType: "text",
     image: "image",
+    link: "link",
   };
   return {
     id,

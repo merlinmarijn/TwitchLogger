@@ -1,4 +1,5 @@
 const URL_PATTERN = /https?:\/\/[^\s<>"']+/giu;
+const LINK_PATTERN = /https?:\/\/[^\s<>"']+/iu;
 const IMAGE_PATH_PATTERN = /\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)$/i;
 const PIXIV_HOSTS = new Set(["pixiv.net", "www.pixiv.net"]);
 const PIXIV_ARTWORK_PATH_PATTERN = /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?artworks\/([1-9]\d*)\/?$/i;
@@ -32,6 +33,10 @@ const PREVIOUS_IMAGE_GALLERY_FILTER_PATTERN =
   "/https?:\\/\\/(?:[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#][^\\s<>\"']*)?|(?:www\\.)?(?:imgur\\.com\\/(?:a|gallery)\\/|kappa\\.lol\\/)[a-z\\d]+(?:[?#][^\\s<>\"']*)?)/i";
 export const IMAGE_GALLERY_FILTER_PATTERN =
   "/https?:\\/\\/(?:[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#]\\S*)?|(?:www\\.)?(?:imgur\\.com\\/(?:a|gallery)\\/|kappa\\.lol\\/)\\w+|cdn\\.bsky\\.app\\/img\\/feed_thumbnail\\/plain\\/\\S+)/i";
+
+export function containsLink(messageText: string): boolean {
+  return LINK_PATTERN.test(messageText);
+}
 
 export function upgradeGalleryFilterPattern(value: string): string {
   return value === LEGACY_IMAGE_GALLERY_FILTER_PATTERN ||

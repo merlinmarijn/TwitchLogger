@@ -66,6 +66,22 @@ describe("message filters", () => {
     expect(matchesMessageFilter(imageMessage, withoutImages)).toBe(false);
   });
 
+  it("filters messages containing any HTTP or HTTPS link", () => {
+    const withLinks = makeFilter({
+      rules: [{ id: "link", field: "link", operator: "has", value: "link" }],
+    });
+    const withoutLinks = makeFilter({
+      rules: [{ id: "link", field: "link", operator: "notHas", value: "link" }],
+    });
+    const linkMessage = makeMessage({
+      messageText: "read https://example.test/article?id=42",
+    });
+
+    expect(matchesMessageFilter(linkMessage, withLinks)).toBe(true);
+    expect(matchesMessageFilter(messages[0], withLinks)).toBe(false);
+    expect(matchesMessageFilter(linkMessage, withoutLinks)).toBe(false);
+  });
+
   it("matches whole words next to punctuation without treating values as regex", () => {
     expect(matchesMessageFilter(messages[0], makeFilter({
       rules: [{ id: "word", field: "message", operator: "wholeWord", value: "chat" }],

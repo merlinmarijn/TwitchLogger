@@ -16,6 +16,7 @@ const fieldLabels: Record<FilterField, string> = {
   badge: "Badge",
   messageType: "Message type",
   image: "Image link",
+  link: "Any link",
 };
 
 const operatorLabels: Record<FilterOperator, string> = {
@@ -174,12 +175,14 @@ function RuleValueInput({
       </label>
     );
   }
-  if (rule.field === "image") {
+  if (rule.field === "image" || rule.field === "link") {
     return (
       <label>
         <span>Link type</span>
-        <select disabled value="image">
-          <option value="image">Supported image link</option>
+        <select disabled value={rule.field}>
+          <option value={rule.field}>
+            {rule.field === "image" ? "Supported image link" : "Any HTTP or HTTPS link"}
+          </option>
         </select>
       </label>
     );

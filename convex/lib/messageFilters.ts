@@ -16,6 +16,7 @@ export const filterFieldValidator = v.union(
   v.literal("badge"),
   v.literal("messageType"),
   v.literal("image"),
+  v.literal("link"),
 );
 export const filterOperatorValidator = v.union(
   v.literal("contains"),

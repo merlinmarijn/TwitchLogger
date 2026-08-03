@@ -132,6 +132,13 @@ function compileRule(
       complete: true,
     };
   }
+  if (rule.field === "link") {
+    const matches = `message_text ~* ${bind("https?://[^[:space:]<>\"']+")}`;
+    return {
+      sql: rule.operator === "notHas" ? `NOT (${matches})` : matches,
+      complete: true,
+    };
+  }
   if (rule.field === "sender" &&
       (rule.operator === "equals" || rule.operator === "notEquals")) {
     const parameter = bind(value);

@@ -139,4 +139,20 @@ describe("smart search", () => {
     ]));
     expect(suggestions).toHaveLength(4);
   });
+
+  it("offers positive and negative any-link interpretations", () => {
+    const suggestions = buildSmartSearchSuggestions({
+      text: "link",
+      users: [],
+      channels: [],
+    });
+
+    expect(suggestions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: "Messages with links",
+        token: expect.objectContaining({ field: "link", operator: "has" }),
+        excludeToken: expect.objectContaining({ field: "link", operator: "notHas" }),
+      }),
+    ]));
+  });
 });

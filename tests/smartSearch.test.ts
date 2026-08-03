@@ -4,6 +4,7 @@ import {
   buildSmartSearchFilter,
   buildSmartSearchSuggestions,
   createSmartSearchToken,
+  isSmartSearchPending,
 } from "../src/smartSearch";
 
 const channels: Channel[] = [{
@@ -16,6 +17,21 @@ const channels: Channel[] = [{
 }];
 
 describe("smart search", () => {
+  it("does not report a pending search while a guided filter value is being typed", () => {
+    expect(isSmartSearchPending({
+      draft: "toofisn",
+      editingFilterValue: true,
+      searching: true,
+      value: "",
+    })).toBe(false);
+    expect(isSmartSearchPending({
+      draft: "giveaway",
+      editingFilterValue: false,
+      searching: false,
+      value: "",
+    })).toBe(true);
+  });
+
   it("turns chained tokens into one all/any message filter", () => {
     const filter = buildSmartSearchFilter([
       createSmartSearchToken("sender", "equals", "alice", "User: Alice"),

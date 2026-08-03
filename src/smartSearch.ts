@@ -37,6 +37,20 @@ interface BuildSuggestionOptions {
   channels: Channel[];
 }
 
+export function isSmartSearchPending({
+  draft,
+  editingFilterValue,
+  searching,
+  value,
+}: {
+  draft: string;
+  editingFilterValue: boolean;
+  searching: boolean;
+  value: string;
+}) {
+  return !editingFilterValue && (searching || draft !== value);
+}
+
 export const SMART_SEARCH_ROLE_OPTIONS = [
   { value: "broadcaster", label: "Broadcaster" },
   { value: "moderator", label: "Moderator" },

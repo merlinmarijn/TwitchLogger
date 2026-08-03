@@ -16,6 +16,7 @@ import { useQuery } from "./postgresReact";
 import {
   buildSmartSearchSuggestions,
   createSmartSearchToken,
+  isSmartSearchPending,
   SMART_SEARCH_BADGE_OPTIONS,
   SMART_SEARCH_MESSAGE_TYPE_OPTIONS,
   SMART_SEARCH_ROLE_OPTIONS,
@@ -71,7 +72,12 @@ export default function SearchComposer({
   const listboxId = useId();
   const filterMenuId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
-  const pending = searching || draft !== value;
+  const pending = isSmartSearchPending({
+    draft,
+    editingFilterValue: Boolean(valueFilterDraft),
+    searching,
+    value,
+  });
   const trimmedSuggestionText = suggestionText.trim();
   const serverSuggestions = useQuery(
     api.messages.suggestions,
@@ -334,11 +340,13 @@ export default function SearchComposer({
 
       <div className="search-meta">
         <span aria-live="polite" className="search-status">
-          {pending
-            ? "Searching…"
-            : value || tokens.length > 0
-              ? `${resultCount} loaded ${resultCount === 1 ? "match" : "matches"}`
-              : "Search all saved history"}
+          {valueFilterDraft
+            ? "Press Enter to apply this filter"
+            : pending
+              ? "Searching…"
+              : value || tokens.length > 0
+                ? `${resultCount} loaded ${resultCount === 1 ? "match" : "matches"}`
+                : "Search all saved history"}
         </span>
         {tokens.length > 1 ? (
           <span className="search-match" aria-label="Search filter matching">

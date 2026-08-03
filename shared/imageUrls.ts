@@ -23,7 +23,7 @@ const BSKY_FEED_IMAGE_PATH_PATTERN =
 const TOUHOU_WIKI_IMAGE_HOSTS = new Set(["en.touhouwiki.net"]);
 const TRAILING_PUNCTUATION = /[),.!;:\]}]+$/;
 
-export const IMAGE_INDEX_VERSION = 4;
+export const IMAGE_INDEX_VERSION = 5;
 
 export const LEGACY_IMAGE_GALLERY_FILTER_PATTERN =
   "/https?:\\/\\/[^\\s<>\"']+\\.(?:avif|bmp|gif|jpe?g|png|svg|tiff?|webp)(?:[?#][^\\s<>\"']*)?/i";
@@ -36,6 +36,22 @@ export const IMAGE_GALLERY_FILTER_PATTERN =
 
 export function containsLink(messageText: string): boolean {
   return LINK_PATTERN.test(messageText);
+}
+
+export function extractHttpUrls(messageText: string): string[] {
+  const urls = new Set<string>();
+  for (const match of messageText.matchAll(URL_PATTERN)) {
+    const candidate = match[0].replace(TRAILING_PUNCTUATION, "");
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        urls.add(parsed.href);
+      }
+    } catch {
+      // Ignore malformed links copied into chat.
+    }
+  }
+  return [...urls];
 }
 
 export function upgradeGalleryFilterPattern(value: string): string {
@@ -80,13 +96,11 @@ export function isTouhouWikiImage(url: URL): boolean {
 
 export function extractImageUrls(messageText: string): string[] {
   const urls = new Set<string>();
-  for (const match of messageText.matchAll(URL_PATTERN)) {
-    const candidate = match[0].replace(TRAILING_PUNCTUATION, "");
+  for (const candidate of extractHttpUrls(messageText)) {
     try {
       const parsed = new URL(candidate);
-      if ((parsed.protocol === "http:" || parsed.protocol === "https:") &&
-          (IMAGE_PATH_PATTERN.test(parsed.pathname) || pixivArtworkId(parsed) ||
-            isImgurPost(parsed) || isKappaLolImage(parsed) || isBskyFeedImage(parsed))) {
+      if (IMAGE_PATH_PATTERN.test(parsed.pathname) || pixivArtworkId(parsed) ||
+          isImgurPost(parsed) || isKappaLolImage(parsed) || isBskyFeedImage(parsed)) {
         urls.add(parsed.href);
       }
     } catch {
@@ -94,4 +108,17 @@ export function extractImageUrls(messageText: string): string[] {
     }
   }
   return [...urls];
+}
+
+export function mergeIndexedImageUrls(
+  messageText: string,
+  indexedImageUrls: readonly string[] = [],
+  hiddenImageUrls: readonly string[] = [],
+): string[] {
+  const linksInMessage = new Set(extractHttpUrls(messageText));
+  const hidden = new Set(hiddenImageUrls);
+  return [...new Set([
+    ...extractImageUrls(messageText),
+    ...indexedImageUrls.filter((url) => linksInMessage.has(url)),
+  ])].filter((url) => !hidden.has(url));
 }

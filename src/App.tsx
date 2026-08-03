@@ -1158,7 +1158,7 @@ function ImageGallery({
           <strong>{serverFiltering
             ? "No matching images in searched history"
             : "No images found"}</strong>
-          <span>Direct image links and supported artwork pages, including Pixiv, will appear here.</span>
+          <span>Image links are detected automatically. Supported artwork pages, including Pixiv, appear here too.</span>
         </div>
       ) : (
         <>

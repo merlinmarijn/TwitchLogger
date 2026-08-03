@@ -8,7 +8,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import QRCode from "qrcode";
-import { extractImageUrls, IMAGE_INDEX_VERSION } from "../shared/imageUrls";
+import { IMAGE_INDEX_VERSION, mergeIndexedImageUrls } from "../shared/imageUrls";
 import { ColdMessageArchiveService } from "./ColdMessageArchiveService";
 import type { PostgresDatabase } from "./database";
 
@@ -446,7 +446,7 @@ export class AdminService {
     while (true) {
       if (await this.isCancelling(id)) return;
       const page = await this.database.query<ImageReindexRow>(`
-        SELECT id, channel_id, message_text, hidden_image_urls
+        SELECT id, channel_id, message_text, image_urls, hidden_image_urls
         FROM chat_messages
         WHERE deleted_at IS NULL AND id > $1
         ORDER BY id LIMIT $2
@@ -456,9 +456,11 @@ export class AdminService {
       try {
         await client.query("BEGIN");
         for (const message of page.rows) {
-          const hidden = new Set(message.hidden_image_urls ?? []);
-          const imageUrls = extractImageUrls(message.message_text)
-            .filter((url) => !hidden.has(url));
+          const imageUrls = mergeIndexedImageUrls(
+            message.message_text,
+            message.image_urls,
+            message.hidden_image_urls,
+          );
           await client.query(`
             UPDATE chat_messages
             SET has_images = $2, image_urls = $3::jsonb, image_index_version = $4,
@@ -729,6 +731,7 @@ interface ImageReindexRow {
   id: string;
   channel_id: string;
   message_text: string;
+  image_urls: string[];
   hidden_image_urls: string[];
 }
 

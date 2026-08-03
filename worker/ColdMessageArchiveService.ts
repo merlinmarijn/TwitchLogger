@@ -6,8 +6,8 @@ import {
 } from "node:zlib";
 import { promisify } from "node:util";
 import {
-  extractImageUrls,
   IMAGE_INDEX_VERSION,
+  mergeIndexedImageUrls,
 } from "../shared/imageUrls";
 import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
@@ -292,9 +292,11 @@ export class ColdMessageArchiveService {
       changed += await this.mutateMessages(
         messages.rows.map((message) => message.id),
         (record) => {
-          const hidden = new Set(record.hidden_image_urls);
-          const imageUrls = extractImageUrls(record.message_text)
-            .filter((url) => !hidden.has(url));
+          const imageUrls = mergeIndexedImageUrls(
+            record.message_text,
+            record.image_urls ?? [],
+            record.hidden_image_urls,
+          );
           const hasImages = imageUrls.length > 0;
           const galleryChannelId = hasImages ? record.channel_id : null;
           const isChanged =
@@ -351,9 +353,11 @@ export class ColdMessageArchiveService {
       for (const record of records) {
         checked += 1;
         const entry = catalogById.get(record.id);
-        const hidden = new Set(record.hidden_image_urls);
-        const expectedImages = extractImageUrls(record.message_text)
-          .filter((url) => !hidden.has(url));
+        const expectedImages = mergeIndexedImageUrls(
+          record.message_text,
+          record.image_urls ?? [],
+          record.hidden_image_urls,
+        );
         const catalogDeletedAt = entry?.deleted_at === null
           ? null
           : Number(entry?.deleted_at);

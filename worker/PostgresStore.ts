@@ -16,6 +16,10 @@ import {
 import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
 import { compileMessageSelectionSql } from "./messageSearchSql";
+import {
+  RemoteImageDetector,
+  type RemoteImageDetectorLike,
+} from "./RemoteImageDetector";
 import type { FollowedChannel, ResolvedChannel, TwitchChatMessage } from "./types";
 
 const twitchLoginPattern = /^[a-z0-9_]{1,25}$/;
@@ -78,6 +82,7 @@ export class PostgresStore implements ChatRepository {
     private readonly database: PostgresDatabase,
     private readonly logger: Logger,
     coldArchive?: ColdMessageArchiveService,
+    private readonly remoteImageDetector: RemoteImageDetectorLike = new RemoteImageDetector(),
   ) {
     this.coldArchive = coldArchive ?? new ColdMessageArchiveService(database, logger);
   }
@@ -157,6 +162,7 @@ export class PostgresStore implements ChatRepository {
 
   async insertMessage(channel: ResolvedChannel, message: TwitchChatMessage) {
     const imageUrls = extractImageUrls(message.messageText);
+    let insertedMessageId: string | undefined;
     const now = Date.now();
     const timestamp = message.messageTimestamp.getTime();
     const client = await this.database.pool.connect();
@@ -202,6 +208,7 @@ export class PostgresStore implements ChatRepository {
         this.logger.debug({ messageId: message.messageId }, "Ignored duplicate chat message");
         return;
       }
+      insertedMessageId = result.rows[0].id;
       await client.query(`
         INSERT INTO chat_raw_events (
           external_message_id, event_notification_id, channel_id,
@@ -227,6 +234,50 @@ export class PostgresStore implements ChatRepository {
       throw error;
     } finally {
       client.release();
+    }
+    if (insertedMessageId) {
+      void this.indexRemoteImages(
+        insertedMessageId,
+        channel.storageId,
+        message.messageText,
+        imageUrls,
+      );
+    }
+  }
+
+  private async indexRemoteImages(
+    messageId: string,
+    channelId: string,
+    messageText: string,
+    knownImageUrls: readonly string[],
+  ) {
+    try {
+      const detectedUrls = await this.remoteImageDetector.detectImageUrls(
+        messageText,
+        knownImageUrls,
+      );
+      for (const url of detectedUrls) {
+        await this.database.query(`
+          UPDATE chat_messages
+          SET image_urls = COALESCE(image_urls, '[]'::jsonb) || jsonb_build_array($2::text),
+              has_images = true,
+              gallery_channel_id = $3
+          WHERE id = $1 AND deleted_at IS NULL
+            AND NOT (COALESCE(image_urls, '[]'::jsonb) ? $2::text)
+            AND NOT (COALESCE(hidden_image_urls, '[]'::jsonb) ? $2::text)
+        `, [messageId, url, channelId]);
+      }
+      if (detectedUrls.length > 0) {
+        this.logger.debug(
+          { messageId, imageUrls: detectedUrls },
+          "Automatically indexed extensionless image links",
+        );
+      }
+    } catch (error) {
+      this.logger.debug(
+        { err: error, messageId },
+        "Could not inspect remote links for images",
+      );
     }
   }
 

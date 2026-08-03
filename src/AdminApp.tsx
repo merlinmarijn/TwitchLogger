@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { workerUrl } from "./runtimeConfig";
 import "./admin.css";
 
@@ -232,21 +232,35 @@ function LoginScreen({ totpEnabled, onComplete }: { totpEnabled: boolean; onComp
   const [value, setValue] = useState("");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
+  const authenticate = async (credential: string) => {
+    if (submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     setError(undefined);
     try {
       await adminFetch("/auth/login", {
         method: "POST",
-        body: mode === "password" ? { password: value } : { code: value },
+        body: mode === "password" ? { password: credential } : { code: credential },
       });
       onComplete();
     } catch (cause) {
       setError(errorMessage(cause));
       setBusy(false);
+      submitting.current = false;
     }
+  };
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    void authenticate(value);
+  };
+
+  const updateValue = (nextValue: string) => {
+    const normalizedValue = mode === "totp" ? nextValue.replace(/\D/g, "").slice(0, 6) : nextValue;
+    setValue(normalizedValue);
+    if (mode === "totp" && normalizedValue.length === 6) void authenticate(normalizedValue);
   };
 
   return (
@@ -274,7 +288,7 @@ function LoginScreen({ totpEnabled, onComplete }: { totpEnabled: boolean; onComp
             className={mode === "totp" ? "code-input" : undefined}
             inputMode={mode === "totp" ? "numeric" : undefined}
             maxLength={mode === "totp" ? 6 : 128}
-            onChange={(event) => setValue(mode === "totp" ? event.target.value.replace(/\D/g, "") : event.target.value)}
+            onChange={(event) => updateValue(event.target.value)}
             pattern={mode === "totp" ? "[0-9]{6}" : undefined}
             required
             type={mode === "totp" ? "text" : "password"}

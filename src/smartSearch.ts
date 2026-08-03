@@ -37,14 +37,14 @@ interface BuildSuggestionOptions {
   channels: Channel[];
 }
 
-const roleOptions = [
+export const SMART_SEARCH_ROLE_OPTIONS = [
   { value: "broadcaster", label: "Broadcaster" },
   { value: "moderator", label: "Moderator" },
   { value: "subscriber", label: "Subscriber" },
   { value: "vip", label: "VIP" },
 ] as const;
 
-const badgeOptions = [
+export const SMART_SEARCH_BADGE_OPTIONS = [
   { value: "broadcaster", label: "Broadcaster badge" },
   { value: "moderator", label: "Moderator badge" },
   { value: "vip", label: "VIP badge" },
@@ -56,7 +56,7 @@ const badgeOptions = [
   { value: "turbo", label: "Turbo badge" },
 ] as const;
 
-const messageTypeOptions = [
+export const SMART_SEARCH_MESSAGE_TYPE_OPTIONS = [
   { value: "text", label: "Normal message" },
   { value: "channel_points_highlighted", label: "Channel points highlight" },
   { value: "channel_points_sub_only", label: "Channel points sub-only" },
@@ -192,7 +192,7 @@ export function buildSmartSearchSuggestions({
     });
   }
 
-  for (const role of roleOptions.filter((option) =>
+  for (const role of SMART_SEARCH_ROLE_OPTIONS.filter((option) =>
     `${option.label} ${option.value}`.toLowerCase().includes(normalized))) {
     suggestions.push({
       id: `role:${role.value}`,
@@ -209,7 +209,7 @@ export function buildSmartSearchSuggestions({
     });
   }
 
-  const matchingBadges = badgeOptions.filter((option) =>
+  const matchingBadges = SMART_SEARCH_BADGE_OPTIONS.filter((option) =>
     `${option.label} ${option.value}`.toLowerCase().includes(normalized));
   for (const badge of matchingBadges.slice(0, 4)) {
     suggestions.push({
@@ -241,7 +241,7 @@ export function buildSmartSearchSuggestions({
     );
   }
 
-  for (const messageType of messageTypeOptions.filter((option) =>
+  for (const messageType of SMART_SEARCH_MESSAGE_TYPE_OPTIONS.filter((option) =>
     `${option.label} ${option.value}`.toLowerCase().includes(normalized)).slice(0, 4)) {
     suggestions.push({
       id: `message-type:${messageType.value}`,

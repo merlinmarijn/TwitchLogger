@@ -78,7 +78,8 @@ h2 { font-size: 18px; }
 .search-group { position: relative; min-width: min(460px, 48vw); display: grid; gap: 3px; }
 .search-field { min-width: 0; width: 100%; height: 36px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 7px; padding: 0 6px 0 9px; background: var(--surface-2); transition: border-color 160ms ease, background-color 160ms ease; }
 .search-field:focus-within { border-color: #7957ad; background: #242429; }
-.search-field .search-icon { color: var(--muted); }
+.search-field .search-icon { flex: none; width: 24px; height: 26px; display: grid; place-items: center; margin-left: -5px; border: 0; border-radius: 5px; padding: 0; background: transparent; color: var(--muted); cursor: default; }
+.search-field .search-icon:hover, .search-field .search-icon.active { background: #35353b; color: #efeff1; cursor: pointer; }
 .search-token-track { min-width: 0; flex: 1; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 .search-token-track::-webkit-scrollbar { display: none; }
 .search-field input { min-width: 130px; width: auto; flex: 1; border: 0; outline: 0; background: transparent; color: inherit; font-size: 12px; }
@@ -92,6 +93,8 @@ h2 { font-size: 18px; }
 .search-token > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-token button { width: 21px; height: 21px; border: 0; border-radius: 4px; padding: 0; background: transparent; color: #bdaace; cursor: pointer; }
 .search-token button:hover { background: #493a59; color: #fff; }
+.search-token-draft { flex: none; height: 24px; display: inline-flex; align-items: center; border: 1px dashed #6d548f; border-radius: 5px; padding: 0 7px; background: #30283b; color: #eadcff; font-size: 10px; font-weight: 750; white-space: nowrap; }
+.search-token-draft.sender { border-color: #50748b; background: #20323e; color: #c4e7ff; }
 .search-token.sender { border-color: #456276; background: #20323e; color: #c4e7ff; }
 .search-token.channel { border-color: #554c83; background: #292642; color: #ded8ff; }
 .search-token.role, .search-token.badge { border-color: #665739; background: #3a311f; color: #f3d89b; }
@@ -115,6 +118,36 @@ h2 { font-size: 18px; }
 .search-suggestion-copy small { color: #8f8f99; font-size: 9px; }
 .search-suggestion-count { color: #777782; font-size: 9px; font-variant-numeric: tabular-nums; }
 .search-suggestion-action { color: #83d7ad; font-size: 9px; font-weight: 750; white-space: nowrap; }
+.search-filter-menu { position: absolute; z-index: 12; top: 39px; left: 0; width: min(520px, calc(100vw - 32px)); max-height: min(650px, calc(100vh - 150px)); overflow-y: auto; border: 1px solid #45454d; border-radius: 9px; background: #18181b; box-shadow: 0 18px 48px #000b; }
+.search-filter-menu-header { position: sticky; z-index: 1; top: 0; min-height: 54px; display: grid; grid-template-columns: 30px minmax(0, 1fr) 30px; align-items: center; gap: 8px; border-bottom: 1px solid #303036; padding: 7px 9px; background: #1d1d21; }
+.search-filter-menu-header > span:nth-child(2) { min-width: 0; display: grid; gap: 2px; }
+.search-filter-menu-header strong { color: #f2f2f4; font-size: 12px; }
+.search-filter-menu-header small { color: #91919b; font-size: 9px; }
+.search-filter-menu-mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: #30283b; color: #d8c0ff; }
+.search-filter-back, .search-filter-close { width: 28px; height: 28px; border: 0; border-radius: 6px; padding: 0; background: transparent; color: #aaaab3; cursor: pointer; }
+.search-filter-back:hover, .search-filter-close:hover { background: #35353b; color: #fff; }
+.search-filter-close { font-size: 18px; }
+.search-filter-catalog { padding: 5px; }
+.search-filter-section + .search-filter-section { border-top: 1px solid #29292e; margin-top: 4px; padding-top: 4px; }
+.search-filter-section-label { display: block; padding: 6px 7px 3px; color: #85858f; font-size: 8px; font-weight: 850; letter-spacing: .11em; text-transform: uppercase; }
+.search-filter-catalog-row { display: grid; grid-template-columns: minmax(0, 1fr) 70px; gap: 3px; padding: 2px 0; }
+.search-filter-catalog-main, .search-filter-catalog-link, .search-filter-value-row > button:first-child { min-width: 0; min-height: 42px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid transparent; border-radius: 6px; padding: 5px 7px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.search-filter-catalog-main:hover, .search-filter-catalog-link:hover, .search-filter-value-row > button:first-child:hover { border-color: #4d3d64; background: #28232f; }
+.search-filter-marker { width: 30px; min-height: 24px; display: grid; place-items: center; border-radius: 5px; background: #303037; color: #c7c7cf; font-size: 9px; font-weight: 850; }
+.search-filter-copy { min-width: 0; display: grid; gap: 2px; }
+.search-filter-copy strong, .search-filter-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-filter-copy strong { color: #efeff1; font-size: 11px; }
+.search-filter-copy small { color: #8f8f99; font-size: 9px; }
+.search-filter-add { color: #95deb9; font-size: 9px; font-weight: 750; }
+.search-filter-catalog-exclude, .search-filter-value-exclude { border: 1px solid transparent; border-radius: 6px; background: transparent; color: #aaaab3; font-size: 9px; font-weight: 750; cursor: pointer; }
+.search-filter-catalog-exclude:hover, .search-filter-value-exclude:hover { border-color: #87404a; background: #361d2180; color: #ffabb3; }
+.search-filter-catalog-link { width: 100%; grid-template-columns: 34px minmax(0, 1fr) 18px; margin-block: 2px; }
+.search-filter-chevron { color: #85858f; font-size: 20px; font-weight: 300; }
+.search-filter-tip { margin: 6px 7px 4px; color: #777782; font-size: 9px; }
+.search-filter-values { display: grid; gap: 2px; padding: 5px; }
+.search-filter-value-row { display: grid; grid-template-columns: minmax(0, 1fr) 70px; gap: 3px; }
+.search-filter-value-row > button:first-child { grid-template-columns: minmax(0, 1fr) auto; }
+.search-filter-empty { padding: 22px 14px; color: #91919b; font-size: 11px; text-align: center; }
 .feed-wrap { position: relative; min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .message-feed { position: relative; min-height: 0; flex: 1; overflow-y: auto; padding: 8px 14px 24px; }
 .history-loader { min-height: 1px; display: flex; align-items: center; justify-content: center; padding: 4px 0; color: var(--muted); font-size: 10px; }

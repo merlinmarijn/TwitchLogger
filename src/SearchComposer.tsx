@@ -16,6 +16,7 @@ import { useQuery } from "./postgresReact";
 import {
   buildSmartSearchSuggestions,
   createSmartSearchToken,
+  guidedSmartSearchSuggestions,
   isSmartSearchPending,
   SMART_SEARCH_BADGE_OPTIONS,
   SMART_SEARCH_MESSAGE_TYPE_OPTIONS,
@@ -68,6 +69,7 @@ export default function SearchComposer({
   const [valueFilterDraft, setValueFilterDraft] = useState<ValueFilterDraft>();
   const [activeIndex, setActiveIndex] = useState(0);
   const [activeSide, setActiveSide] = useState<"filter" | "exclude">("filter");
+  const isSenderValueDraft = valueFilterDraft?.field === "sender";
   const inputId = useId();
   const listboxId = useId();
   const filterMenuId = useId();
@@ -100,8 +102,12 @@ export default function SearchComposer({
     }),
     [channelId, channels, draft, serverSuggestions, trimmedSuggestionText],
   );
-  const visibleSuggestions = !valueFilterDraft && open && draft.trim().length > 0
-    ? suggestions
+  const availableSuggestions = useMemo(
+    () => guidedSmartSearchSuggestions(suggestions, valueFilterDraft?.field),
+    [suggestions, valueFilterDraft?.field],
+  );
+  const visibleSuggestions = open && draft.trim().length > 0
+    ? availableSuggestions
     : [];
   const safeActiveIndex = visibleSuggestions.length > 0
     ? Math.min(activeIndex, visibleSuggestions.length - 1)
@@ -116,6 +122,14 @@ export default function SearchComposer({
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timeout);
   }, [draft, onChange, suggestionText, value, valueFilterDraft]);
+
+  useEffect(() => {
+    if (!isSenderValueDraft || draft.trim() === suggestionText) return;
+    const timeout = window.setTimeout(() => {
+      setSuggestionText(draft.trim());
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [draft, isSenderValueDraft, suggestionText]);
 
   useEffect(() => {
     const focusSearch = (event: globalThis.KeyboardEvent) => {
@@ -153,6 +167,7 @@ export default function SearchComposer({
     setFilterMenuOpen(false);
     setFilterMenuView("all");
     setOpen(false);
+    setActiveSide(filterDraft.operator === "notEquals" ? "exclude" : "filter");
     window.requestAnimationFrame(() => inputRef.current?.focus());
   };
 
@@ -181,16 +196,6 @@ export default function SearchComposer({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter" && valueFilterDraft && draft.trim()) {
-      event.preventDefault();
-      addSuggestion(createSmartSearchToken(
-        valueFilterDraft.field,
-        valueFilterDraft.operator,
-        draft,
-        `${valueFilterDraft.label}: ${draft.trim()}`,
-      ));
-      return;
-    }
     if (event.key === "ArrowDown" && visibleSuggestions.length > 0) {
       event.preventDefault();
       setActiveIndex((current) => (current + 1) % visibleSuggestions.length);
@@ -216,6 +221,16 @@ export default function SearchComposer({
       event.preventDefault();
       const suggestion = visibleSuggestions[safeActiveIndex];
       addSuggestion(activeSide === "filter" ? suggestion.token : suggestion.excludeToken);
+      return;
+    }
+    if (event.key === "Enter" && valueFilterDraft && draft.trim()) {
+      event.preventDefault();
+      addSuggestion(createSmartSearchToken(
+        valueFilterDraft.field,
+        valueFilterDraft.operator,
+        draft,
+        `${valueFilterDraft.label}: ${draft.trim()}`,
+      ));
       return;
     }
     if (event.key === "Backspace" && !draft && tokens.length > 0) {
@@ -296,12 +311,12 @@ export default function SearchComposer({
             maxLength={200}
             onChange={(event) => {
               setDraft(event.target.value);
-              if (!valueFilterDraft) setOpen(true);
+              if (!valueFilterDraft || isSenderValueDraft) setOpen(true);
               setActiveIndex(0);
-              setActiveSide("filter");
+              setActiveSide(valueFilterDraft?.operator === "notEquals" ? "exclude" : "filter");
             }}
             onFocus={() => {
-              if (!valueFilterDraft) setOpen(true);
+              if (!valueFilterDraft || isSenderValueDraft) setOpen(true);
             }}
             onKeyDown={handleKeyDown}
             placeholder={valueFilterDraft?.placeholder ?? (
@@ -341,7 +356,13 @@ export default function SearchComposer({
       <div className="search-meta">
         <span aria-live="polite" className="search-status">
           {valueFilterDraft
-            ? "Press Enter to apply this filter"
+            ? isSenderValueDraft
+              ? draft.trim().length < MIN_USER_SUGGESTION_LENGTH
+                ? `Type ${MIN_USER_SUGGESTION_LENGTH} characters to find matching senders`
+                : visibleSuggestions.length > 0
+                  ? `${visibleSuggestions.length} matching ${visibleSuggestions.length === 1 ? "sender" : "senders"} · choose one or press Enter`
+                  : "Choose a matching sender, or press Enter to use the exact name"
+              : "Press Enter to apply this filter"
             : pending
               ? "Searching…"
               : value || tokens.length > 0

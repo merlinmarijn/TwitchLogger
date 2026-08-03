@@ -51,6 +51,17 @@ export function isSmartSearchPending({
   return !editingFilterValue && (searching || draft !== value);
 }
 
+export function guidedSmartSearchSuggestions(
+  suggestions: SmartSearchSuggestion[],
+  field?: FilterField,
+) {
+  if (!field) return suggestions;
+  if (field === "sender") {
+    return suggestions.filter((suggestion) => suggestion.group === "People");
+  }
+  return [];
+}
+
 export const SMART_SEARCH_ROLE_OPTIONS = [
   { value: "broadcaster", label: "Broadcaster" },
   { value: "moderator", label: "Moderator" },

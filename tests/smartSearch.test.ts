@@ -4,6 +4,7 @@ import {
   buildSmartSearchFilter,
   buildSmartSearchSuggestions,
   createSmartSearchToken,
+  guidedSmartSearchSuggestions,
   isSmartSearchPending,
 } from "../src/smartSearch";
 
@@ -30,6 +31,29 @@ describe("smart search", () => {
       searching: false,
       value: "",
     })).toBe(true);
+  });
+
+  it("keeps username matches available while filling a guided sender filter", () => {
+    const suggestions = buildSmartSearchSuggestions({
+      text: "ratchet",
+      users: [
+        { username: "ratchet", displayName: "Ratchet", messageCount: 42 },
+        { username: "ratchet_live", displayName: "Ratchet Live", messageCount: 12 },
+      ],
+      channels,
+    });
+
+    expect(guidedSmartSearchSuggestions(suggestions, "sender")).toEqual([
+      expect.objectContaining({
+        group: "People",
+        token: expect.objectContaining({ field: "sender", value: "ratchet" }),
+      }),
+      expect.objectContaining({
+        group: "People",
+        token: expect.objectContaining({ field: "sender", value: "ratchet_live" }),
+      }),
+    ]);
+    expect(guidedSmartSearchSuggestions(suggestions, "message")).toEqual([]);
   });
 
   it("turns chained tokens into one all/any message filter", () => {

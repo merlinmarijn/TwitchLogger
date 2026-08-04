@@ -47,6 +47,13 @@ import {
   type MessageFilter,
 } from "./filters";
 import { workerUrl } from "./runtimeConfig";
+import type { GameId, ScorePeriod } from "./gameScores";
+import {
+  buildPageUrl,
+  mergeUrlFilters,
+  parsePageUrl,
+  type PageUrlState,
+} from "./pageUrlState";
 import SearchComposer from "./SearchComposer";
 import {
   buildSmartSearchFilter,
@@ -114,17 +121,25 @@ function tabInput(tab: ChatViewTab) {
 }
 
 export default function App() {
-  const channels = useQuery(api.channels.list, {}) ?? [];
+  const channelResults = useQuery(api.channels.list, {});
+  const channels = useMemo(() => channelResults ?? [], [channelResults]);
   const serverChatTabs = useQuery(api.chatTabs.list, {});
-  const [selectedChannelId, setSelectedChannelId] = useState<string>();
+  const [initialPageState] = useState(() => parsePageUrl(window.location.search));
+  const [selectedChannelMarker, setSelectedChannelMarker] = useState<string | undefined>(
+    initialPageState.channel,
+  );
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
-  const [querySearch, setQuerySearch] = useState("");
-  const [searchTokens, setSearchTokens] = useState<SmartSearchToken[]>([]);
-  const [searchMatch, setSearchMatch] = useState<FilterMatchMode>("all");
-  const [filterState, setFilterState] = useState<FilterState>(loadSavedFilterState);
+  const [querySearch, setQuerySearch] = useState(initialPageState.quickSearch);
+  const [searchTokens, setSearchTokens] = useState<SmartSearchToken[]>(
+    initialPageState.searchTokens,
+  );
+  const [searchMatch, setSearchMatch] = useState<FilterMatchMode>(initialPageState.searchMatch);
+  const [filterState, setFilterState] = useState<FilterState>(() =>
+    mergeUrlFilters(loadSavedFilterState(), initialPageState.filters),
+  );
   const [legacyChatTabs, setLegacyChatTabs] = useState<ChatViewTab[]>(loadSavedChatTabs);
   const chatTabMigrationStartedRef = useRef(false);
-  const [activeChatTabId, setActiveChatTabId] = useState("all");
+  const [activeChatTabId, setActiveChatTabId] = useState(initialPageState.tabId ?? "all");
   const [editingChatTab, setEditingChatTab] = useState<ChatViewTab | "new">();
   const [paused, setPaused] = useState(false);
   const [pausedMessages, setPausedMessages] = useState<ChatMessage[]>([]);
@@ -137,11 +152,16 @@ export default function App() {
   const [userSettings, setUserSettings] = useState<UserSettings>(loadSavedUserSettings);
   const [notice, setNotice] = useState<string>();
   const [selectionMode, setSelectionMode] = useState(false);
+  const [scoreGame, setScoreGame] = useState<GameId>(initialPageState.scoreGame ?? "rngdle");
+  const [scorePeriod, setScorePeriod] = useState<ScorePeriod>(
+    initialPageState.scorePeriod ?? "all",
+  );
   const chatTabs = serverChatTabs === undefined ||
       (serverChatTabs.length === 0 && legacyChatTabs.length > 0)
     ? legacyChatTabs
     : serverChatTabs;
-  const selectedChannel = channels.find((channel) => channel._id === selectedChannelId);
+  const selectedChannel = resolveChannel(channels, selectedChannelMarker);
+  const selectedChannelId = selectedChannel?._id;
   const activeChatTab = chatTabs.find((tab) => tab.id === activeChatTabId);
   const activeTabIndexRevision = activeChatTab?.indexStatus === "ready"
     ? activeChatTab.indexedRevision ?? 0
@@ -289,6 +309,66 @@ export default function App() {
       window.removeEventListener("focus", loadAdminAccess);
     };
   }, [loadAdminAccess]);
+
+  const urlStateReady = (!initialPageState.channel || channelResults !== undefined) &&
+    (!initialPageState.tabId || serverChatTabs !== undefined ||
+      chatTabs.some((tab) => tab.id === initialPageState.tabId));
+
+  const applyPageUrlState = useCallback((pageState: PageUrlState) => {
+    setSelectedChannelMarker(pageState.channel);
+    setActiveChatTabId(
+      pageState.tabId && chatTabs.some((tab) => tab.id === pageState.tabId)
+        ? pageState.tabId
+        : "all",
+    );
+    setQuerySearch(pageState.quickSearch);
+    setSearchTokens(pageState.searchTokens);
+    setSearchMatch(pageState.searchMatch);
+    setFilterState((current) => mergeUrlFilters(current, pageState.filters));
+    setScoreGame(pageState.scoreGame ?? "rngdle");
+    setScorePeriod(pageState.scorePeriod ?? "all");
+    setPaused(false);
+    setPausedMessages([]);
+    setPausedMessageKey("");
+    setClearBefore(0);
+    setSelectionMode(false);
+    setFilterDialogOpen(false);
+    setEditingChatTab(undefined);
+  }, [chatTabs]);
+
+  useEffect(() => {
+    if (!urlStateReady) return;
+    const restoreFromUrl = () => applyPageUrlState(parsePageUrl(window.location.search));
+    window.addEventListener("popstate", restoreFromUrl);
+    return () => window.removeEventListener("popstate", restoreFromUrl);
+  }, [applyPageUrlState, urlStateReady]);
+
+  useEffect(() => {
+    if (!urlStateReady) return;
+    const nextUrl = buildPageUrl(window.location.href, {
+      channel: selectedChannel?.username,
+      tabId: activeChatTab?.id,
+      quickSearch: querySearch,
+      searchTokens,
+      searchMatch,
+      filters: activeFilters,
+      scoreGame: scoresActive ? scoreGame : undefined,
+      scorePeriod: scoresActive ? scorePeriod : undefined,
+    });
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) window.history.replaceState(window.history.state, "", nextUrl);
+  }, [
+    activeChatTab,
+    activeFilters,
+    querySearch,
+    scoreGame,
+    scorePeriod,
+    scoresActive,
+    searchMatch,
+    searchTokens,
+    selectedChannel,
+    urlStateReady,
+  ]);
 
   useEffect(() => {
     if (isAdmin) void ensureSeeded({}).catch((error: Error) => setNotice(error.message));
@@ -451,7 +531,7 @@ export default function App() {
             channels={channels}
             selectedChannelId={selectedChannelId}
             isAdmin={isAdmin}
-            onSelect={setSelectedChannelId}
+            onSelect={setSelectedChannelMarker}
             onAdd={() => setDialogOpen(true)}
             onError={setNotice}
             onOpenSettings={() => setSettingsDialogOpen(true)}
@@ -521,14 +601,18 @@ export default function App() {
               <Suspense fallback={<div className="empty">Opening the score room…</div>}>
                 <GameScoreRoom
                   error={gameScoresQuery.error}
+                  game={scoreGame}
                   historyEnabled={clearBefore === 0}
                   isAdmin={isAdmin}
                   key={messageFeedKey}
                   loadMore={gameScoresQuery.loadMore}
                   messages={sourceMessages}
+                  onGameChange={setScoreGame}
                   onDeleteMessage={(messageId) => deleteMessages([messageId])}
+                  onPeriodChange={setScorePeriod}
                   onRetry={gameScoresQuery.retry}
                   paused={paused}
+                  period={scorePeriod}
                   status={gameScoresQuery.status}
                 />
               </Suspense>
@@ -616,6 +700,16 @@ export default function App() {
         )}
       </div>
     </ErrorBoundary>
+  );
+}
+
+function resolveChannel(channels: Channel[], marker?: string) {
+  if (!marker) return undefined;
+  const normalized = marker.toLowerCase();
+  return channels.find((channel) =>
+    channel._id === marker ||
+    channel.externalChannelId === marker ||
+    channel.username.toLowerCase() === normalized
   );
 }
 

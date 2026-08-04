@@ -24,28 +24,34 @@ const periods: Array<{ id: ScorePeriod; name: string }> = [
 ];
 
 export default function GameScoreRoom({
+  game,
   messages,
   error,
   historyEnabled,
   isAdmin,
   loadMore,
+  onGameChange,
   onDeleteMessage,
+  onPeriodChange,
   onRetry,
   paused,
+  period,
   status,
 }: {
+  game: GameId;
   messages: ChatMessage[];
   error?: string;
   historyEnabled: boolean;
   isAdmin: boolean;
   loadMore: (numItems: number) => void;
+  onGameChange: (game: GameId) => void;
   onDeleteMessage: (messageId: string) => Promise<void>;
+  onPeriodChange: (period: ScorePeriod) => void;
   onRetry: () => void;
   paused: boolean;
+  period: ScorePeriod;
   status: PaginationStatus;
 }) {
-  const [game, setGame] = useState<GameId>("rngdle");
-  const [period, setPeriod] = useState<ScorePeriod>("all");
   const [deletingId, setDeletingId] = useState<string>();
   const [now, setNow] = useState(() => Date.now());
   const scores = useMemo(() => parseGameScores(messages), [messages]);
@@ -112,7 +118,7 @@ export default function GameScoreRoom({
                 aria-pressed={game === candidate.id}
                 className={game === candidate.id ? "selected" : ""}
                 key={candidate.id}
-                onClick={() => setGame(candidate.id)}
+                onClick={() => onGameChange(candidate.id)}
               >
                 <span>{candidate.shortName}</span>
                 <strong>{candidate.name}</strong>
@@ -126,7 +132,7 @@ export default function GameScoreRoom({
                 aria-pressed={period === candidate.id}
                 className={period === candidate.id ? "selected" : ""}
                 key={candidate.id}
-                onClick={() => setPeriod(candidate.id)}
+                onClick={() => onPeriodChange(candidate.id)}
               >
                 {candidate.name}
               </button>

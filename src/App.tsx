@@ -718,6 +718,20 @@ function resolveChannel(channels: Channel[], marker?: string) {
   );
 }
 
+const CHANNEL_STATUS_LABELS: Record<Channel["connectionStatus"], string> = {
+  connected: "Connected",
+  connecting: "Connecting",
+  disconnected: "Disconnected",
+  error: "Connection error",
+  authorization_required: "Authorization required",
+};
+
+function channelInitials(displayName: string) {
+  const words = displayName.trim().split(/[\s_-]+/).filter(Boolean);
+  if (words.length === 0) return "T";
+  return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+}
+
 function ChannelSidebar({
   channels,
   selectedChannelId,
@@ -740,92 +754,177 @@ function ChannelSidebar({
   const setLogging = useMutation(api.channels.setLogging);
   const reconnect = useMutation(api.channels.reconnect);
   const remove = useMutation(api.channels.remove);
+  const [channelQuery, setChannelQuery] = useState("");
+  const channelSearchRef = useRef<HTMLInputElement>(null);
+
+  const visibleChannels = useMemo(() => {
+    const query = channelQuery.trim().toLocaleLowerCase();
+    if (!query) return channels;
+    return channels.filter((channel) =>
+      channel.displayName.toLocaleLowerCase().includes(query) ||
+      channel.username.toLocaleLowerCase().includes(query)
+    );
+  }, [channelQuery, channels]);
+
+  useEffect(() => {
+    const handleCommandShortcut = (event: KeyboardEvent) => {
+      if (document.querySelector(".dialog-backdrop")) return;
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "k") {
+        event.preventDefault();
+        channelSearchRef.current?.focus();
+        channelSearchRef.current?.select();
+        return;
+      }
+
+      if (event.ctrlKey || event.metaKey || event.altKey || event.repeat || !/^[0-9]$/.test(event.key)) {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+
+      const shortcut = Number(event.key);
+      if (shortcut === 0) {
+        event.preventDefault();
+        onSelect(undefined);
+        return;
+      }
+
+      const channel = channels[shortcut - 1];
+      if (!channel) return;
+      event.preventDefault();
+      onSelect(channel._id);
+    };
+
+    window.addEventListener("keydown", handleCommandShortcut);
+    return () => window.removeEventListener("keydown", handleCommandShortcut);
+  }, [channels, onSelect]);
 
   const run = (action: Promise<unknown>) => {
     void action.catch((error: Error) => onError(error.message));
   };
 
   return (
-    <aside className="sidebar channels-panel">
-      <div className="panel-heading">
-        <div>
-          <span className="eyebrow">Following</span>
-          <h2>Channels</h2>
+    <aside className="sidebar channels-panel command-sidebar">
+      <header className="command-sidebar-heading">
+        <span className="eyebrow">Channel command</span>
+        <h2>Jump to a feed</h2>
+        <p>Search by name or use a number key.</p>
+      </header>
+
+      <div className="channel-command-search">
+        <label htmlFor="channel-command-query">Find a channel</label>
+        <div className="channel-command-field">
+          <svg aria-hidden="true" viewBox="0 0 16 16">
+            <circle cx="7" cy="7" r="4.4" />
+            <path d="m10.4 10.4 3.1 3.1" />
+          </svg>
+          <input
+            id="channel-command-query"
+            ref={channelSearchRef}
+            type="search"
+            value={channelQuery}
+            onChange={(event) => setChannelQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              setChannelQuery("");
+              event.currentTarget.blur();
+            }}
+            placeholder="Name or username"
+            autoComplete="off"
+          />
+          {channelQuery ? (
+            <button type="button" onClick={() => setChannelQuery("")} aria-label="Clear channel search">×</button>
+          ) : (
+            <kbd>Ctrl K</kbd>
+          )}
         </div>
-        <span className="count">{channels.length}</span>
       </div>
+
+      <div className="command-group-heading"><span>Feeds</span><span>Shortcut</span></div>
       <button
-        className={`channel-card all ${selectedChannelId ? "" : "selected"}`}
+        className={`command-feed-item all ${selectedChannelId ? "" : "selected"}`}
         onClick={() => onSelect(undefined)}
+        aria-pressed={!selectedChannelId}
       >
-        <span className="platform-icon">∞</span>
-        <span><strong>All channels</strong><small>Combined live feed</small></span>
+        <span className="command-channel-avatar all">∞</span>
+        <span className="command-channel-copy"><strong>All channels</strong><small>Combined live feed</small></span>
+        <kbd>0</kbd>
       </button>
-      <div className="channel-list">
-        {channels.map((channel) => (
-          <div
-            key={channel._id}
-            className={`channel-card ${selectedChannelId === channel._id ? "selected" : ""}`}
-          >
-            <button className="channel-main" onClick={() => onSelect(channel._id)}>
-              <span className="platform-icon twitch">T</span>
-              <span className="channel-copy">
-                <strong>{channel.displayName}</strong>
-                <small>@{channel.username}</small>
-              </span>
-              <span
-                className={`status-dot ${channel.connectionStatus}`}
-                title={channel.connectionError ?? channel.connectionStatus}
-              />
-            </button>
-            {isAdmin && <div className="channel-actions">
+
+      <div className="command-group-heading channels"><span>Channels</span><span>{visibleChannels.length === channels.length ? channels.length : `${visibleChannels.length} / ${channels.length}`}</span></div>
+      <div className="command-channel-list">
+        {visibleChannels.map((channel) => {
+          const shortcut = channels.indexOf(channel) + 1;
+          const selected = selectedChannelId === channel._id;
+          return (
+            <div key={channel._id} className={`command-channel-item ${selected ? "selected" : ""}`}>
               <button
-                onClick={() =>
-                  run(setLogging({ id: channel._id, enabled: !channel.loggingEnabled }))
-                }
+                className="command-channel-main"
+                onClick={() => onSelect(channel._id)}
+                aria-pressed={selected}
               >
-                {channel.loggingEnabled ? "Pause" : "Log"}
+                <span className="command-channel-avatar">{channelInitials(channel.displayName)}</span>
+                <span className="command-channel-copy">
+                  <strong>{channel.displayName}</strong>
+                  <small>
+                    {CHANNEL_STATUS_LABELS[channel.connectionStatus]}
+                    <span aria-hidden="true"> · </span>
+                    {channel.loggingEnabled ? "Logging" : "Paused"}
+                  </small>
+                </span>
+                <span className="command-channel-trailing">
+                  <span
+                    className={`status-dot ${channel.connectionStatus}`}
+                    title={channel.connectionError ?? CHANNEL_STATUS_LABELS[channel.connectionStatus]}
+                  />
+                  {shortcut <= 9 ? <kbd>{shortcut}</kbd> : null}
+                </span>
               </button>
-              {(channel.connectionStatus === "error" ||
-                channel.connectionStatus === "disconnected") && (
-                <button onClick={() => run(reconnect({ id: channel._id }))}>Reconnect</button>
-              )}
-              <button
-                className="danger"
-                onClick={() =>
-                  run(remove({ id: channel._id }).then(() => {
-                    if (selectedChannelId === channel._id) onSelect(undefined);
-                  }))
-                }
-              >
-                Remove
-              </button>
-            </div>}
-          </div>
-        ))}
+              {isAdmin && selected ? (
+                <div className="command-channel-actions">
+                  <button onClick={() => run(setLogging({ id: channel._id, enabled: !channel.loggingEnabled }))}>
+                    {channel.loggingEnabled ? "Pause logging" : "Start logging"}
+                  </button>
+                  {(channel.connectionStatus === "error" || channel.connectionStatus === "disconnected") ? (
+                    <button onClick={() => run(reconnect({ id: channel._id }))}>Reconnect</button>
+                  ) : null}
+                  <button
+                    className="danger"
+                    onClick={() => run(remove({ id: channel._id }).then(() => {
+                      if (selectedChannelId === channel._id) onSelect(undefined);
+                    }))}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        {channels.length === 0 ? (
+          <div className="command-channel-empty"><strong>No channels yet</strong><span>{isAdmin ? "Add one to begin logging." : "An admin can add the first channel."}</span></div>
+        ) : visibleChannels.length === 0 ? (
+          <div className="command-channel-empty"><strong>No matching channels</strong><span>Try another name or username.</span><button type="button" onClick={() => setChannelQuery("")}>Clear search</button></div>
+        ) : null}
       </div>
-      {channels.length === 0 && (
-        <div className="empty compact"><strong>No channels yet</strong><span>{isAdmin ? "Add one to begin logging." : "An admin can add the first channel."}</span></div>
-      )}
-      <div className="sidebar-footer">
-        <button className="settings-button feedback-button" onClick={onOpenFeedback} type="button">
-          <svg aria-hidden="true" viewBox="0 0 16 16">
-            <path d="M2.2 2.5h11.6v8.1H7l-3.7 2.9v-2.9H2.2V2.5Zm3 3.1h5.6M5.2 7.9h3.6" />
-          </svg>
-          Feedback &amp; issues
+
+      <footer className="command-sidebar-footer">
+        {isAdmin ? (
+          <button className="command-footer-action primary" onClick={onAdd} type="button"><span>+</span>Add</button>
+        ) : (
+          <a className="command-footer-action primary" href="/admin">Admin</a>
+        )}
+        <button className="command-footer-action" onClick={onOpenFeedback} type="button">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M2.2 2.5h11.6v8.1H7l-3.7 2.9v-2.9H2.2V2.5Zm3 3.1h5.6M5.2 7.9h3.6" /></svg>
+          Feedback
         </button>
-        <button className="settings-button" onClick={onOpenSettings} type="button">
-          <svg aria-hidden="true" viewBox="0 0 16 16">
-            <path d="M6.6 1.8h2.8l.4 1.6c.3.1.6.3.9.5l1.6-.5 1.4 2.4-1.2 1.1v1.2l1.2 1.1-1.4 2.4-1.6-.5-.9.5-.4 1.6H6.6l-.4-1.6-.9-.5-1.6.5-1.4-2.4 1.2-1.1V6.9L2.3 5.8l1.4-2.4 1.6.5.9-.5.4-1.6ZM8 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z" />
-          </svg>
+        <button className="command-footer-action" onClick={onOpenSettings} type="button">
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M6.6 1.8h2.8l.4 1.6c.3.1.6.3.9.5l1.6-.5 1.4 2.4-1.2 1.1v1.2l1.2 1.1-1.4 2.4-1.6-.5-.9.5-.4 1.6H6.6l-.4-1.6-.9-.5-1.6.5-1.4-2.4 1.2-1.1V6.9L2.3 5.8l1.4-2.4 1.6.5.9-.5.4-1.6ZM8 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z" /></svg>
           Settings
         </button>
-        {isAdmin ? (
-          <button className="button add-channel" onClick={onAdd}>+ Add channel</button>
-        ) : (
-          <a className="button add-channel" href="/admin">Admin sign in</a>
-        )}
-      </div>
+      </footer>
     </aside>
   );
 }

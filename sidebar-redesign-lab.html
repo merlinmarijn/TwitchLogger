@@ -1,0 +1,945 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>TwitchLogger — Sidebar Design Lab</title>
+  <style>
+    :root {
+      --ink: oklch(23% 0.025 277);
+      --muted: oklch(50% 0.025 277);
+      --paper: oklch(97% 0.012 87);
+      --paper-2: oklch(93% 0.018 87);
+      --line: oklch(84% 0.022 82);
+      --violet: oklch(55% 0.22 295);
+      --green: oklch(70% 0.16 160);
+      --red: oklch(62% 0.19 25);
+      --amber: oklch(78% 0.14 80);
+      --ease: cubic-bezier(.22, 1, .36, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-height: 100%; background: var(--paper-2); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 8%, oklch(96% .055 75), transparent 29rem),
+        linear-gradient(135deg, oklch(94% .018 70), oklch(92% .02 285));
+      font-family: "Aptos", "Trebuchet MS", sans-serif;
+      font-kerning: normal;
+    }
+    button, input { font: inherit; }
+    button { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, input:focus-visible {
+      outline: 3px solid oklch(65% .22 295);
+      outline-offset: 3px;
+    }
+    .skip-link {
+      position: fixed;
+      z-index: 99;
+      top: 8px;
+      left: 8px;
+      transform: translateY(-160%);
+      padding: 10px 14px;
+      background: var(--ink);
+      color: var(--paper);
+      text-decoration: none;
+    }
+    .skip-link:focus { transform: translateY(0); }
+
+    .lab-shell {
+      width: min(1540px, 100%);
+      min-height: 100vh;
+      margin: auto;
+      padding: clamp(18px, 3vw, 48px);
+    }
+    .lab-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 32px;
+      margin-bottom: 28px;
+    }
+    .kicker {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      color: oklch(43% .13 294);
+      font: 800 .72rem/1 "Bahnschrift", sans-serif;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .kicker::before { width: 28px; height: 2px; content: ""; background: currentColor; }
+    .lab-header h1 {
+      max-width: 840px;
+      margin: 0;
+      font: 500 clamp(2.15rem, 5vw, 4.9rem)/.94 Georgia, serif;
+      letter-spacing: -.055em;
+    }
+    .lab-header p {
+      max-width: 380px;
+      margin: 0 0 4px;
+      color: var(--muted);
+      font-size: .95rem;
+      line-height: 1.55;
+    }
+    .lab-header p strong { color: var(--ink); }
+
+    .concept-picker {
+      display: grid;
+      grid-template-columns: repeat(10, minmax(86px, 1fr));
+      gap: 2px;
+      margin-bottom: 14px;
+      border: 1px solid var(--line);
+      background: var(--line);
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+    .concept-tab {
+      min-width: 86px;
+      min-height: 70px;
+      display: grid;
+      align-content: center;
+      gap: 5px;
+      border: 0;
+      padding: 11px 12px;
+      color: var(--muted);
+      background: color-mix(in oklch, var(--paper) 96%, transparent);
+      text-align: left;
+      cursor: pointer;
+      transition: color 140ms var(--ease), background 140ms var(--ease);
+    }
+    .concept-tab:hover { color: var(--ink); background: oklch(99% .005 85); }
+    .concept-tab[aria-selected="true"] { color: oklch(98% .008 85); background: var(--ink); }
+    .concept-tab b {
+      font: 700 .66rem/1 "Bahnschrift", sans-serif;
+      letter-spacing: .08em;
+    }
+    .concept-tab span { font-size: .71rem; line-height: 1.1; white-space: nowrap; }
+
+    .stage {
+      position: relative;
+      min-height: 700px;
+      overflow: hidden;
+      border: 1px solid color-mix(in oklch, var(--ink) 18%, transparent);
+      background: oklch(18% .014 278);
+      box-shadow: 0 30px 80px oklch(26% .05 280 / .18);
+      container-type: inline-size;
+    }
+    .concept {
+      display: none;
+      min-height: 700px;
+      grid-template-rows: 58px minmax(0, 1fr);
+      animation: concept-in 500ms var(--ease) both;
+    }
+    .concept.is-active { display: grid; }
+    @keyframes concept-in {
+      from { opacity: 0; transform: translateY(12px) scale(.995); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .mock-topbar {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--mock-line);
+      color: var(--mock-ink);
+      background: var(--mock-top);
+    }
+    .mock-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .brand-glyph {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      flex: none;
+      color: var(--brand-glyph, oklch(98% .01 85));
+      background: var(--mock-accent);
+      font: 900 .82rem/1 "Bahnschrift", sans-serif;
+      transform: rotate(-3deg);
+    }
+    .mock-brand strong { display: block; font-size: .82rem; letter-spacing: -.01em; }
+    .mock-brand small { display: block; margin-top: 1px; color: var(--mock-muted); font-size: .61rem; }
+    .mock-status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--mock-muted);
+      font-size: .64rem;
+      white-space: nowrap;
+    }
+    .mock-status::before { width: 7px; height: 7px; border-radius: 50%; content: ""; background: var(--mock-live); }
+    .mock-body { min-height: 0; display: grid; grid-template-columns: var(--side-width, 300px) minmax(0, 1fr); }
+    .side-demo { min-height: 641px; overflow: hidden; color: var(--side-ink); background: var(--side-bg); }
+    .feed-ghost {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      color: var(--mock-ink);
+      background: var(--feed-bg);
+    }
+    .ghost-toolbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      border-bottom: 1px solid var(--mock-line);
+      padding: 0 24px;
+    }
+    .ghost-toolbar h2 { margin: 0; font: 700 1rem/1.1 "Aptos", sans-serif; }
+    .ghost-toolbar span { color: var(--mock-muted); font-size: .66rem; }
+    .ghost-search {
+      width: min(38%, 360px);
+      height: 30px;
+      border: 1px solid var(--mock-line);
+      background: var(--mock-soft);
+    }
+    .ghost-feed { display: grid; gap: 0; padding: 12px 24px; }
+    .ghost-message {
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr);
+      gap: 11px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--mock-line);
+    }
+    .ghost-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--mock-soft); }
+    .ghost-lines { display: grid; gap: 7px; align-content: center; }
+    .ghost-lines i { display: block; height: 7px; background: var(--mock-soft); }
+    .ghost-lines i:first-child { width: min(160px, 35%); background: var(--mock-medium); }
+    .ghost-lines i:last-child { width: min(540px, 82%); }
+    .concept-note {
+      position: absolute;
+      right: 18px;
+      bottom: 18px;
+      z-index: 4;
+      width: min(300px, calc(100% - 36px));
+      border: 1px solid var(--mock-line);
+      padding: 13px 15px;
+      color: var(--mock-ink);
+      background: var(--mock-top);
+      box-shadow: 0 12px 34px oklch(13% .02 280 / .18);
+    }
+    .concept-note b { display: block; margin-bottom: 3px; font: 800 .61rem/1 "Bahnschrift", sans-serif; letter-spacing: .1em; text-transform: uppercase; }
+    .concept-note span { color: var(--mock-muted); font-size: .68rem; line-height: 1.35; }
+
+    .status-pip { width: 7px; height: 7px; border-radius: 50%; background: var(--offline, oklch(55% .02 280)); }
+    .status-pip.live { background: var(--mock-live); }
+    .status-pip.warn { background: var(--amber); }
+    .status-pip.error { background: var(--red); }
+    .avatar {
+      display: grid;
+      place-items: center;
+      flex: none;
+      border-radius: 50%;
+      color: oklch(97% .01 80);
+      font: 800 .66rem/1 "Bahnschrift", sans-serif;
+      background: var(--avatar, oklch(48% .15 290));
+    }
+
+    /* 01 — SIGNAL STACK */
+    .signal {
+      --mock-ink: oklch(94% .015 290); --mock-muted: oklch(69% .025 290);
+      --mock-line: oklch(29% .025 290); --mock-top: oklch(17% .018 290);
+      --mock-soft: oklch(25% .024 290); --mock-medium: oklch(35% .04 290);
+      --mock-accent: oklch(61% .23 295); --mock-live: oklch(74% .18 158);
+      --feed-bg: oklch(14% .015 290); --side-bg: oklch(19% .02 290); --side-ink: var(--mock-ink);
+      --side-width: 310px;
+    }
+    .signal-side { display: flex; flex-direction: column; height: 100%; padding: 22px 15px 14px; border-right: 1px solid var(--mock-line); }
+    .signal-title { display: flex; align-items: end; justify-content: space-between; padding: 0 7px 18px; }
+    .signal-title span { color: var(--mock-muted); font: 700 .58rem/1 "Bahnschrift", sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+    .signal-title strong { display: block; margin-top: 5px; font: 600 1.55rem/1 Georgia, serif; }
+    .signal-count { font-size: .64rem; color: var(--mock-muted); }
+    .signal-all {
+      display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 10px;
+      border: 1px solid oklch(44% .08 294); padding: 11px; margin-bottom: 12px;
+      background: oklch(25% .045 294); cursor: pointer;
+    }
+    .signal-all .avatar { width: 36px; height: 36px; border-radius: 9px; background: var(--mock-accent); font-size: 1rem; }
+    .signal-all b, .signal-row b { display: block; font-size: .78rem; }
+    .signal-all small, .signal-row small { color: var(--mock-muted); font-size: .61rem; }
+    .signal-volume { display: flex; align-items: end; gap: 2px; height: 20px; }
+    .signal-volume i { width: 2px; height: var(--h); background: var(--mock-live); opacity: .8; }
+    .signal-list { display: grid; gap: 4px; }
+    .signal-row { border: 0; padding: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .signal-row-main { display: grid; grid-template-columns: 32px 1fr 8px; align-items: center; gap: 10px; padding: 9px 8px; }
+    .signal-row .avatar { width: 30px; height: 30px; }
+    .signal-row.is-selected { background: oklch(23% .025 290); }
+    .signal-row.is-selected .signal-row-main { box-shadow: inset 2px 0 var(--mock-accent); }
+    .signal-detail { display: none; grid-template-columns: 1fr 1fr auto; gap: 4px; padding: 0 8px 10px 50px; }
+    .signal-row.is-selected .signal-detail { display: grid; }
+    .mini-action { min-height: 26px; border: 1px solid var(--mock-line); color: var(--mock-muted); background: transparent; font-size: .58rem; cursor: pointer; }
+    .mini-action:hover { color: var(--mock-ink); border-color: var(--mock-medium); }
+    .signal-footer { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: auto; }
+    .signal-footer button { min-height: 34px; border: 0; color: var(--mock-muted); background: var(--mock-soft); font-size: .62rem; cursor: pointer; }
+    .signal-footer .add { grid-column: 1 / -1; color: var(--mock-ink); background: var(--mock-accent); font-weight: 800; }
+
+    /* 02 — COMMAND */
+    .command {
+      --mock-ink: oklch(24% .03 260); --mock-muted: oklch(53% .025 260);
+      --mock-line: oklch(86% .025 255); --mock-top: oklch(98% .01 95);
+      --mock-soft: oklch(93% .025 255); --mock-medium: oklch(78% .05 260);
+      --mock-accent: oklch(48% .16 252); --mock-live: oklch(62% .16 154);
+      --feed-bg: oklch(96% .012 95); --side-bg: oklch(99% .008 95); --side-ink: var(--mock-ink);
+      --side-width: 350px; --brand-glyph: oklch(98% .01 95);
+    }
+    .command-side { height: 100%; display: flex; flex-direction: column; border-right: 1px solid var(--mock-line); padding: 18px; }
+    .command-side h3 { margin: 0 0 3px; font: 700 1rem/1.2 "Trebuchet MS", sans-serif; }
+    .command-side > p { margin: 0 0 16px; color: var(--mock-muted); font-size: .65rem; }
+    .command-search { position: relative; margin-bottom: 14px; }
+    .command-search input {
+      width: 100%; height: 42px; border: 1px solid oklch(76% .045 255); padding: 0 58px 0 35px;
+      color: var(--mock-ink); background: var(--side-bg); font-size: .7rem;
+    }
+    .command-search::before { position: absolute; left: 12px; top: 12px; content: "⌕"; color: var(--mock-muted); }
+    .command-search kbd { position: absolute; right: 9px; top: 10px; border: 1px solid var(--mock-line); padding: 3px 5px; color: var(--mock-muted); background: var(--mock-soft); font: .58rem "Bahnschrift", sans-serif; }
+    .command-group-label { display: flex; justify-content: space-between; margin: 8px 7px 5px; color: var(--mock-muted); font: 700 .55rem/1 "Bahnschrift", sans-serif; letter-spacing: .11em; text-transform: uppercase; }
+    .command-item {
+      width: 100%; min-height: 48px; display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px;
+      border: 1px solid transparent; padding: 7px 9px; color: inherit; background: transparent; text-align: left; cursor: pointer;
+    }
+    .command-item:hover { background: var(--mock-soft); }
+    .command-item.is-selected { border-color: oklch(76% .07 255); background: oklch(93% .035 255); }
+    .command-item .avatar { width: 27px; height: 27px; }
+    .command-item b { display: block; font-size: .72rem; }
+    .command-item small { display: block; margin-top: 1px; color: var(--mock-muted); font-size: .58rem; }
+    .command-item kbd { color: var(--mock-muted); font: .58rem "Bahnschrift", sans-serif; }
+    .command-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px; margin-top: auto; background: var(--mock-line); border: 1px solid var(--mock-line); }
+    .command-actions button { min-height: 40px; border: 0; color: var(--mock-muted); background: var(--side-bg); font-size: .6rem; cursor: pointer; }
+    .command-actions button:first-child { color: var(--mock-accent); font-weight: 800; }
+
+    /* 03 — SPLIT DOCK */
+    .dock {
+      --mock-ink: oklch(93% .018 245); --mock-muted: oklch(68% .032 245);
+      --mock-line: oklch(30% .04 246); --mock-top: oklch(19% .032 245);
+      --mock-soft: oklch(25% .04 245); --mock-medium: oklch(38% .06 245);
+      --mock-accent: oklch(73% .15 190); --mock-live: oklch(75% .17 158);
+      --feed-bg: oklch(16% .025 245); --side-bg: oklch(18% .03 245); --side-ink: var(--mock-ink);
+      --side-width: 350px;
+    }
+    .dock-side { height: 100%; display: grid; grid-template-columns: 72px minmax(0, 1fr); border-right: 1px solid var(--mock-line); }
+    .dock-rail { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px 10px; border-right: 1px solid var(--mock-line); background: oklch(15% .03 245); }
+    .dock-rail button {
+      position: relative; width: 42px; height: 42px; display: grid; place-items: center; border: 0; border-radius: 50%;
+      color: var(--mock-muted); background: var(--mock-soft); font: 800 .65rem/1 "Bahnschrift", sans-serif; cursor: pointer;
+    }
+    .dock-rail button.is-selected { border-radius: 12px; color: oklch(18% .03 245); background: var(--mock-accent); }
+    .dock-rail button.is-selected::before { position: absolute; left: -15px; width: 3px; height: 26px; content: ""; background: var(--mock-accent); }
+    .dock-rail .dock-live::after { position: absolute; right: 0; bottom: 0; width: 8px; height: 8px; border: 2px solid oklch(15% .03 245); border-radius: 50%; content: ""; background: var(--mock-live); }
+    .dock-rail .dock-spacer { flex: 1; }
+    .dock-detail { display: flex; flex-direction: column; padding: 24px 18px 16px; }
+    .dock-overline { color: var(--mock-accent); font: 700 .56rem/1 "Bahnschrift", sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+    .dock-detail h3 { margin: 8px 0 4px; font: 500 1.5rem/1 Georgia, serif; }
+    .dock-detail > p { margin: 0; color: var(--mock-muted); font-size: .65rem; }
+    .dock-meter { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; margin: 26px 0; color: var(--mock-muted); font-size: .58rem; }
+    .dock-meter i { height: 2px; background: linear-gradient(90deg, var(--mock-live) 71%, var(--mock-line) 71%); }
+    .dock-info { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 10px; padding: 16px 0; border-block: 1px solid var(--mock-line); }
+    .dock-info span { color: var(--mock-muted); font-size: .55rem; }
+    .dock-info b { display: block; margin-top: 4px; font-size: .7rem; font-variant-numeric: tabular-nums; }
+    .dock-controls { display: grid; gap: 6px; margin-top: 18px; }
+    .dock-controls button { min-height: 36px; border: 1px solid var(--mock-line); color: var(--mock-ink); background: transparent; font-size: .62rem; text-align: left; padding: 0 11px; cursor: pointer; }
+    .dock-controls button:first-child { color: oklch(18% .03 245); background: var(--mock-accent); border-color: var(--mock-accent); font-weight: 800; }
+    .dock-links { display: flex; justify-content: space-between; margin-top: auto; }
+    .dock-links button { border: 0; color: var(--mock-muted); background: transparent; font-size: .6rem; cursor: pointer; }
+
+    /* 04 — BROADCAST LEDGER */
+    .ledger {
+      --mock-ink: oklch(26% .045 47); --mock-muted: oklch(50% .045 53);
+      --mock-line: oklch(79% .04 72); --mock-top: oklch(94% .04 78);
+      --mock-soft: oklch(88% .045 78); --mock-medium: oklch(70% .07 60);
+      --mock-accent: oklch(53% .18 28); --mock-live: oklch(54% .15 151);
+      --feed-bg: oklch(96% .032 83); --side-bg: oklch(92% .048 78); --side-ink: var(--mock-ink);
+      --side-width: 390px; --brand-glyph: oklch(97% .02 80);
+    }
+    .ledger-side { position: relative; height: 100%; display: flex; flex-direction: column; border-right: 1px solid var(--mock-line); padding: 28px 22px 18px 32px; }
+    .ledger-side::before { position: absolute; top: 0; bottom: 0; left: 19px; width: 1px; content: ""; background: oklch(64% .14 25 / .45); }
+    .ledger-heading { display: grid; grid-template-columns: 1fr auto; align-items: start; padding-bottom: 20px; border-bottom: 3px double var(--mock-ink); }
+    .ledger-heading span { font: italic .63rem Georgia, serif; color: var(--mock-muted); }
+    .ledger-heading h3 { margin: 3px 0 0; font: 700 1.7rem/.95 Georgia, serif; letter-spacing: -.04em; }
+    .ledger-heading time { font: 700 .62rem/1.4 "Bahnschrift", sans-serif; text-align: right; text-transform: uppercase; }
+    .ledger-all { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; border-bottom: 1px solid var(--mock-line); padding: 15px 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .ledger-all b { font: 700 .86rem Georgia, serif; }
+    .ledger-all span { font: italic .62rem Georgia, serif; color: var(--mock-muted); }
+    .ledger-list { list-style: none; margin: 0; padding: 0; counter-reset: channels; }
+    .ledger-row { counter-increment: channels; }
+    .ledger-row button { width: 100%; display: grid; grid-template-columns: 26px 1fr auto; align-items: baseline; gap: 9px; border: 0; border-bottom: 1px solid var(--mock-line); padding: 14px 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .ledger-row button::before { content: "0" counter(channels); color: var(--mock-muted); font: 700 .55rem "Bahnschrift", sans-serif; }
+    .ledger-row b { font: 600 .92rem Georgia, serif; }
+    .ledger-row small { display: block; margin-top: 3px; color: var(--mock-muted); font: italic .6rem Georgia, serif; }
+    .ledger-row em { color: var(--mock-live); font: 700 .54rem "Bahnschrift", sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+    .ledger-row.is-selected button { color: var(--mock-accent); }
+    .ledger-row.is-selected button::after { content: "VIEWING"; grid-column: 2; margin-top: 4px; font: 800 .5rem "Bahnschrift", sans-serif; letter-spacing: .12em; }
+    .ledger-footer { margin-top: auto; padding-top: 14px; border-top: 3px double var(--mock-ink); }
+    .ledger-add { width: 100%; min-height: 38px; border: 0; color: var(--side-bg); background: var(--mock-ink); font: 700 .62rem "Bahnschrift", sans-serif; letter-spacing: .05em; cursor: pointer; }
+    .ledger-links { display: flex; justify-content: space-between; margin-top: 10px; }
+    .ledger-links button { border: 0; padding: 0; color: var(--mock-muted); background: transparent; font: italic .61rem Georgia, serif; cursor: pointer; }
+
+    /* 05 — OPS MATRIX */
+    .matrix {
+      --mock-ink: oklch(91% .018 150); --mock-muted: oklch(64% .035 150);
+      --mock-line: oklch(31% .045 150); --mock-top: oklch(15% .035 153);
+      --mock-soft: oklch(23% .04 150); --mock-medium: oklch(40% .06 150);
+      --mock-accent: oklch(78% .17 118); --mock-live: oklch(78% .17 142);
+      --feed-bg: oklch(12% .026 152); --side-bg: oklch(17% .035 152); --side-ink: var(--mock-ink);
+      --side-width: 430px;
+    }
+    .matrix-side { height: 100%; display: flex; flex-direction: column; border-right: 1px solid var(--mock-line); font-family: "Bahnschrift", sans-serif; }
+    .matrix-head { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 18px; border-bottom: 1px solid var(--mock-line); }
+    .matrix-head h3 { margin: 0; font: 700 .92rem/1 "Bahnschrift", sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+    .matrix-head span { color: var(--mock-live); font-size: .58rem; letter-spacing: .08em; }
+    .matrix-summary { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--mock-line); background: oklch(14% .03 152); }
+    .matrix-summary div { padding: 12px 14px; border-right: 1px solid var(--mock-line); }
+    .matrix-summary span { display: block; color: var(--mock-muted); font-size: .5rem; text-transform: uppercase; }
+    .matrix-summary b { display: block; margin-top: 3px; font-size: .8rem; font-variant-numeric: tabular-nums; }
+    .matrix-cols, .matrix-row { display: grid; grid-template-columns: 1fr 62px 74px; align-items: center; }
+    .matrix-cols { padding: 8px 14px; border-bottom: 1px solid var(--mock-line); color: var(--mock-muted); font-size: .49rem; letter-spacing: .1em; text-transform: uppercase; }
+    .matrix-row { width: 100%; min-height: 54px; border: 0; border-bottom: 1px solid var(--mock-line); padding: 0 14px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .matrix-row:hover, .matrix-row.is-selected { background: oklch(22% .045 151); }
+    .matrix-row.is-selected { box-shadow: inset 3px 0 var(--mock-accent); }
+    .matrix-name { min-width: 0; display: grid; grid-template-columns: 22px 1fr; gap: 9px; align-items: center; }
+    .matrix-name .avatar { width: 22px; height: 22px; font-size: .5rem; }
+    .matrix-name b { overflow: hidden; text-overflow: ellipsis; font-size: .64rem; white-space: nowrap; }
+    .matrix-name small { display: block; color: var(--mock-muted); font-size: .5rem; }
+    .matrix-toggle { width: 25px; height: 13px; border-radius: 99px; padding: 2px; background: var(--mock-line); }
+    .matrix-toggle::after { display: block; width: 9px; height: 9px; border-radius: 50%; content: ""; background: var(--mock-muted); }
+    .matrix-toggle.on { background: oklch(40% .12 145); }
+    .matrix-toggle.on::after { margin-left: 12px; background: var(--mock-live); }
+    .matrix-state { display: flex; align-items: center; gap: 5px; color: var(--mock-muted); font-size: .52rem; text-transform: uppercase; }
+    .matrix-alert { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px; border: 1px solid oklch(49% .11 40); padding: 9px 10px; color: oklch(82% .11 55); background: oklch(23% .05 40); font-size: .55rem; }
+    .matrix-alert button { border: 0; color: oklch(18% .03 40); background: oklch(82% .11 55); font-size: .52rem; font-weight: 800; cursor: pointer; }
+    .matrix-foot { display: grid; grid-template-columns: 1fr auto auto; margin-top: auto; border-top: 1px solid var(--mock-line); }
+    .matrix-foot button { min-height: 42px; border: 0; border-right: 1px solid var(--mock-line); padding: 0 13px; color: var(--mock-muted); background: transparent; font-size: .56rem; text-align: left; cursor: pointer; }
+    .matrix-foot button:first-child { color: var(--mock-accent); }
+
+    /* 06 — CHANNEL SHELF */
+    .shelf {
+      --mock-ink: oklch(29% .045 53); --mock-muted: oklch(52% .045 55);
+      --mock-line: oklch(82% .05 77); --mock-top: oklch(96% .04 80);
+      --mock-soft: oklch(88% .055 80); --mock-medium: oklch(71% .08 75);
+      --mock-accent: oklch(62% .18 28); --mock-live: oklch(60% .15 151);
+      --feed-bg: oklch(93% .035 79); --side-bg: oklch(97% .035 83); --side-ink: var(--mock-ink);
+      --side-width: 410px; --brand-glyph: oklch(97% .02 83);
+    }
+    .shelf-side { height: 100%; display: flex; flex-direction: column; border-right: 1px solid var(--mock-line); padding: 20px; }
+    .shelf-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 15px; }
+    .shelf-head h3 { margin: 0; font: 600 1.3rem/1 Georgia, serif; }
+    .shelf-head span { color: var(--mock-muted); font-size: .61rem; }
+    .shelf-grid { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 108px; gap: 8px; }
+    .shelf-card {
+      position: relative; overflow: hidden; border: 0; padding: 13px; color: var(--card-ink, var(--mock-ink));
+      background: var(--card, var(--mock-soft)); text-align: left; cursor: pointer;
+    }
+    .shelf-card::after { position: absolute; right: -16px; bottom: -32px; width: 88px; height: 88px; border: 18px solid currentColor; border-radius: 50%; content: ""; opacity: .08; }
+    .shelf-card.all { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; align-items: end; background: oklch(29% .05 53); color: oklch(96% .03 80); }
+    .shelf-card.all strong { font: 500 1.25rem/1 Georgia, serif; }
+    .shelf-card.all small { color: oklch(80% .04 75); }
+    .shelf-card:nth-child(2) { --card: oklch(86% .09 153); }
+    .shelf-card:nth-child(3) { --card: oklch(87% .1 82); }
+    .shelf-card:nth-child(4) { --card: oklch(87% .09 320); }
+    .shelf-card:nth-child(5) { --card: oklch(86% .075 220); }
+    .shelf-card:nth-child(6) { grid-column: 1 / -1; --card: oklch(90% .055 45); }
+    .shelf-card.is-selected { box-shadow: inset 0 0 0 3px var(--mock-ink); }
+    .shelf-card .status-pip { position: absolute; top: 12px; right: 12px; }
+    .shelf-card strong { display: block; margin-top: 34px; font: 700 .78rem/1 Georgia, serif; }
+    .shelf-card small { display: block; margin-top: 4px; color: color-mix(in oklch, currentColor 68%, transparent); font-size: .57rem; }
+    .shelf-card.all strong { margin-top: 0; }
+    .shelf-footer { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: auto; }
+    .shelf-footer button { min-height: 42px; border: 1px solid var(--mock-line); color: var(--mock-muted); background: transparent; font-size: .59rem; cursor: pointer; }
+    .shelf-footer button:first-child { border-color: var(--mock-accent); color: oklch(97% .02 80); background: var(--mock-accent); font-weight: 800; }
+
+    /* 07 — QUIET ACCORDION */
+    .accordion {
+      --mock-ink: oklch(22% .02 235); --mock-muted: oklch(52% .025 235);
+      --mock-line: oklch(87% .018 235); --mock-top: oklch(99% .006 95);
+      --mock-soft: oklch(94% .018 235); --mock-medium: oklch(76% .04 235);
+      --mock-accent: oklch(46% .14 237); --mock-live: oklch(60% .14 155);
+      --feed-bg: oklch(97% .008 95); --side-bg: oklch(99% .005 95); --side-ink: var(--mock-ink);
+      --side-width: 340px; --brand-glyph: oklch(98% .01 95);
+    }
+    .accordion-side { height: 100%; display: flex; flex-direction: column; border-right: 1px solid var(--mock-line); padding: 30px 22px 18px; }
+    .accordion-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; }
+    .accordion-head h3 { margin: 0; font: 600 1.1rem/1 "Candara", sans-serif; letter-spacing: -.02em; }
+    .accordion-head button { width: 30px; height: 30px; border: 1px solid var(--mock-line); border-radius: 50%; color: var(--mock-accent); background: transparent; cursor: pointer; }
+    .accordion-all { width: 100%; display: flex; align-items: center; justify-content: space-between; border: 0; border-bottom: 1px solid var(--mock-line); padding: 12px 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .accordion-all b { font-size: .72rem; }
+    .accordion-all span { color: var(--mock-muted); font-size: .58rem; }
+    .accordion-row { border-bottom: 1px solid var(--mock-line); }
+    .accordion-summary { width: 100%; min-height: 54px; display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 11px; border: 0; padding: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .accordion-summary b { font-size: .7rem; font-weight: 600; }
+    .accordion-summary small { display: block; margin-top: 2px; color: var(--mock-muted); font-size: .56rem; }
+    .accordion-summary .chev { color: var(--mock-muted); transition: transform 200ms var(--ease); }
+    .accordion-row.is-selected .chev { transform: rotate(90deg); }
+    .accordion-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 260ms var(--ease); }
+    .accordion-panel > div { overflow: hidden; }
+    .accordion-row.is-selected .accordion-panel { grid-template-rows: 1fr; }
+    .accordion-panel-content { padding: 0 0 14px 19px; color: var(--mock-muted); font-size: .58rem; }
+    .accordion-panel-content p { margin: 0 0 10px; line-height: 1.5; }
+    .accordion-panel-content button { border: 0; padding: 0; margin-right: 12px; color: var(--mock-accent); background: transparent; font-size: .58rem; font-weight: 800; cursor: pointer; }
+    .accordion-foot { display: flex; gap: 18px; margin-top: auto; padding-top: 14px; }
+    .accordion-foot button { border: 0; padding: 0; color: var(--mock-muted); background: transparent; font-size: .59rem; cursor: pointer; }
+    .accordion-foot button:first-child { margin-right: auto; color: var(--mock-accent); font-weight: 800; }
+
+    /* 08 — LIVE TIMELINE */
+    .timeline {
+      --mock-ink: oklch(94% .024 83); --mock-muted: oklch(70% .035 83);
+      --mock-line: oklch(35% .045 48); --mock-top: oklch(21% .048 48);
+      --mock-soft: oklch(29% .052 48); --mock-medium: oklch(43% .07 48);
+      --mock-accent: oklch(74% .16 51); --mock-live: oklch(74% .17 154);
+      --feed-bg: oklch(18% .04 48); --side-bg: oklch(23% .05 48); --side-ink: var(--mock-ink);
+      --side-width: 375px;
+    }
+    .timeline-side { height: 100%; display: flex; flex-direction: column; border-right: 1px solid var(--mock-line); padding: 24px 20px 16px; }
+    .timeline-head { display: flex; justify-content: space-between; align-items: start; }
+    .timeline-head h3 { margin: 0; font: 500 1.3rem/1 Georgia, serif; }
+    .timeline-head span { color: var(--mock-muted); font: .56rem "Bahnschrift", sans-serif; }
+    .timeline-all { position: relative; display: grid; grid-template-columns: 42px 1fr auto; align-items: center; gap: 12px; border: 0; padding: 22px 0 18px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .timeline-all .hub { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--mock-accent); border-radius: 50%; color: var(--mock-accent); font-size: 1.1rem; }
+    .timeline-all b { font: 600 .82rem Georgia, serif; }
+    .timeline-all small { display: block; margin-top: 3px; color: var(--mock-muted); font-size: .58rem; }
+    .timeline-all time { color: var(--mock-live); font: .55rem "Bahnschrift", sans-serif; }
+    .timeline-list { position: relative; padding-left: 20px; }
+    .timeline-list::before { position: absolute; top: 0; bottom: 0; left: 6px; width: 1px; content: ""; background: var(--mock-line); }
+    .timeline-row { position: relative; width: 100%; min-height: 66px; display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 12px; border: 0; padding: 10px 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .timeline-row::before { position: absolute; top: 16px; left: -18px; width: 7px; height: 7px; border: 3px solid var(--side-bg); border-radius: 50%; content: ""; background: var(--mock-muted); }
+    .timeline-row.live::before { background: var(--mock-live); box-shadow: 0 0 0 3px oklch(74% .17 154 / .15); }
+    .timeline-row.error::before { background: var(--red); }
+    .timeline-row.is-selected::after { position: absolute; top: 13px; right: 0; content: "NOW VIEWING"; color: var(--mock-accent); font: 800 .47rem "Bahnschrift", sans-serif; letter-spacing: .1em; }
+    .timeline-row b { font-size: .7rem; }
+    .timeline-row small { display: block; margin-top: 3px; color: var(--mock-muted); font-size: .56rem; }
+    .timeline-row time { margin-top: 22px; color: var(--mock-muted); font-size: .52rem; }
+    .timeline-foot { display: grid; grid-template-columns: 1fr auto; gap: 5px; margin-top: auto; }
+    .timeline-foot button { min-height: 38px; border: 1px solid var(--mock-line); padding: 0 12px; color: var(--mock-muted); background: transparent; font-size: .57rem; cursor: pointer; }
+    .timeline-foot button:first-child { color: oklch(23% .05 48); background: var(--mock-accent); border-color: var(--mock-accent); font-weight: 800; }
+
+    /* 09 — CHANNEL DECK */
+    .deck {
+      --mock-ink: oklch(24% .05 310); --mock-muted: oklch(52% .045 310);
+      --mock-line: oklch(84% .04 310); --mock-top: oklch(96% .03 310);
+      --mock-soft: oklch(89% .055 310); --mock-medium: oklch(70% .09 310);
+      --mock-accent: oklch(58% .22 318); --mock-live: oklch(62% .16 155);
+      --feed-bg: oklch(94% .028 310); --side-bg: oklch(97% .025 310); --side-ink: var(--mock-ink);
+      --side-width: 410px; --brand-glyph: oklch(98% .01 95);
+    }
+    .deck-side { height: 100%; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--mock-line); padding: 22px 20px 16px; }
+    .deck-head { display: flex; align-items: center; justify-content: space-between; }
+    .deck-head h3 { margin: 0; font: 700 1.1rem/1 "Candara", sans-serif; }
+    .deck-nav { display: flex; gap: 4px; }
+    .deck-nav button { width: 28px; height: 28px; border: 1px solid var(--mock-line); border-radius: 50%; color: var(--mock-muted); background: transparent; cursor: pointer; }
+    .deck-feature { position: relative; height: 274px; flex: none; margin-top: 22px; }
+    .deck-card { position: absolute; inset: 0; display: none; overflow: hidden; border-radius: 22px; padding: 22px; color: oklch(97% .012 310); background: var(--deck-color, oklch(40% .18 300)); box-shadow: 0 18px 38px oklch(34% .1 310 / .22); }
+    .deck-card::before { position: absolute; inset: auto -20% -50% 15%; height: 100%; border: 45px solid oklch(96% .04 310 / .13); border-radius: 50%; content: ""; }
+    .deck-card.is-selected { display: flex; flex-direction: column; animation: deck-in 320ms var(--ease) both; }
+    @keyframes deck-in { from { opacity: 0; transform: translateX(24px) rotate(2deg); } }
+    .deck-card .status { display: flex; align-items: center; gap: 6px; font: 700 .54rem "Bahnschrift", sans-serif; letter-spacing: .1em; text-transform: uppercase; }
+    .deck-card .status::before { width: 7px; height: 7px; border-radius: 50%; content: ""; background: var(--mock-live); }
+    .deck-card h4 { position: relative; margin: auto 0 3px; font: 500 1.8rem/.9 Georgia, serif; letter-spacing: -.04em; }
+    .deck-card p { position: relative; margin: 0 0 18px; color: oklch(89% .035 310); font-size: .64rem; }
+    .deck-card-actions { position: relative; display: grid; grid-template-columns: 1fr 1fr auto; gap: 5px; }
+    .deck-card-actions button { min-height: 34px; border: 1px solid oklch(92% .03 310 / .28); border-radius: 8px; color: inherit; background: oklch(25% .08 310 / .22); font-size: .57rem; cursor: pointer; }
+    .deck-stack { display: flex; align-items: center; gap: 7px; padding: 22px 2px 14px; }
+    .deck-chip { position: relative; width: 44px; height: 44px; display: grid; place-items: center; flex: none; border: 0; border-radius: 50%; color: oklch(97% .01 90); background: var(--avatar); font: 800 .62rem "Bahnschrift", sans-serif; cursor: pointer; }
+    .deck-chip.is-selected { box-shadow: 0 0 0 3px var(--side-bg), 0 0 0 5px var(--mock-accent); }
+    .deck-chip.all { color: var(--mock-muted); background: var(--mock-soft); }
+    .deck-chip::after { position: absolute; right: 0; bottom: 0; width: 7px; height: 7px; border: 2px solid var(--side-bg); border-radius: 50%; content: ""; background: var(--mock-live); }
+    .deck-help { color: var(--mock-muted); font-size: .59rem; line-height: 1.5; }
+    .deck-help b { color: var(--mock-ink); }
+    .deck-foot { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: auto; }
+    .deck-foot button { min-height: 37px; border: 1px solid var(--mock-line); border-radius: 99px; color: var(--mock-muted); background: transparent; font-size: .56rem; cursor: pointer; }
+    .deck-foot button:first-child { color: oklch(98% .01 90); background: var(--mock-accent); border-color: var(--mock-accent); font-weight: 800; }
+
+    /* 10 — CONSTELLATION */
+    .constellation {
+      --mock-ink: oklch(91% .028 265); --mock-muted: oklch(65% .045 265);
+      --mock-line: oklch(31% .055 267); --mock-top: oklch(16% .045 267);
+      --mock-soft: oklch(24% .06 267); --mock-medium: oklch(39% .09 267);
+      --mock-accent: oklch(76% .15 205); --mock-live: oklch(74% .16 155);
+      --feed-bg: oklch(13% .04 268); --side-bg: oklch(17% .05 268); --side-ink: var(--mock-ink);
+      --side-width: 430px;
+    }
+    .constellation-side { position: relative; height: 100%; overflow: hidden; border-right: 1px solid var(--mock-line); background-image: radial-gradient(oklch(72% .08 260 / .18) .7px, transparent .7px); background-size: 18px 18px; }
+    .constellation-head { position: absolute; z-index: 3; top: 22px; left: 22px; right: 22px; display: flex; justify-content: space-between; }
+    .constellation-head h3 { margin: 0; font: 600 1rem/1 "Candara", sans-serif; }
+    .constellation-head span { color: var(--mock-accent); font: .55rem "Bahnschrift", sans-serif; letter-spacing: .1em; text-transform: uppercase; }
+    .star-map { position: absolute; inset: 70px 15px 90px; }
+    .star-map svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+    .star-map line { stroke: var(--mock-line); stroke-width: 1; stroke-dasharray: 3 5; }
+    .star-map line.active { stroke: var(--mock-accent); stroke-dasharray: none; }
+    .star-node { position: absolute; z-index: 2; transform: translate(-50%, -50%); border: 0; color: inherit; background: transparent; text-align: center; cursor: pointer; }
+    .star-node i { width: 43px; height: 43px; display: grid; place-items: center; margin: auto; border: 1px solid var(--mock-line); border-radius: 50%; color: var(--mock-muted); background: var(--side-bg); font: normal 800 .58rem "Bahnschrift", sans-serif; box-shadow: 0 0 0 7px oklch(17% .05 268 / .8); }
+    .star-node b { display: block; margin-top: 8px; font-size: .59rem; font-weight: 600; white-space: nowrap; }
+    .star-node small { display: block; margin-top: 2px; color: var(--mock-muted); font-size: .48rem; }
+    .star-node.is-selected i { border-color: var(--mock-accent); color: oklch(17% .05 268); background: var(--mock-accent); box-shadow: 0 0 0 7px oklch(17% .05 268 / .9), 0 0 24px oklch(76% .15 205 / .32); }
+    .star-node.hub i { width: 62px; height: 62px; color: var(--mock-accent); border-color: var(--mock-accent); font-size: 1.1rem; }
+    .star-node.hub b { font-size: .67rem; }
+    .constellation-dock { position: absolute; z-index: 4; right: 18px; bottom: 18px; left: 18px; display: grid; grid-template-columns: 1fr repeat(2, auto); border: 1px solid var(--mock-line); background: oklch(20% .052 267); }
+    .constellation-dock button { min-height: 44px; border: 0; border-right: 1px solid var(--mock-line); padding: 0 13px; color: var(--mock-muted); background: transparent; font-size: .56rem; text-align: left; cursor: pointer; }
+    .constellation-dock button:first-child { color: var(--mock-accent); font-weight: 800; }
+
+    .lab-footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: .72rem;
+      line-height: 1.45;
+    }
+    .lab-footer b { color: var(--ink); }
+    .lab-footer span:last-child { text-align: right; }
+
+    @container (max-width: 870px) {
+      .mock-body { grid-template-columns: minmax(280px, 48%) minmax(0, 1fr); }
+      .concept-note { display: none; }
+      .matrix-cols, .matrix-row { grid-template-columns: 1fr 52px; }
+      .matrix-cols span:last-child, .matrix-row > :last-child { display: none; }
+    }
+    @media (max-width: 780px) {
+      .lab-shell { padding: 16px; }
+      .lab-header { grid-template-columns: 1fr; gap: 14px; }
+      .lab-header h1 { max-width: 12ch; }
+      .lab-header p { max-width: 60ch; }
+      .concept-picker { margin-inline: -16px; border-inline: 0; }
+      .stage, .concept { min-height: 760px; }
+      .concept { grid-template-rows: 54px minmax(0, 1fr); }
+      .mock-body { display: block; }
+      .side-demo { width: 100%; min-height: 706px; }
+      .feed-ghost { display: none; }
+      .signal, .command, .dock, .ledger, .matrix, .shelf, .accordion, .timeline, .deck, .constellation { --side-width: 100%; }
+      .lab-footer { display: grid; }
+      .lab-footer span:last-child { text-align: left; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#design-stage">Skip to design preview</a>
+  <main class="lab-shell">
+    <header class="lab-header">
+      <div>
+        <div class="kicker">TwitchLogger design study</div>
+        <h1>Ten ways into the conversation.</h1>
+      </div>
+      <p><strong>Same content, different mental models.</strong> Choose a concept below. Each version keeps channel switching, connection state, admin controls, feedback, settings, and adding a channel.</p>
+    </header>
+
+    <nav class="concept-picker" role="tablist" aria-label="Sidebar concepts">
+      <button class="concept-tab" role="tab" aria-selected="true" aria-controls="concept-1" id="tab-1" data-target="1"><b>01</b><span>Signal stack</span></button>
+      <button class="concept-tab" role="tab" aria-selected="false" aria-controls="concept-2" id="tab-2" data-target="2" tabindex="-1"><b>02</b><span>Command</span></button>
+      <button class="concept-tab" role="tab" aria-selected="false" aria-controls="concept-3" id="tab-3" data-target="3" tabindex="-1"><b>03</b><span>Split dock</span></button>
+      <button class="concept-tab" role="tab" aria-selected="false" aria-controls="concept-4" id="tab-4" data-target="4" tabindex="-1"><b>04</b><span>Ledger</span></button>
+      <button class="concept-tab" role="tab" aria-selected="false" aria-controls="concept-5" id="tab-5" data-target="5" tabindex="-1"><b>05</b><span>Ops matrix</span></button>
+      <button class="concept-tab" role="tab" aria-selected="false" aria-controls="concept-6" id="tab-6" data-target="6" tabindex="-1"><b>06</b><span>Shelf</span></button>
+      <button class="concept-tab" role="tab" aria-selected="false" aria-controls="concept-7" id="tab-7" data-target="7" tabindex="-1"><b>07</b><span>Accordion</span></button>
+      <button class="concept-tab" role="tab" aria-selected="false" aria-controls="concept-8" id="tab-8" data-target="8" tabindex="-1"><b>08</b><span>Timeline</span></button>
+      <button class="concept-tab" role="tab" aria-selected="false" aria-controls="concept-9" id="tab-9" data-target="9" tabindex="-1"><b>09</b><span>Channel deck</span></button>
+      <button class="concept-tab" role="tab" aria-selected="false" aria-controls="concept-10" id="tab-10" data-target="10" tabindex="-1"><b>10</b><span>Constellation</span></button>
+    </nav>
+
+    <section class="stage" id="design-stage" aria-live="polite">
+      <!-- 01 -->
+      <article class="concept signal is-active" id="concept-1" role="tabpanel" aria-labelledby="tab-1">
+        <div class="mock-topbar"><div class="mock-brand"><span class="brand-glyph">TL</span><span><strong>TwitchLogger</strong><small>Live chat archive</small></span></div><span class="mock-status">Worker connected</span></div>
+        <div class="mock-body">
+          <aside class="side-demo signal-side">
+            <div class="signal-title"><div><span>Following</span><strong>Channels</strong></div><div class="signal-count">5 sources</div></div>
+            <button class="signal-all"><span class="avatar">∞</span><span><b>All channels</b><small>Combined live feed</small></span><span class="signal-volume" aria-hidden="true"><i style="--h:7px"></i><i style="--h:15px"></i><i style="--h:10px"></i><i style="--h:19px"></i></span></button>
+            <div class="signal-list">
+              <button class="signal-row is-selected" data-selectable><span class="signal-row-main"><span class="avatar" style="--avatar:oklch(47% .18 302)">CI</span><span><b>Cirno TV</b><small>@cirno_tv · capturing</small></span><i class="status-pip live"></i></span><span class="signal-detail"><span class="mini-action">Pause</span><span class="mini-action">Details</span><span class="mini-action">•••</span></span></button>
+              <button class="signal-row" data-selectable><span class="signal-row-main"><span class="avatar" style="--avatar:oklch(50% .16 22)">RS</span><span><b>Redshift</b><small>@redshiftlive · capturing</small></span><i class="status-pip live"></i></span><span class="signal-detail"><span class="mini-action">Pause</span><span class="mini-action">Details</span><span class="mini-action">•••</span></span></button>
+              <button class="signal-row" data-selectable><span class="signal-row-main"><span class="avatar" style="--avatar:oklch(46% .12 204)">MA</span><span><b>Mari Arcade</b><small>@mari_arcade · connecting</small></span><i class="status-pip warn"></i></span><span class="signal-detail"><span class="mini-action">Pause</span><span class="mini-action">Details</span><span class="mini-action">•••</span></span></button>
+              <button class="signal-row" data-selectable><span class="signal-row-main"><span class="avatar" style="--avatar:oklch(43% .11 133)">FB</span><span><b>Forest Byte</b><small>@forestbyte · capturing</small></span><i class="status-pip live"></i></span><span class="signal-detail"><span class="mini-action">Pause</span><span class="mini-action">Details</span><span class="mini-action">•••</span></span></button>
+              <button class="signal-row" data-selectable><span class="signal-row-main"><span class="avatar" style="--avatar:oklch(47% .12 70)">LN</span><span><b>LateNight_Nao</b><small>@latenight_nao · error</small></span><i class="status-pip error"></i></span><span class="signal-detail"><span class="mini-action">Reconnect</span><span class="mini-action">Details</span><span class="mini-action">•••</span></span></button>
+            </div>
+            <div class="signal-footer"><button>Feedback</button><button>Settings</button><button class="add">＋ Add channel</button></div>
+          </aside>
+          <div class="feed-ghost"><div class="ghost-toolbar"><div><h2>Cirno TV</h2><span>Live message feed</span></div><div class="ghost-search"></div></div><div class="ghost-feed"></div><div class="concept-note"><b>01 · Signal stack</b><span>Familiar vertical navigation, but the active channel becomes an inline control station.</span></div></div>
+        </div>
+      </article>
+
+      <!-- 02 -->
+      <article class="concept command" id="concept-2" role="tabpanel" aria-labelledby="tab-2" hidden>
+        <div class="mock-topbar"><div class="mock-brand"><span class="brand-glyph">TL</span><span><strong>TwitchLogger</strong><small>Live chat archive</small></span></div><span class="mock-status">5 sources indexed</span></div>
+        <div class="mock-body">
+          <aside class="side-demo command-side">
+            <h3>Jump to a feed</h3><p>Search or use a number key.</p>
+            <label class="command-search"><span hidden>Find a channel</span><input type="search" placeholder="Find channel…" aria-label="Find a channel"><kbd>⌘ K</kbd></label>
+            <div class="command-group-label"><span>Feeds</span><span>Shortcut</span></div>
+            <button class="command-item is-selected" data-selectable><span class="avatar" style="--avatar:oklch(48% .16 255)">∞</span><span><b>Everything</b><small>Combined live feed</small></span><kbd>0</kbd></button>
+            <div class="command-group-label"><span>Channels</span><span>5</span></div>
+            <button class="command-item" data-selectable><span class="avatar" style="--avatar:oklch(47% .18 302)">CI</span><span><b>Cirno TV</b><small>Connected · logging</small></span><kbd>1</kbd></button>
+            <button class="command-item" data-selectable><span class="avatar" style="--avatar:oklch(50% .16 22)">RS</span><span><b>Redshift</b><small>Connected · logging</small></span><kbd>2</kbd></button>
+            <button class="command-item" data-selectable><span class="avatar" style="--avatar:oklch(46% .12 204)">MA</span><span><b>Mari Arcade</b><small>Connecting</small></span><kbd>3</kbd></button>
+            <button class="command-item" data-selectable><span class="avatar" style="--avatar:oklch(43% .11 133)">FB</span><span><b>Forest Byte</b><small>Connected · logging</small></span><kbd>4</kbd></button>
+            <button class="command-item" data-selectable><span class="avatar" style="--avatar:oklch(47% .12 70)">LN</span><span><b>LateNight_Nao</b><small>Needs attention</small></span><kbd>5</kbd></button>
+            <div class="command-actions"><button>＋ Add</button><button>Feedback</button><button>Settings</button></div>
+          </aside>
+          <div class="feed-ghost"><div class="ghost-toolbar"><div><h2>All channels</h2><span>Combined message feed</span></div><div class="ghost-search"></div></div><div class="ghost-feed"></div><div class="concept-note"><b>02 · Command</b><span>Search-first and keyboard-friendly. Best when the channel list grows beyond quick scanning.</span></div></div>
+        </div>
+      </article>
+
+      <!-- 03 -->
+      <article class="concept dock" id="concept-3" role="tabpanel" aria-labelledby="tab-3" hidden>
+        <div class="mock-topbar"><div class="mock-brand"><span class="brand-glyph">TL</span><span><strong>TwitchLogger</strong><small>Live chat archive</small></span></div><span class="mock-status">Worker connected</span></div>
+        <div class="mock-body">
+          <aside class="side-demo dock-side">
+            <nav class="dock-rail" aria-label="Channel dock">
+              <button title="All channels">∞</button>
+              <button class="dock-live is-selected" data-dock="cirno" title="Cirno TV">CI</button>
+              <button class="dock-live" data-dock="redshift" title="Redshift">RS</button>
+              <button class="dock-live" data-dock="mari" title="Mari Arcade">MA</button>
+              <button class="dock-live" data-dock="forest" title="Forest Byte">FB</button>
+              <button data-dock="nao" title="LateNight Nao">LN</button>
+              <span class="dock-spacer"></span><button title="Add channel">＋</button><button title="Settings">⚙</button>
+            </nav>
+            <section class="dock-detail">
+              <span class="dock-overline">Live source 01</span><h3 id="dock-name">Cirno TV</h3><p id="dock-handle">@cirno_tv · Twitch</p>
+              <div class="dock-meter"><span>Input</span><i></i><b>71 msg/m</b></div>
+              <div class="dock-info"><span>Connection<b>Healthy</b></span><span>Capture<b>Running</b></span><span>Since<b>14:32</b></span><span>Messages<b>12,804</b></span></div>
+              <div class="dock-controls"><button>Open live feed →</button><button>Pause capture</button><button>Channel settings</button><button>Remove source</button></div>
+              <div class="dock-links"><button>Feedback</button><button>System settings</button></div>
+            </section>
+          </aside>
+          <div class="feed-ghost"><div class="ghost-toolbar"><div><h2>Cirno TV</h2><span>Live message feed</span></div><div class="ghost-search"></div></div><div class="ghost-feed"></div><div class="concept-note"><b>03 · Split dock</b><span>A persistent icon rail for switching, paired with a focused inspector for the selected source.</span></div></div>
+        </div>
+      </article>
+
+      <!-- 04 -->
+      <article class="concept ledger" id="concept-4" role="tabpanel" aria-labelledby="tab-4" hidden>
+        <div class="mock-topbar"><div class="mock-brand"><span class="brand-glyph">TL</span><span><strong>TwitchLogger</strong><small>Broadcast record</small></span></div><span class="mock-status">Archive current</span></div>
+        <div class="mock-body">
+          <aside class="side-demo ledger-side">
+            <div class="ledger-heading"><div><span>The daily index of</span><h3>Broadcasts</h3></div><time>Wed<br>05 Aug</time></div>
+            <button class="ledger-all"><span><b>All channels</b><br><span>The complete live record</span></span><b>∞</b></button>
+            <ol class="ledger-list">
+              <li class="ledger-row is-selected"><button data-selectable><span><b>Cirno TV</b><small>@cirno_tv</small></span><em>Live</em></button></li>
+              <li class="ledger-row"><button data-selectable><span><b>Redshift</b><small>@redshiftlive</small></span><em>Live</em></button></li>
+              <li class="ledger-row"><button data-selectable><span><b>Mari Arcade</b><small>@mari_arcade</small></span><em style="color:var(--mock-muted)">Joining</em></button></li>
+              <li class="ledger-row"><button data-selectable><span><b>Forest Byte</b><small>@forestbyte</small></span><em>Live</em></button></li>
+              <li class="ledger-row"><button data-selectable><span><b>LateNight_Nao</b><small>@latenight_nao</small></span><em style="color:var(--mock-accent)">Error</em></button></li>
+            </ol>
+            <footer class="ledger-footer"><button class="ledger-add">ADD A BROADCAST SOURCE</button><div class="ledger-links"><button>Write to us</button><button>Settings &amp; access</button></div></footer>
+          </aside>
+          <div class="feed-ghost"><div class="ghost-toolbar"><div><h2>Cirno TV</h2><span>Wednesday’s live record</span></div><div class="ghost-search"></div></div><div class="ghost-feed"></div><div class="concept-note"><b>04 · Broadcast ledger</b><span>An editorial index: low chrome, strong typography, and a record-keeping personality.</span></div></div>
+        </div>
+      </article>
+
+      <!-- 05 -->
+      <article class="concept matrix" id="concept-5" role="tabpanel" aria-labelledby="tab-5" hidden>
+        <div class="mock-topbar"><div class="mock-brand"><span class="brand-glyph">TL</span><span><strong>TwitchLogger</strong><small>Ingest operations</small></span></div><span class="mock-status">Pipeline nominal</span></div>
+        <div class="mock-body">
+          <aside class="side-demo matrix-side">
+            <div class="matrix-head"><h3>Source matrix</h3><span>● LIVE SCAN</span></div>
+            <div class="matrix-summary"><div><span>Sources</span><b>05</b></div><div><span>Logging</span><b>04</b></div><div><span>Issues</span><b>01</b></div></div>
+            <div class="matrix-cols"><span>Source</span><span>Capture</span><span>State</span></div>
+            <button class="matrix-row is-selected" data-selectable><span class="matrix-name"><span class="avatar" style="--avatar:oklch(47% .18 302)">CI</span><span><b>CIRNO_TV</b><small>ID 9885-A</small></span></span><span class="matrix-toggle on"></span><span class="matrix-state"><i class="status-pip live"></i>Online</span></button>
+            <button class="matrix-row" data-selectable><span class="matrix-name"><span class="avatar" style="--avatar:oklch(50% .16 22)">RS</span><span><b>REDSHIFT</b><small>ID 4830-J</small></span></span><span class="matrix-toggle on"></span><span class="matrix-state"><i class="status-pip live"></i>Online</span></button>
+            <button class="matrix-row" data-selectable><span class="matrix-name"><span class="avatar" style="--avatar:oklch(46% .12 204)">MA</span><span><b>MARI_ARCADE</b><small>ID 1172-Q</small></span></span><span class="matrix-toggle on"></span><span class="matrix-state"><i class="status-pip warn"></i>Joining</span></button>
+            <button class="matrix-row" data-selectable><span class="matrix-name"><span class="avatar" style="--avatar:oklch(43% .11 133)">FB</span><span><b>FOREST_BYTE</b><small>ID 7741-C</small></span></span><span class="matrix-toggle on"></span><span class="matrix-state"><i class="status-pip live"></i>Online</span></button>
+            <button class="matrix-row" data-selectable><span class="matrix-name"><span class="avatar" style="--avatar:oklch(47% .12 70)">LN</span><span><b>LATENIGHT_NAO</b><small>ID 4420-R</small></span></span><span class="matrix-toggle"></span><span class="matrix-state"><i class="status-pip error"></i>Error</span></button>
+            <div class="matrix-alert"><span>LN handshake failed · 2m ago</span><button>RECONNECT</button></div>
+            <div class="matrix-foot"><button>＋ ADD SOURCE</button><button>FEEDBACK</button><button>SETTINGS</button></div>
+          </aside>
+          <div class="feed-ghost"><div class="ghost-toolbar"><div><h2>Cirno TV</h2><span>Operational live feed</span></div><div class="ghost-search"></div></div><div class="ghost-feed"></div><div class="concept-note"><b>05 · Ops matrix</b><span>Turns the sidebar into a compact monitoring surface for operators managing many sources.</span></div></div>
+        </div>
+      </article>
+
+      <!-- 06 -->
+      <article class="concept shelf" id="concept-6" role="tabpanel" aria-labelledby="tab-6" hidden>
+        <div class="mock-topbar"><div class="mock-brand"><span class="brand-glyph">TL</span><span><strong>TwitchLogger</strong><small>Live chat archive</small></span></div><span class="mock-status">4 of 5 connected</span></div>
+        <div class="mock-body">
+          <aside class="side-demo shelf-side">
+            <div class="shelf-head"><h3>Your shelf</h3><span>5 channels</span></div>
+            <div class="shelf-grid">
+              <button class="shelf-card all is-selected" data-selectable><span><strong>All channels</strong><small>One shared conversation</small></span><b>∞</b></button>
+              <button class="shelf-card" data-selectable><i class="status-pip live"></i><strong>Cirno TV</strong><small>@cirno_tv</small></button>
+              <button class="shelf-card" data-selectable><i class="status-pip live"></i><strong>Redshift</strong><small>@redshiftlive</small></button>
+              <button class="shelf-card" data-selectable><i class="status-pip warn"></i><strong>Mari Arcade</strong><small>@mari_arcade</small></button>
+              <button class="shelf-card" data-selectable><i class="status-pip live"></i><strong>Forest Byte</strong><small>@forestbyte</small></button>
+              <button class="shelf-card" data-selectable><i class="status-pip error"></i><strong>LateNight_Nao</strong><small>Connection needs attention</small></button>
+            </div>
+            <div class="shelf-footer"><button>＋ Add</button><button>Feedback</button><button>Settings</button></div>
+          </aside>
+          <div class="feed-ghost"><div class="ghost-toolbar"><div><h2>All channels</h2><span>Combined live feed</span></div><div class="ghost-search"></div></div><div class="ghost-feed"></div><div class="concept-note"><b>06 · Channel shelf</b><span>Scannable tiles replace the list. Strong identities make a small set feel friendly and tactile.</span></div></div>
+        </div>
+      </article>
+
+      <!-- 07 -->
+      <article class="concept accordion" id="concept-7" role="tabpanel" aria-labelledby="tab-7" hidden>
+        <div class="mock-topbar"><div class="mock-brand"><span class="brand-glyph">TL</span><span><strong>TwitchLogger</strong><small>Live chat archive</small></span></div><span class="mock-status">Worker connected</span></div>
+        <div class="mock-body">
+          <aside class="side-demo accordion-side">
+            <div class="accordion-head"><h3>Channels <span style="color:var(--mock-muted)">/ 5</span></h3><button aria-label="Add channel">＋</button></div>
+            <button class="accordion-all"><b>All channels</b><span>Combined feed →</span></button>
+            <div class="accordion-row is-selected"><button class="accordion-summary" data-selectable><i class="status-pip live"></i><span><b>Cirno TV</b><small>@cirno_tv</small></span><span class="chev">›</span></button><div class="accordion-panel"><div><div class="accordion-panel-content"><p>Connected and capturing messages since 14:32.</p><button>Open feed</button><button>Pause</button><button>More</button></div></div></div></div>
+            <div class="accordion-row"><button class="accordion-summary" data-selectable><i class="status-pip live"></i><span><b>Redshift</b><small>@redshiftlive</small></span><span class="chev">›</span></button><div class="accordion-panel"><div><div class="accordion-panel-content"><p>Connected and capturing messages.</p><button>Open feed</button><button>Pause</button><button>More</button></div></div></div></div>
+            <div class="accordion-row"><button class="accordion-summary" data-selectable><i class="status-pip warn"></i><span><b>Mari Arcade</b><small>@mari_arcade</small></span><span class="chev">›</span></button><div class="accordion-panel"><div><div class="accordion-panel-content"><p>Joining the Twitch EventSub stream.</p><button>Open feed</button><button>Pause</button><button>More</button></div></div></div></div>
+            <div class="accordion-row"><button class="accordion-summary" data-selectable><i class="status-pip live"></i><span><b>Forest Byte</b><small>@forestbyte</small></span><span class="chev">›</span></button><div class="accordion-panel"><div><div class="accordion-panel-content"><p>Connected and capturing messages.</p><button>Open feed</button><button>Pause</button><button>More</button></div></div></div></div>
+            <div class="accordion-row"><button class="accordion-summary" data-selectable><i class="status-pip error"></i><span><b>LateNight_Nao</b><small>@latenight_nao</small></span><span class="chev">›</span></button><div class="accordion-panel"><div><div class="accordion-panel-content"><p>Authorization expired. Reconnect to resume capture.</p><button>Reconnect</button><button>Settings</button><button>Remove</button></div></div></div></div>
+            <div class="accordion-foot"><button>＋ Add channel</button><button>Feedback</button><button>Settings</button></div>
+          </aside>
+          <div class="feed-ghost"><div class="ghost-toolbar"><div><h2>Cirno TV</h2><span>Live message feed</span></div><div class="ghost-search"></div></div><div class="ghost-feed"></div><div class="concept-note"><b>07 · Quiet accordion</b><span>Nearly invisible navigation until a channel is opened; details appear only where needed.</span></div></div>
+        </div>
+      </article>
+
+      <!-- 08 -->
+      <article class="concept timeline" id="concept-8" role="tabpanel" aria-labelledby="tab-8" hidden>
+        <div class="mock-topbar"><div class="mock-brand"><span class="brand-glyph">TL</span><span><strong>TwitchLogger</strong><small>Live chat archive</small></span></div><span class="mock-status">Recording now</span></div>
+        <div class="mock-body">
+          <aside class="side-demo timeline-side">
+            <div class="timeline-head"><h3>On the wire</h3><span>LOCAL · 16:04</span></div>
+            <button class="timeline-all"><span class="hub">∞</span><span><b>The whole timeline</b><small>All incoming conversations</small></span><time>NOW</time></button>
+            <div class="timeline-list">
+              <button class="timeline-row live is-selected" data-selectable><span><b>Cirno TV connected</b><small>@cirno_tv · capturing messages</small></span><time>14:32</time></button>
+              <button class="timeline-row live" data-selectable><span><b>Redshift connected</b><small>@redshiftlive · capturing messages</small></span><time>13:10</time></button>
+              <button class="timeline-row" data-selectable><span><b>Mari Arcade is joining</b><small>@mari_arcade · negotiating stream</small></span><time>16:03</time></button>
+              <button class="timeline-row live" data-selectable><span><b>Forest Byte connected</b><small>@forestbyte · capturing messages</small></span><time>09:42</time></button>
+              <button class="timeline-row error" data-selectable><span><b>LateNight_Nao dropped</b><small>@latenight_nao · authorization expired</small></span><time>16:02</time></button>
+            </div>
+            <div class="timeline-foot"><button>＋ Track a channel</button><button>Settings · Feedback</button></div>
+          </aside>
+          <div class="feed-ghost"><div class="ghost-toolbar"><div><h2>Cirno TV</h2><span>Messages since connection</span></div><div class="ghost-search"></div></div><div class="ghost-feed"></div><div class="concept-note"><b>08 · Live timeline</b><span>Connection history becomes the organizing structure, emphasizing when each source came online.</span></div></div>
+        </div>
+      </article>
+
+      <!-- 09 -->
+      <article class="concept deck" id="concept-9" role="tabpanel" aria-labelledby="tab-9" hidden>
+        <div class="mock-topbar"><div class="mock-brand"><span class="brand-glyph">TL</span><span><strong>TwitchLogger</strong><small>Live chat archive</small></span></div><span class="mock-status">4 live channels</span></div>
+        <div class="mock-body">
+          <aside class="side-demo deck-side">
+            <div class="deck-head"><h3>Channel deck</h3><div class="deck-nav"><button id="deck-prev" aria-label="Previous channel">←</button><button id="deck-next" aria-label="Next channel">→</button></div></div>
+            <div class="deck-feature">
+              <article class="deck-card is-selected" data-card="cirno" style="--deck-color:oklch(43% .19 303)"><span class="status">Connected</span><h4>Cirno TV</h4><p>@cirno_tv · 12,804 captured messages</p><div class="deck-card-actions"><button>Open feed</button><button>Pause</button><button>•••</button></div></article>
+              <article class="deck-card" data-card="redshift" style="--deck-color:oklch(47% .19 24)"><span class="status">Connected</span><h4>Redshift</h4><p>@redshiftlive · 9,418 captured messages</p><div class="deck-card-actions"><button>Open feed</button><button>Pause</button><button>•••</button></div></article>
+              <article class="deck-card" data-card="mari" style="--deck-color:oklch(45% .13 210)"><span class="status">Connecting</span><h4>Mari Arcade</h4><p>@mari_arcade · joining EventSub</p><div class="deck-card-actions"><button>Open feed</button><button>Pause</button><button>•••</button></div></article>
+              <article class="deck-card" data-card="forest" style="--deck-color:oklch(42% .13 139)"><span class="status">Connected</span><h4>Forest Byte</h4><p>@forestbyte · 6,922 captured messages</p><div class="deck-card-actions"><button>Open feed</button><button>Pause</button><button>•••</button></div></article>
+              <article class="deck-card" data-card="nao" style="--deck-color:oklch(44% .13 68)"><span class="status">Needs attention</span><h4>LateNight_Nao</h4><p>@latenight_nao · reconnect required</p><div class="deck-card-actions"><button>Reconnect</button><button>Settings</button><button>•••</button></div></article>
+            </div>
+            <div class="deck-stack"><button class="deck-chip all" title="All channels">∞</button><button class="deck-chip is-selected" data-deck="cirno" style="--avatar:oklch(47% .18 302)">CI</button><button class="deck-chip" data-deck="redshift" style="--avatar:oklch(50% .16 22)">RS</button><button class="deck-chip" data-deck="mari" style="--avatar:oklch(46% .12 204)">MA</button><button class="deck-chip" data-deck="forest" style="--avatar:oklch(43% .11 133)">FB</button><button class="deck-chip" data-deck="nao" style="--avatar:oklch(47% .12 70)">LN</button></div>
+            <p class="deck-help"><b>Swipe through sources.</b><br>The selected channel gets the full control surface; the rest stay one tap away.</p>
+            <div class="deck-foot"><button>＋ Add</button><button>Feedback</button><button>Settings</button></div>
+          </aside>
+          <div class="feed-ghost"><div class="ghost-toolbar"><div><h2>Cirno TV</h2><span>Live message feed</span></div><div class="ghost-search"></div></div><div class="ghost-feed"></div><div class="concept-note"><b>09 · Channel deck</b><span>A tactile, one-at-a-time approach for small sets where each channel deserves personality.</span></div></div>
+        </div>
+      </article>
+
+      <!-- 10 -->
+      <article class="concept constellation" id="concept-10" role="tabpanel" aria-labelledby="tab-10" hidden>
+        <div class="mock-topbar"><div class="mock-brand"><span class="brand-glyph">TL</span><span><strong>TwitchLogger</strong><small>Live chat archive</small></span></div><span class="mock-status">Network mapped</span></div>
+        <div class="mock-body">
+          <aside class="side-demo constellation-side">
+            <div class="constellation-head"><h3>Channel space</h3><span>5 nodes · 4 live</span></div>
+            <div class="star-map">
+              <svg viewBox="0 0 400 450" preserveAspectRatio="none" aria-hidden="true"><line class="active" x1="200" y1="215" x2="100" y2="94"/><line x1="200" y1="215" x2="304" y2="82"/><line x1="200" y1="215" x2="332" y2="256"/><line x1="200" y1="215" x2="250" y2="382"/><line x1="200" y1="215" x2="74" y2="344"/></svg>
+              <button class="star-node hub" style="left:50%;top:48%"><i>∞</i><b>All channels</b><small>Combined signal</small></button>
+              <button class="star-node is-selected" data-selectable style="left:25%;top:21%"><i>CI</i><b>Cirno TV</b><small>Live</small></button>
+              <button class="star-node" data-selectable style="left:76%;top:18%"><i>RS</i><b>Redshift</b><small>Live</small></button>
+              <button class="star-node" data-selectable style="left:83%;top:57%"><i>MA</i><b>Mari Arcade</b><small>Joining</small></button>
+              <button class="star-node" data-selectable style="left:62%;top:85%"><i>FB</i><b>Forest Byte</b><small>Live</small></button>
+              <button class="star-node" data-selectable style="left:18%;top:77%"><i>LN</i><b>LateNight_Nao</b><small>Error</small></button>
+            </div>
+            <div class="constellation-dock"><button>＋ Add node</button><button>Feedback</button><button>Settings</button></div>
+          </aside>
+          <div class="feed-ghost"><div class="ghost-toolbar"><div><h2>Cirno TV</h2><span>Selected signal</span></div><div class="ghost-search"></div></div><div class="ghost-feed"></div><div class="concept-note"><b>10 · Constellation</b><span>A spatial map makes the combined feed the hub and treats every source as a connected signal.</span></div></div>
+        </div>
+      </article>
+    </section>
+
+    <footer class="lab-footer"><span><b>Tip:</b> use ← and → while the concept picker is focused.</span><span>This is an isolated HTML prototype. It does not import or modify application code.</span></footer>
+  </main>
+
+  <script>
+    const tabs = [...document.querySelectorAll('.concept-tab')];
+    const concepts = [...document.querySelectorAll('.concept')];
+
+    function showConcept(index, focus = false) {
+      tabs.forEach((tab, i) => {
+        const active = i === index;
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        if (active && focus) tab.focus();
+      });
+      concepts.forEach((concept, i) => {
+        const active = i === index;
+        concept.classList.toggle('is-active', active);
+        concept.hidden = !active;
+      });
+      history.replaceState(null, '', `#concept-${index + 1}`);
+    }
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => showConcept(index));
+      tab.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        let next = index;
+        if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+        if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+        if (event.key === 'Home') next = 0;
+        if (event.key === 'End') next = tabs.length - 1;
+        showConcept(next, true);
+      });
+    });
+
+    document.querySelectorAll('[data-selectable]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const scope = button.closest('.side-demo');
+        scope.querySelectorAll('[data-selectable]').forEach((item) => {
+          const selectedClass = item.closest('.ledger-row, .accordion-row') || item;
+          selectedClass.classList.remove('is-selected');
+        });
+        const selectedClass = button.closest('.ledger-row, .accordion-row') || button;
+        selectedClass.classList.add('is-selected');
+      });
+    });
+
+    const dockChannels = {
+      cirno: ['Cirno TV', '@cirno_tv · Twitch'], redshift: ['Redshift', '@redshiftlive · Twitch'],
+      mari: ['Mari Arcade', '@mari_arcade · Twitch'], forest: ['Forest Byte', '@forestbyte · Twitch'],
+      nao: ['LateNight_Nao', '@latenight_nao · Twitch']
+    };
+    document.querySelectorAll('[data-dock]').forEach((button) => button.addEventListener('click', () => {
+      document.querySelectorAll('[data-dock]').forEach((item) => item.classList.remove('is-selected'));
+      button.classList.add('is-selected');
+      document.querySelector('#dock-name').textContent = dockChannels[button.dataset.dock][0];
+      document.querySelector('#dock-handle').textContent = dockChannels[button.dataset.dock][1];
+    }));
+
+    const deckChips = [...document.querySelectorAll('[data-deck]')];
+    function showDeck(key) {
+      document.querySelectorAll('[data-card]').forEach((card) => card.classList.toggle('is-selected', card.dataset.card === key));
+      deckChips.forEach((chip) => chip.classList.toggle('is-selected', chip.dataset.deck === key));
+    }
+    deckChips.forEach((chip) => chip.addEventListener('click', () => showDeck(chip.dataset.deck)));
+    document.querySelector('#deck-prev').addEventListener('click', () => {
+      const current = deckChips.findIndex((chip) => chip.classList.contains('is-selected'));
+      showDeck(deckChips[(current - 1 + deckChips.length) % deckChips.length].dataset.deck);
+    });
+    document.querySelector('#deck-next').addEventListener('click', () => {
+      const current = deckChips.findIndex((chip) => chip.classList.contains('is-selected'));
+      showDeck(deckChips[(current + 1) % deckChips.length].dataset.deck);
+    });
+
+    document.querySelectorAll('.ghost-feed').forEach((feed) => {
+      for (let i = 0; i < 7; i += 1) {
+        const message = document.createElement('div');
+        message.className = 'ghost-message';
+        message.innerHTML = `<span class="ghost-avatar"></span><span class="ghost-lines"><i style="width:${18 + (i % 3) * 7}%"></i><i style="width:${58 + (i % 4) * 8}%"></i></span>`;
+        feed.append(message);
+      }
+    });
+
+    const initial = Number(location.hash.match(/concept-(\d+)/)?.[1]);
+    if (initial >= 1 && initial <= 10) showConcept(initial - 1);
+  </script>
+</body>
+</html>

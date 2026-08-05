@@ -1,8 +1,7 @@
 import { createHmac } from "node:crypto";
 import type { PoolClient } from "pg";
+import type { FeedbackKind } from "../shared/feedback";
 import type { PostgresDatabase } from "./database";
-
-export type FeedbackKind = "feedback" | "issue";
 
 export interface FeedbackSubmission {
   kind: FeedbackKind;

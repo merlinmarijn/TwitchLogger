@@ -36,6 +36,8 @@ Configure:
 - `FEEDBACK_RATE_LIMIT_MINUTES`: cooldown between feedback or issue reports from the same IP (defaults to `15`).
 - `TRUST_PROXY_HOPS`: exact number of trusted reverse-proxy hops in front of the app (defaults to `0`). Set this correctly so feedback throttling uses the visitor IP without trusting spoofed forwarding headers.
 
+Submitted feedback and bug reports can be reviewed from the protected **Submissions** section at `/admin`. New submissions start open and can be closed, reopened, flagged, searched, and filtered there.
+
 Build and run:
 
 ```powershell

@@ -19,6 +19,67 @@ afterEach(async () => {
 });
 
 describe("setup-mode HTTP server", () => {
+  it("lists and classifies feedback through the protected admin API", async () => {
+    let listOptions: unknown;
+    let classification: unknown;
+    const configuration = {
+      ...loadConfiguration({ TWITCH_FRONTEND_URL: "http://localhost:5173" }),
+      port: 0,
+      adminOptions: {
+        setupSecret: "test-secret",
+        encryptionKey: Buffer.alloc(32, 1),
+      },
+    };
+    const report = {
+      _id: "42",
+      kind: "issue" as const,
+      description: "The feed stopped loading",
+      status: "open" as const,
+      flags: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const server = await createHttpServer(
+      configuration,
+      { database: {} as PostgresDatabase },
+      createLogger("silent"),
+      {
+        createAdminService: () => ({
+          listFeedback: async (_session: string | undefined, options: unknown) => {
+            listOptions = options;
+            return { submissions: [report], total: 1, page: 0, pageSize: 50 };
+          },
+          classifyFeedback: async (
+            _session: string | undefined,
+            reportId: string,
+            status: unknown,
+            flags: unknown,
+          ) => {
+            classification = { reportId, status, flags };
+            return { ...report, status, flags };
+          },
+          recordMetric: async () => undefined,
+        }) as unknown as AdminService,
+      },
+    );
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+
+    const list = await fetch(
+      `http://127.0.0.1:${port}/api/admin/feedback?kind=issue&status=open&flag=urgent&page=0`,
+    );
+    expect(list.status).toBe(200);
+    expect(listOptions).toMatchObject({ kind: "issue", status: "open", flag: "urgent", page: 0 });
+
+    const update = await fetch(`http://127.0.0.1:${port}/api/admin/feedback/42`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://localhost:5173" },
+      body: JSON.stringify({ status: "closed", flags: ["non-issue"] }),
+    });
+    expect(update.status).toBe(200);
+    expect(classification).toEqual({ reportId: "42", status: "closed", flags: ["non-issue"] });
+  });
+
   it("returns the feedback cooldown and retry header", async () => {
     const configuration = {
       ...loadConfiguration({

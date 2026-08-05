@@ -6,6 +6,7 @@ import { loadConfiguration } from "../worker/config";
 import { PostgresDatabase } from "../worker/database";
 import { createHttpServer } from "../worker/httpServer";
 import { createLogger } from "../worker/logger";
+import { FeedbackService } from "../worker/FeedbackService";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -62,6 +63,20 @@ describe.skipIf(!databaseUrl)("PostgreSQL admin control room", () => {
     expect(dashboard.databaseStats?.tables.map((table) => table.name)).toContain("chat_messages");
     expect(dashboard.metrics.functionCalls).toBeGreaterThan(0);
     expect(dashboard.metrics.cacheHits).toBeGreaterThan(0);
+
+    const feedback = new FeedbackService(database, 15, "integration-feedback-secret");
+    const description = `Integration issue ${Date.now()}`;
+    await feedback.submit({ kind: "issue", description }, `integration-${Date.now()}`);
+    const inbox = await admin.listFeedback(session, { search: description });
+    expect(inbox.submissions).toHaveLength(1);
+    expect(inbox.submissions[0]).toMatchObject({ kind: "issue", status: "open", flags: [] });
+    const classified = await admin.classifyFeedback(
+      session,
+      inbox.submissions[0]!._id,
+      "closed",
+      ["non-issue"],
+    );
+    expect(classified).toMatchObject({ status: "closed", flags: ["non-issue"] });
 
     const configuration = {
       ...loadConfiguration({ TWITCH_FRONTEND_URL: "http://localhost:5173" }),

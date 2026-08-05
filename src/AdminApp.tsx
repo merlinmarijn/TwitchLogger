@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  FEEDBACK_FLAG_DEFINITIONS,
+  isFeedbackFlagAllowed,
+  type FeedbackFlag,
+  type FeedbackKind,
+  type FeedbackStatus,
+} from "../shared/feedback";
 import { workerUrl } from "./runtimeConfig";
 import "./admin.css";
 
@@ -50,6 +57,32 @@ type Dashboard = {
   channels: { total: number; logging: number; connected: number; problems: number };
   latestMessageAt?: number;
   auditLog: Array<{ _id: string; event: string; detail: string; actor: string; createdAt: number }>;
+};
+
+type FeedbackSubmission = {
+  _id: string;
+  kind: FeedbackKind;
+  description: string;
+  status: FeedbackStatus;
+  flags: FeedbackFlag[];
+  createdAt: number;
+  updatedAt: number;
+  closedAt?: number;
+};
+
+type FeedbackResponse = {
+  submissions: FeedbackSubmission[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: {
+    total: number;
+    open: number;
+    closed: number;
+    feedback: number;
+    issues: number;
+    unclassified: number;
+  };
 };
 
 const operations: Array<{
@@ -360,6 +393,7 @@ function DashboardScreen({
         <a className="rail-brand" href="/"><img alt="" className="admin-seal small" src="/brand/twitch-logger-icon-64.png" /><span>Twitch Logger<small>Control room</small></span></a>
         <nav aria-label="Admin sections">
           <a href="#overview"><OverviewIcon />Overview</a>
+          <a href="#submissions"><InboxIcon />Submissions</a>
           <a href="#operations"><PulseIcon />Operations{activeJobs.length ? <b>{activeJobs.length}</b> : null}</a>
           <a href="#database"><DatabaseIcon />Database</a>
           <button onClick={() => setSecurityOpen((value) => !value)}><LockIcon />Security</button>
@@ -389,9 +423,11 @@ function DashboardScreen({
 
         <ActiveJobLedger activeJobs={activeJobs} onCancel={cancel} working={working} />
 
+        <FeedbackWorkspace onNotice={onNotice} />
+
         <section className="admin-section" id="operations">
           <div className="section-heading">
-            <div><div className="section-kicker"><span>02</span> OPERATIONS</div><h2>Maintenance, on demand</h2></div>
+            <div><div className="section-kicker"><span>03</span> OPERATIONS</div><h2>Maintenance, on demand</h2></div>
             <p>Operations run one at a time in paced, bounded batches so live logging and browsing stay responsive.</p>
           </div>
           <div className="operation-ledger">
@@ -459,6 +495,200 @@ function ActiveJobLedger({ activeJobs, onCancel, working }: { activeJobs: AdminJ
   );
 }
 
+function FeedbackWorkspace({ onNotice }: { onNotice: (message: string) => void }) {
+  const [data, setData] = useState<FeedbackResponse>();
+  const [kind, setKind] = useState<"all" | FeedbackKind>("all");
+  const [status, setStatus] = useState<"all" | FeedbackStatus>("open");
+  const [flag, setFlag] = useState<"all" | FeedbackFlag>("all");
+  const [searchDraft, setSearchDraft] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [selectedId, setSelectedId] = useState<string>();
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState<string>();
+
+  const load = useCallback(async () => {
+    const params = new URLSearchParams({ page: String(page), pageSize: "50" });
+    if (kind !== "all") params.set("kind", kind);
+    if (status !== "all") params.set("status", status);
+    if (flag !== "all") params.set("flag", flag);
+    if (search) params.set("search", search);
+    try {
+      const next = await adminFetch<FeedbackResponse>(`/feedback?${params}`);
+      setData(next);
+      setSelectedId((current) =>
+        current && next.submissions.some((submission) => submission._id === current)
+          ? current
+          : next.submissions[0]?._id
+      );
+    } catch (error) {
+      onNotice(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }, [flag, kind, onNotice, page, search, status]);
+
+  useEffect(() => {
+    const initial = window.setTimeout(() => {
+      setLoading(true);
+      void load();
+    }, 0);
+    const interval = window.setInterval(() => void load(), 15_000);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(interval);
+    };
+  }, [load]);
+
+  const save = async (
+    submission: FeedbackSubmission,
+    nextStatus: FeedbackStatus,
+    nextFlags: FeedbackFlag[],
+  ) => {
+    setWorking(submission._id);
+    try {
+      await adminFetch(`/feedback/${encodeURIComponent(submission._id)}`, {
+        method: "POST",
+        body: { status: nextStatus, flags: nextFlags },
+      });
+      await load();
+      onNotice(`${submission.kind === "issue" ? "Issue" : "Feedback"} #${submission._id} updated.`);
+    } catch (error) {
+      onNotice(errorMessage(error));
+    } finally {
+      setWorking(undefined);
+    }
+  };
+
+  const selected = data?.submissions.find((submission) => submission._id === selectedId);
+  const pageCount = data ? Math.ceil(data.total / data.pageSize) : 0;
+  const summaryItems = [
+    { label: "Open", value: data?.summary.open ?? 0 },
+    { label: "Bug reports", value: data?.summary.issues ?? 0 },
+    { label: "Feedback", value: data?.summary.feedback ?? 0 },
+    { label: "Unclassified", value: data?.summary.unclassified ?? 0 },
+  ];
+
+  return (
+    <section className="admin-section submissions-section" id="submissions">
+      <div className="section-heading submissions-heading">
+        <div><div className="section-kicker"><span>02</span> SUBMISSIONS</div><h2>Inbox to action</h2></div>
+        <p>Review what users send, classify the work, and close the loop without leaving the control room.</p>
+      </div>
+
+      <div className="submission-summary" aria-label="Submission totals">
+        {summaryItems.map((item) => <div key={item.label}><strong>{compact(item.value)}</strong><span>{item.label}</span></div>)}
+      </div>
+
+      <form
+        className="submission-filters"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setPage(0);
+          setSearch(searchDraft.trim());
+        }}
+      >
+        <label className="submission-search">
+          <span className="visually-hidden">Search submissions</span>
+          <SearchIcon />
+          <input
+            onChange={(event) => setSearchDraft(event.target.value)}
+            placeholder="Search descriptions"
+            type="search"
+            value={searchDraft}
+          />
+          <button type="submit">Search</button>
+        </label>
+        <label><span>Type</span><select value={kind} onChange={(event) => { setPage(0); setKind(event.target.value as typeof kind); }}><option value="all">All types</option><option value="feedback">Feedback</option><option value="issue">Bug reports</option></select></label>
+        <label><span>Status</span><select value={status} onChange={(event) => { setPage(0); setStatus(event.target.value as typeof status); }}><option value="all">Any status</option><option value="open">Open</option><option value="closed">Closed</option></select></label>
+        <label><span>Flag</span><select value={flag} onChange={(event) => { setPage(0); setFlag(event.target.value as typeof flag); }}><option value="all">Any flag</option>{FEEDBACK_FLAG_DEFINITIONS.map((definition) => <option key={definition.id} value={definition.id}>{definition.label}</option>)}</select></label>
+      </form>
+
+      <div className="submission-workspace">
+        <div className="submission-list" aria-busy={loading}>
+          <div className="submission-list-head">
+            <span>{loading && !data ? "Loading submissions…" : `${compact(data?.total ?? 0)} matching`}</span>
+            {search || kind !== "all" || status !== "all" || flag !== "all" ? <button onClick={() => { setKind("all"); setStatus("all"); setFlag("all"); setSearch(""); setSearchDraft(""); setPage(0); }} type="button">Clear filters</button> : null}
+          </div>
+          {data?.submissions.length ? data.submissions.map((submission) => (
+            <button
+              className={`submission-row ${submission._id === selectedId ? "selected" : ""}`}
+              key={submission._id}
+              onClick={() => setSelectedId(submission._id)}
+              type="button"
+            >
+              <span className={`submission-kind ${submission.kind}`}>{submission.kind === "issue" ? "BUG" : "NOTE"}</span>
+              <span className="submission-row-copy"><strong>{submission.description}</strong><small>{relativeTime(submission.createdAt)} · #{submission._id}</small></span>
+              <span className={`submission-status ${submission.status}`}><i />{submission.status}</span>
+              <span className="submission-row-flags">{submission.flags.slice(0, 2).map((item) => <i key={item}>{feedbackFlagLabel(item)}</i>)}{submission.flags.length > 2 ? <i>+{submission.flags.length - 2}</i> : null}</span>
+            </button>
+          )) : <div className="submission-empty"><InboxIcon /><strong>No submissions match</strong><span>Try widening the filters or check back after users send something new.</span></div>}
+          {pageCount > 1 ? <div className="submission-pagination"><button disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))} type="button">Previous</button><span>Page {page + 1} of {pageCount}</span><button disabled={page + 1 >= pageCount} onClick={() => setPage((current) => current + 1)} type="button">Next</button></div> : null}
+        </div>
+
+        {selected ? (
+          <FeedbackInspector
+            key={`${selected._id}:${selected.updatedAt}`}
+            saving={working === selected._id}
+            submission={selected}
+            onSave={(nextStatus, nextFlags) => void save(selected, nextStatus, nextFlags)}
+          />
+        ) : <div className="submission-inspector empty"><span>Select a submission to review its details and classification.</span></div>}
+      </div>
+    </section>
+  );
+}
+
+function FeedbackInspector({
+  submission,
+  saving,
+  onSave,
+}: {
+  submission: FeedbackSubmission;
+  saving: boolean;
+  onSave: (status: FeedbackStatus, flags: FeedbackFlag[]) => void;
+}) {
+  const [status, setStatus] = useState(submission.status);
+  const [flags, setFlags] = useState<FeedbackFlag[]>(submission.flags);
+  const groups = [...new Set(FEEDBACK_FLAG_DEFINITIONS.map((definition) => definition.group))];
+  const dirty = status !== submission.status ||
+    flags.length !== submission.flags.length ||
+    flags.some((flag) => !submission.flags.includes(flag));
+
+  const toggleFlag = (flag: FeedbackFlag) => {
+    setFlags((current) => current.includes(flag)
+      ? current.filter((candidate) => candidate !== flag)
+      : [...current, flag]);
+  };
+
+  return (
+    <article className="submission-inspector">
+      <header>
+        <div><span className={`submission-kind ${submission.kind}`}>{submission.kind === "issue" ? "BUG REPORT" : "FEEDBACK"}</span><span>#{submission._id}</span></div>
+        <time dateTime={new Date(submission.createdAt).toISOString()}>{new Date(submission.createdAt).toLocaleString()}</time>
+      </header>
+      <p className="submission-description">{submission.description}</p>
+
+      <div className="classification-heading"><div><strong>Status</strong><span>Open is the default for every new submission.</span></div><div className="status-switch"><button aria-pressed={status === "open"} onClick={() => setStatus("open")} type="button">Open</button><button aria-pressed={status === "closed"} onClick={() => setStatus("closed")} type="button">Closed</button></div></div>
+
+      <div className="flag-editor">
+        <div className="flag-editor-heading"><strong>Flags</strong><span>{flags.length} selected</span></div>
+        {groups.map((group) => {
+          const definitions = FEEDBACK_FLAG_DEFINITIONS.filter((definition) =>
+            definition.group === group && isFeedbackFlagAllowed(definition.id, submission.kind)
+          );
+          return <fieldset key={group}><legend>{group}</legend><div>{definitions.map((definition) => <label key={definition.id} className={flags.includes(definition.id) ? "selected" : ""}><input checked={flags.includes(definition.id)} onChange={() => toggleFlag(definition.id)} type="checkbox" /><span>{definition.label}</span></label>)}</div></fieldset>;
+        })}
+      </div>
+
+      <footer>
+        <span>{dirty ? "Unsaved classification changes" : `Updated ${relativeTime(submission.updatedAt)}`}</span>
+        <button className="admin-primary" disabled={!dirty || saving} onClick={() => onSave(status, flags)} type="button">{saving ? "Saving…" : "Save classification"}<ArrowIcon /></button>
+      </footer>
+    </article>
+  );
+}
+
 function DatabaseSection({
   data,
   onMeasure,
@@ -475,7 +705,7 @@ function DatabaseSection({
   return (
     <section className="admin-section database-section" id="database">
       <div className="section-heading">
-        <div><div className="section-kicker"><span>03</span> DATABASE</div><h2>What the archive weighs</h2></div>
+        <div><div className="section-kicker"><span>04</span> DATABASE</div><h2>What the archive weighs</h2></div>
         <button className="text-action" disabled={disabled} onClick={onMeasure}>{disabled ? measuring ? "Measuring…" : "Maintenance busy" : "Refresh measurement"}<ArrowIcon /></button>
       </div>
       {stats ? (
@@ -501,7 +731,7 @@ function JobHistory({ jobs }: { jobs: AdminJob[] }) {
   const history = jobs.filter((job) => !["queued", "running", "cancelling"].includes(job.status)).slice(0, 8);
   return (
     <section className="admin-section history-section">
-      <div className="section-heading"><div><div className="section-kicker"><span>04</span> RUN HISTORY</div><h2>Completed work</h2></div></div>
+      <div className="section-heading"><div><div className="section-kicker"><span>05</span> RUN HISTORY</div><h2>Completed work</h2></div></div>
       {history.length ? <div className="history-table">
         <div className="history-head"><span>Operation</span><span>Result</span><span>Processed</span><span>Finished</span></div>
         {history.map((job) => <div className="history-row" key={job._id}><span><strong>{job.title}</strong><small>{job.error ?? job.detail}</small></span><StatusStamp status={job.status} /><span>{compact(job.current)} {job.unit}</span><time>{job.finishedAt ? relativeTime(job.finishedAt) : "—"}</time></div>)}
@@ -513,7 +743,7 @@ function JobHistory({ jobs }: { jobs: AdminJob[] }) {
 function AuditTrail({ entries }: { entries: Dashboard["auditLog"] }) {
   return (
     <section className="admin-section audit-section">
-      <div className="section-heading"><div><div className="section-kicker"><span>05</span> AUDIT TRAIL</div><h2>Every privileged action</h2></div></div>
+      <div className="section-heading"><div><div className="section-kicker"><span>06</span> AUDIT TRAIL</div><h2>Every privileged action</h2></div></div>
       <div className="audit-list">{entries.length ? entries.map((entry) => <div key={entry._id}><i /><time>{new Date(entry.createdAt).toLocaleString()}</time><strong>{entry.detail}</strong><span>{entry.actor}</span></div>) : <p className="quiet-empty">No privileged actions recorded.</p>}</div>
     </section>
   );
@@ -592,6 +822,7 @@ function InlineError({ children }: { children: ReactNode }) { return <div classN
 function Freshness({ data }: { data?: Dashboard }) { return <div className="freshness"><i /><span>Live data<small>{data ? `Updated ${relativeTime(data.generatedAt)}` : "Connecting…"}</small></span></div>; }
 function StatusStamp({ status, label }: { status: JobStatus; label?: string }) { return <span className={`status-stamp ${status}`}><i />{label ?? humanize(status)}</span>; }
 
+function feedbackFlagLabel(flag: FeedbackFlag) { return FEEDBACK_FLAG_DEFINITIONS.find((definition) => definition.id === flag)?.label ?? humanize(flag); }
 function compact(value: number) { return new Intl.NumberFormat(undefined, { notation: value >= 10_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value); }
 function formatBytes(bytes: number) { const units = ["B", "kB", "MB", "GB", "TB"]; let value = bytes; let index = 0; while (value >= 1_000 && index < units.length - 1) { value /= 1_000; index += 1; } return `${value.toFixed(index === 0 ? 0 : value >= 10 ? 1 : 2)} ${units[index]}`; }
 function humanize(value: string) { return value.replaceAll(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase()); }
@@ -618,3 +849,5 @@ function LockIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><rect x
 function OverviewIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm10 7h6V11h-6v9ZM4 20h6v-3H4v3Zm10-13h6V4h-6v3Z" /></svg>; }
 function PulseIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6" /></svg>; }
 function DatabaseIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" /></svg>; }
+function InboxIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h16v14H4V5Zm0 9h4l2 2h4l2-2h4" /></svg>; }
+function SearchIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 5 5" /></svg>; }

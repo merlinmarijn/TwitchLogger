@@ -20,6 +20,7 @@ import {
   AdminAuthError,
   AdminService,
   type AdminJobKind,
+  type FeedbackListOptions,
 } from "./AdminService";
 import { isImgurPost, isTouhouWikiImage } from "../shared/imageUrls";
 import { resolveImgurImageUrl } from "./imgurImage";
@@ -251,6 +252,43 @@ export function createHttpServer(
     if (!admin) return sendAdminUnavailable(response);
     try {
       response.json(await admin.dashboard(readAdminCookie(request.headers.cookie)));
+    } catch (error) {
+      sendAdminError(response, error, logger);
+    }
+  });
+
+  app.get("/api/admin/feedback", async (request, response) => {
+    if (!admin) return sendAdminUnavailable(response);
+    const options: FeedbackListOptions = {
+      ...(typeof request.query.kind === "string"
+        ? { kind: request.query.kind as FeedbackListOptions["kind"] }
+        : {}),
+      ...(typeof request.query.status === "string"
+        ? { status: request.query.status as FeedbackListOptions["status"] }
+        : {}),
+      ...(typeof request.query.flag === "string"
+        ? { flag: request.query.flag as FeedbackListOptions["flag"] }
+        : {}),
+      ...(typeof request.query.search === "string" ? { search: request.query.search } : {}),
+      page: parseNonNegativeInteger(request.query.page, 0),
+      pageSize: parseNonNegativeInteger(request.query.pageSize, 50),
+    };
+    try {
+      response.json(await admin.listFeedback(readAdminCookie(request.headers.cookie), options));
+    } catch (error) {
+      sendAdminError(response, error, logger);
+    }
+  });
+
+  app.post("/api/admin/feedback/:reportId", async (request, response) => {
+    if (!admin) return sendAdminUnavailable(response);
+    try {
+      response.json(await admin.classifyFeedback(
+        readAdminCookie(request.headers.cookie),
+        request.params.reportId,
+        request.body?.status,
+        request.body?.flags,
+      ));
     } catch (error) {
       sendAdminError(response, error, logger);
     }
@@ -777,4 +815,10 @@ function parseHiddenImages(value: unknown): HiddenImageInput[] | undefined {
     unique.set(`${messageId}\u0000${url}`, { messageId, url });
   }
   return [...unique.values()];
+}
+
+function parseNonNegativeInteger(value: unknown, fallback: number) {
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
 }

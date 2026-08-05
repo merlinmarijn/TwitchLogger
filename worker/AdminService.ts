@@ -8,6 +8,15 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import QRCode from "qrcode";
+import {
+  isFeedbackFlag,
+  isFeedbackFlagAllowed,
+  isFeedbackKind,
+  isFeedbackStatus,
+  type FeedbackFlag,
+  type FeedbackKind,
+  type FeedbackStatus,
+} from "../shared/feedback";
 import { IMAGE_INDEX_VERSION } from "../shared/imageUrls";
 import { ColdMessageArchiveService } from "./ColdMessageArchiveService";
 import type { PostgresDatabase } from "./database";
@@ -93,7 +102,17 @@ const measuredTables = [
   "chat_message_cold_chunks",
   "admin_jobs",
   "admin_audit_log",
+  "feedback_reports",
 ] as const;
+
+export interface FeedbackListOptions {
+  kind?: FeedbackKind;
+  status?: FeedbackStatus;
+  flag?: FeedbackFlag;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
 
 export class AdminService {
   private readonly signingKey: Buffer;
@@ -303,6 +322,124 @@ export class AdminService {
         createdAt: Number(entry.created_at),
       })),
     };
+  }
+
+  async listFeedback(sessionToken: string | undefined, options: FeedbackListOptions = {}) {
+    await this.requireSession(sessionToken);
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    const bind = (value: unknown) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+
+    if (options.kind !== undefined) {
+      if (!isFeedbackKind(options.kind)) throw new AdminAuthError("Unknown submission type", 400);
+      conditions.push(`kind = ${bind(options.kind)}`);
+    }
+    if (options.status !== undefined) {
+      if (!isFeedbackStatus(options.status)) throw new AdminAuthError("Unknown submission status", 400);
+      conditions.push(`status = ${bind(options.status)}`);
+    }
+    if (options.flag !== undefined) {
+      if (!isFeedbackFlag(options.flag)) throw new AdminAuthError("Unknown submission flag", 400);
+      conditions.push(`flags @> ARRAY[${bind(options.flag)}]::text[]`);
+    }
+    const search = options.search?.trim().slice(0, 120);
+    if (search) conditions.push(`description ILIKE ${bind(`%${search}%`)}`);
+
+    const page = Math.min(1_000_000, Math.max(0, Math.floor(options.page ?? 0)));
+    const pageSize = Math.max(1, Math.min(100, Math.floor(options.pageSize ?? 50)));
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const [reports, count, summary] = await Promise.all([
+      this.database.query<FeedbackReportRow>(`
+        SELECT id, kind, description, status, flags, created_at, updated_at, closed_at
+        FROM feedback_reports
+        ${where}
+        ORDER BY (status = 'open') DESC, created_at DESC
+        LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+      `, [...values, pageSize, page * pageSize]),
+      this.database.query<{ count: string }>(`
+        SELECT count(*)::bigint AS count FROM feedback_reports ${where}
+      `, values),
+      this.database.query<FeedbackSummaryRow>(`
+        SELECT
+          count(*)::bigint AS total,
+          count(*) FILTER (WHERE status = 'open')::bigint AS open,
+          count(*) FILTER (WHERE status = 'closed')::bigint AS closed,
+          count(*) FILTER (WHERE kind = 'feedback')::bigint AS feedback,
+          count(*) FILTER (WHERE kind = 'issue')::bigint AS issues,
+          count(*) FILTER (WHERE cardinality(flags) = 0)::bigint AS unclassified
+        FROM feedback_reports
+      `),
+    ]);
+    const totals = summary.rows[0];
+    return {
+      submissions: reports.rows.map(toFeedbackReport),
+      total: Number(count.rows[0]?.count ?? 0),
+      page,
+      pageSize,
+      summary: {
+        total: Number(totals?.total ?? 0),
+        open: Number(totals?.open ?? 0),
+        closed: Number(totals?.closed ?? 0),
+        feedback: Number(totals?.feedback ?? 0),
+        issues: Number(totals?.issues ?? 0),
+        unclassified: Number(totals?.unclassified ?? 0),
+      },
+    };
+  }
+
+  async classifyFeedback(
+    sessionToken: string | undefined,
+    reportId: string,
+    status: unknown,
+    flags: unknown,
+  ) {
+    await this.requireSession(sessionToken);
+    if (!/^\d+$/.test(reportId)) throw new AdminAuthError("Unknown submission", 404);
+    if (!isFeedbackStatus(status)) throw new AdminAuthError("Choose open or closed", 400);
+    if (!Array.isArray(flags) || flags.length > 25 || !flags.every(isFeedbackFlag)) {
+      throw new AdminAuthError("One or more submission flags are invalid", 400);
+    }
+    const normalizedFlags = [...new Set(flags)] as FeedbackFlag[];
+    const client = await this.database.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const current = await client.query<{ kind: FeedbackKind }>(`
+        SELECT kind FROM feedback_reports WHERE id = $1 FOR UPDATE
+      `, [reportId]);
+      const kind = current.rows[0]?.kind;
+      if (!kind) throw new AdminAuthError("This submission no longer exists", 404);
+      if (normalizedFlags.some((flag) => !isFeedbackFlagAllowed(flag, kind))) {
+        throw new AdminAuthError("Non-issue can only be applied to bug reports", 400);
+      }
+      const updated = await client.query<FeedbackReportRow>(`
+        UPDATE feedback_reports
+        SET status = $2,
+            flags = $3,
+            updated_at = now(),
+            closed_at = CASE
+              WHEN $2 = 'closed' THEN COALESCE(closed_at, now())
+              ELSE NULL
+            END
+        WHERE id = $1
+        RETURNING id, kind, description, status, flags, created_at, updated_at, closed_at
+      `, [reportId, status, normalizedFlags]);
+      await insertAudit(
+        client,
+        "feedback.classified",
+        `${kind === "issue" ? "Issue" : "Feedback"} #${reportId} marked ${status} with ${normalizedFlags.length} flag${normalizedFlags.length === 1 ? "" : "s"}`,
+        "super-admin",
+      );
+      await client.query("COMMIT");
+      return toFeedbackReport(updated.rows[0]!);
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async startJob(sessionToken: string | undefined, kind: AdminJobKind) {
@@ -772,6 +909,26 @@ interface AuditRow {
   created_at: string;
 }
 
+interface FeedbackReportRow {
+  id: string;
+  kind: FeedbackKind;
+  description: string;
+  status: FeedbackStatus;
+  flags: FeedbackFlag[];
+  created_at: Date | string;
+  updated_at: Date | string;
+  closed_at: Date | string | null;
+}
+
+interface FeedbackSummaryRow {
+  total: string;
+  open: string;
+  closed: string;
+  feedback: string;
+  issues: string;
+  unclassified: string;
+}
+
 interface ImageReindexRow {
   id: string;
   channel_id: string;
@@ -823,6 +980,23 @@ async function insertAudit(
 
 function yieldToEventLoop() {
   return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+function toFeedbackReport(report: FeedbackReportRow) {
+  return {
+    _id: String(report.id),
+    kind: report.kind,
+    description: report.description,
+    status: report.status,
+    flags: report.flags,
+    createdAt: timestampMs(report.created_at),
+    updatedAt: timestampMs(report.updated_at),
+    ...(report.closed_at === null ? {} : { closedAt: timestampMs(report.closed_at) }),
+  };
+}
+
+function timestampMs(value: Date | string) {
+  return value instanceof Date ? value.getTime() : new Date(value).getTime();
 }
 
 function createProgressReporter(

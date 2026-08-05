@@ -807,12 +807,6 @@ function ChannelSidebar({
 
   return (
     <aside className="sidebar channels-panel command-sidebar">
-      <header className="command-sidebar-heading">
-        <span className="eyebrow">Channel command</span>
-        <h2>Jump to a feed</h2>
-        <p>Search by name or use a number key.</p>
-      </header>
-
       <div className="channel-command-search">
         <label htmlFor="channel-command-query">Find a channel</label>
         <div className="channel-command-field">

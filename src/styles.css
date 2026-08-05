@@ -33,10 +33,7 @@ h1 { font-size: 22px; }
 h2 { font-size: 18px; }
 .eyebrow { display: block; color: #bf94ff; text-transform: uppercase; font-weight: 800; font-size: 10px; letter-spacing: .12em; margin-bottom: 4px; }
 .command-sidebar { --command-line: #303036; --command-soft: #202024; --command-hover: #25252a; --command-selected: #292331; --command-selected-line: #5d477c; padding: 0; gap: 0; }
-.command-sidebar-heading { padding: 22px 18px 12px; }
-.command-sidebar-heading h2 { font-size: 18px; letter-spacing: -.02em; }
-.command-sidebar-heading p { margin-top: 5px; color: #8f8f99; font-size: 11px; line-height: 1.4; }
-.channel-command-search { display: grid; gap: 6px; padding: 0 14px 13px; }
+.channel-command-search { display: grid; gap: 6px; padding: 18px 14px 13px; }
 .channel-command-search > label { padding-left: 3px; color: #a7a7b2; font-size: 10px; font-weight: 750; }
 .channel-command-field { height: 40px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 3px; border: 1px solid #3a3a41; border-radius: 7px; padding: 0 7px; background: #141416; transition: border-color 140ms cubic-bezier(.25, 1, .5, 1), background-color 140ms cubic-bezier(.25, 1, .5, 1); }
 .channel-command-field:focus-within { border-color: #7957ad; background: #19171d; box-shadow: 0 0 0 1px #7957ad40; }
@@ -1036,9 +1033,7 @@ h2 { font-size: 18px; }
   .app-shell { height: auto; min-height: 100vh; overflow: visible; }
   .dashboard { display: block; }
   .channels-panel { height: min(420px, calc(100vh - 72px)); max-height: none; border: 0; border-bottom: 1px solid var(--border); }
-  .command-sidebar-heading { padding: 16px 14px 8px; }
-  .command-sidebar-heading p { margin-top: 3px; }
-  .channel-command-search { padding: 0 12px 9px; }
+  .channel-command-search { padding: 14px 12px 9px; }
   .command-feed-item, .command-channel-main { width: calc(100% - 24px); margin-inline: 12px; }
   .command-group-heading.channels { padding-top: 9px; }
   .command-sidebar-footer { padding-bottom: max(8px, env(safe-area-inset-bottom)); }

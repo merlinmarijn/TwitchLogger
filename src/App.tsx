@@ -2037,23 +2037,33 @@ function useThirdPartyEmotes(channelIds: string[]) {
     const ids = channelIdKey ? channelIdKey.split(",") : [];
     if (ids.length === 0) return;
     const controller = new AbortController();
-    void Promise.all(
-      ids.map(async (id) => {
-        const response = await fetch(`${workerUrl}/emotes/twitch/${encodeURIComponent(id)}`, {
-          signal: controller.signal,
+
+    const loadCatalogs = () => {
+      void Promise.all(
+        ids.map(async (id) => {
+          const response = await fetch(`${workerUrl}/emotes/twitch/${encodeURIComponent(id)}`, {
+            cache: "no-cache",
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new Error(`Could not load emotes for Twitch channel ${id}`);
+          const body = (await response.json()) as { emotes?: ThirdPartyEmote[] };
+          return [id, new Map((body.emotes ?? []).map((emote) => [emote.name, emote]))] as const;
+        }),
+      )
+        .then((entries) => setCatalogs((current) => new Map([...current, ...entries])))
+        .catch((error: unknown) => {
+          if (!(error instanceof DOMException && error.name === "AbortError")) {
+            console.warn("Third-party emotes are unavailable; showing message text", error);
+          }
         });
-        if (!response.ok) throw new Error(`Could not load emotes for Twitch channel ${id}`);
-        const body = (await response.json()) as { emotes?: ThirdPartyEmote[] };
-        return [id, new Map((body.emotes ?? []).map((emote) => [emote.name, emote]))] as const;
-      }),
-    )
-      .then((entries) => setCatalogs((current) => new Map([...current, ...entries])))
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          console.warn("Third-party emotes are unavailable; showing message text", error);
-        }
-      });
-    return () => controller.abort();
+    };
+
+    loadCatalogs();
+    const interval = window.setInterval(loadCatalogs, 60_000);
+    return () => {
+      window.clearInterval(interval);
+      controller.abort();
+    };
   }, [channelIdKey]);
 
   return catalogs;

@@ -42,16 +42,16 @@ describe("message emotes", () => {
 });
 
 describe("third-party emote API parsing", () => {
-  it("combines BTTV channel and shared emotes", () => {
+  it("combines BTTV channel emotes and honors shared-emote code aliases", () => {
     expect(parseBetterTtvChannel({
       channelEmotes: [
         { id: "one", code: "ChannelEmote" },
         { id: "effect", code: "z!", modifier: true },
       ],
-      sharedEmotes: [{ id: "two", code: "SharedEmote" }],
+      sharedEmotes: [{ id: "two", code: "SharedAlias", name: "OriginalName" }],
     })).toEqual([
       { name: "ChannelEmote", source: "bttv", url: "https://cdn.betterttv.net/emote/one/2x" },
-      { name: "SharedEmote", source: "bttv", url: "https://cdn.betterttv.net/emote/two/2x" },
+      { name: "SharedAlias", source: "bttv", url: "https://cdn.betterttv.net/emote/two/2x" },
     ]);
   });
 

@@ -38,7 +38,7 @@ interface CachedJson {
 
 type Fetcher = typeof fetch;
 
-const CACHE_TTL_MS = 15 * 60 * 1000;
+const CACHE_TTL_MS = 5 * 60 * 1000;
 const BETTER_TTV_API = "https://api.betterttv.net/3/cached";
 const FRANKER_FACE_Z_API = "https://api.frankerfacez.com/v1";
 const SEVEN_TV_API = "https://7tv.io/v3";

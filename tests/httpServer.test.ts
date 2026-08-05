@@ -94,6 +94,11 @@ describe("setup-mode HTTP server", () => {
       createLogger("silent"),
       {
         createFeedbackService: () => ({
+          status: async () => ({
+            limited: true,
+            retryAfterSeconds: 240,
+            retryAt: Date.now() + 240_000,
+          }),
           submit: async () => {
             throw new FeedbackRequestError(
               "You've recently sent a report. Please try again in 4 minutes.",
@@ -106,6 +111,15 @@ describe("setup-mode HTTP server", () => {
     );
     servers.push(server);
     const port = (server.address() as AddressInfo).port;
+
+    const statusResponse = await fetch(`http://127.0.0.1:${port}/api/feedback/status`);
+    const statusBody = await statusResponse.json() as {
+      limited: boolean;
+      retryAfterSeconds: number;
+    };
+    expect(statusResponse.status).toBe(200);
+    expect(statusResponse.headers.get("cache-control")).toBe("no-store");
+    expect(statusBody).toMatchObject({ limited: true, retryAfterSeconds: 240 });
 
     const response = await fetch(`http://127.0.0.1:${port}/api/feedback`, {
       method: "POST",

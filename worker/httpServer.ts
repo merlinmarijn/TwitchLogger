@@ -51,7 +51,7 @@ export interface HttpServerDependencies {
     database: PostgresDatabase,
     rateLimitMinutes: number,
     ipHashSecret: string,
-  ) => Pick<FeedbackService, "submit">;
+  ) => Pick<FeedbackService, "submit" | "status">;
 }
 
 export function createHttpServer(
@@ -325,6 +325,23 @@ export function createHttpServer(
     }
   });
 
+  app.get("/api/feedback/status", async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    if (!feedback) {
+      response.status(503).json({ error: "Feedback is temporarily unavailable. Please try again later." });
+      return;
+    }
+
+    try {
+      response.json(await feedback.status(
+        request.ip ?? request.socket.remoteAddress ?? "unknown",
+      ));
+    } catch (error) {
+      logger.warn({ err: error }, "Feedback cooldown status failed");
+      response.status(500).json({ error: "The feedback cooldown could not be checked." });
+    }
+  });
+
   app.post("/api/feedback", async (request, response) => {
     response.set("Cache-Control", "no-store");
     const origin = request.get("origin");
@@ -338,11 +355,11 @@ export function createHttpServer(
     }
 
     try {
-      await feedback.submit(
+      const result = await feedback.submit(
         request.body,
         request.ip ?? request.socket.remoteAddress ?? "unknown",
       );
-      response.status(201).json({ submitted: true });
+      response.status(201).json({ submitted: true, ...result });
     } catch (error) {
       if (error instanceof FeedbackRequestError) {
         if (error.retryAfterSeconds) {

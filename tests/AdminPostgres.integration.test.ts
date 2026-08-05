@@ -66,10 +66,19 @@ describe.skipIf(!databaseUrl)("PostgreSQL admin control room", () => {
 
     const feedback = new FeedbackService(database, 15, "integration-feedback-secret");
     const description = `Integration issue ${Date.now()}`;
-    await feedback.submit({ kind: "issue", description }, `integration-${Date.now()}`);
+    await feedback.submit({
+      kind: "issue",
+      description,
+      contactUsername: "integration_user",
+    }, `integration-${Date.now()}`);
     const inbox = await admin.listFeedback(session, { search: description });
     expect(inbox.submissions).toHaveLength(1);
-    expect(inbox.submissions[0]).toMatchObject({ kind: "issue", status: "open", flags: [] });
+    expect(inbox.submissions[0]).toMatchObject({
+      kind: "issue",
+      contactUsername: "integration_user",
+      status: "open",
+      flags: [],
+    });
     const classified = await admin.classifyFeedback(
       session,
       inbox.submissions[0]!._id,

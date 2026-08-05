@@ -1803,13 +1803,76 @@ function InlineChatImage({ image }: { image: GalleryImage }) {
   );
 }
 
+const FEEDBACK_COOLDOWN_STORAGE_KEY = "twitch-logger-feedback-cooldown-until";
+
+function readFeedbackCooldown() {
+  if (typeof localStorage === "undefined") return 0;
+  try {
+    const value = Number(localStorage.getItem(FEEDBACK_COOLDOWN_STORAGE_KEY));
+    return Number.isFinite(value) ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function rememberFeedbackCooldown(retryAt: number) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    if (retryAt > Date.now()) {
+      localStorage.setItem(FEEDBACK_COOLDOWN_STORAGE_KEY, String(retryAt));
+    } else {
+      localStorage.removeItem(FEEDBACK_COOLDOWN_STORAGE_KEY);
+    }
+  } catch {
+    // The server remains authoritative when browser storage is unavailable.
+  }
+}
+
+function formatFeedbackCooldown(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${String(remainder).padStart(2, "0")}s` : `${remainder}s`;
+}
+
 function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const submitFeedback = useMutation(api.feedback.submit);
   const [kind, setKind] = useState<"feedback" | "issue">();
   const [description, setDescription] = useState("");
+  const [contactUsername, setContactUsername] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   const [submitted, setSubmitted] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState(readFeedbackCooldown);
+  const [cooldownChecked, setCooldownChecked] = useState(false);
+  const [clock, setClock] = useState(Date.now);
+  const retryAfterSeconds = Math.max(0, Math.ceil((cooldownUntil - clock) / 1_000));
+  const limited = retryAfterSeconds > 0;
+  const checkingCooldown = !cooldownChecked && !limited;
+
+  const checkCooldown = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const response = await fetch(`${workerUrl}/api/feedback/status`, {
+        credentials: "include",
+        signal,
+      });
+      if (!response.ok) throw new Error("Cooldown status unavailable");
+      const status = await response.json() as {
+        limited: boolean;
+        retryAfterSeconds: number;
+        retryAt?: number;
+      };
+      const retryAt = status.limited
+        ? status.retryAt ?? Date.now() + status.retryAfterSeconds * 1_000
+        : 0;
+      setCooldownUntil(retryAt);
+      setClock(Date.now());
+      rememberFeedbackCooldown(retryAt);
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+    } finally {
+      if (!signal?.aborted) setCooldownChecked(true);
+    }
+  }, []);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -1818,6 +1881,21 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => void checkCooldown(controller.signal), 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [checkCooldown]);
+
+  useEffect(() => {
+    if (!limited) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [limited]);
 
   const selectKind = (nextKind: "feedback" | "issue") => {
     setKind(nextKind);
@@ -1835,14 +1913,27 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
       setError("Add a description before submitting.");
       return;
     }
+    const username = contactUsername.trim().replace(/^@/, "").toLowerCase();
+    if (username && !/^[a-z0-9_]{1,25}$/.test(username)) {
+      setError("Enter a valid Twitch username using letters, numbers, or underscores.");
+      return;
+    }
 
     setSaving(true);
     setError(undefined);
     try {
-      await submitFeedback({ kind, description: message });
+      const result = await submitFeedback({
+        kind,
+        description: message,
+        ...(username ? { contactUsername: username } : {}),
+      });
+      setCooldownUntil(result.retryAt);
+      setClock(Date.now());
+      rememberFeedbackCooldown(result.retryAt);
       setSubmitted(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Your report could not be sent.");
+      void checkCooldown();
     } finally {
       setSaving(false);
     }
@@ -1868,11 +1959,21 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
           <div>
             <span className="eyebrow">Help improve Twitch Logger</span>
             <h2 id="feedback-dialog-title">
-              {submitted ? "Thanks for helping" : heading}
+              {submitted
+                ? "Thanks for helping"
+                : limited
+                  ? "Submission cooldown active"
+                  : checkingCooldown
+                    ? "Checking availability"
+                    : heading}
             </h2>
             <p>
               {submitted
                 ? `Your ${kind === "issue" ? "issue report" : "feedback"} has been sent.`
+                : limited
+                  ? "You've already sent something recently. Your next submission will be available soon."
+                  : checkingCooldown
+                    ? "We're checking whether this IP address can send another submission."
                 : kind === "issue"
                   ? "Tell us what went wrong and what you expected to happen."
                   : kind === "feedback"
@@ -1896,6 +1997,22 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
               <path d="m5 12.5 4.2 4.2L19 7" />
             </svg>
             <span>We appreciate you taking the time.</span>
+          </div>
+        ) : limited ? (
+          <div className="feedback-cooldown" role="status">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M12 7.5v5l3.25 2" />
+            </svg>
+            <span className="feedback-cooldown-kicker">One submission per IP address</span>
+            <strong>{formatFeedbackCooldown(retryAfterSeconds)}</strong>
+            <p>You can give feedback or report another issue when this timer reaches zero.</p>
+          </div>
+        ) : checkingCooldown ? (
+          <div className="feedback-cooldown checking" role="status">
+            <span className="feedback-cooldown-spinner" />
+            <strong>Checking your cooldown…</strong>
+            <p>This should only take a moment.</p>
           </div>
         ) : (
           <>
@@ -1922,6 +2039,30 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
                 </button>
               </div>
             </fieldset>
+
+            <label className="feedback-contact" htmlFor="feedback-contact-username">
+              <span>
+                <strong>Twitch username</strong>
+                <small>Optional · so we can follow up</small>
+              </span>
+              <div>
+                <span aria-hidden="true">@</span>
+                <input
+                  autoCapitalize="none"
+                  autoComplete="username"
+                  id="feedback-contact-username"
+                  maxLength={25}
+                  onChange={(event) => {
+                    setContactUsername(event.target.value.replace(/^@/, ""));
+                    setError(undefined);
+                  }}
+                  pattern="[A-Za-z0-9_]{1,25}"
+                  placeholder="your_username"
+                  spellCheck={false}
+                  value={contactUsername}
+                />
+              </div>
+            </label>
 
             <label className="feedback-description" htmlFor="feedback-description">
               <span>
@@ -1952,6 +2093,10 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
           {submitted ? (
             <button autoFocus className="button primary" onClick={onClose} type="button">
               Done
+            </button>
+          ) : limited || checkingCooldown ? (
+            <button autoFocus className="button primary" onClick={onClose} type="button">
+              Close
             </button>
           ) : (
             <>

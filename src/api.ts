@@ -87,10 +87,20 @@ type MessagePageArgs = {
 
 export const api = {
   feedback: {
+    status: operation<Record<string, never>, {
+      limited: boolean;
+      retryAfterSeconds: number;
+      retryAt?: number;
+    }>("/api/feedback/status", "GET"),
     submit: operation<{
       kind: "feedback" | "issue";
       description: string;
-    }, { submitted: true }>("/api/feedback", "POST"),
+      contactUsername?: string;
+    }, {
+      submitted: true;
+      retryAfterSeconds: number;
+      retryAt: number;
+    }>("/api/feedback", "POST"),
   },
   platforms: {
     ensureSeeded: operation<Record<string, never>, null>("/api/data/platforms/ensure-seeded", "POST"),

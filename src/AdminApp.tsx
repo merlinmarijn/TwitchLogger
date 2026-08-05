@@ -63,6 +63,7 @@ type FeedbackSubmission = {
   _id: string;
   kind: FeedbackKind;
   description: string;
+  contactUsername?: string;
   status: FeedbackStatus;
   flags: FeedbackFlag[];
   createdAt: number;
@@ -618,7 +619,7 @@ function FeedbackWorkspace({ onNotice }: { onNotice: (message: string) => void }
               type="button"
             >
               <span className={`submission-kind ${submission.kind}`}>{submission.kind === "issue" ? "BUG" : "NOTE"}</span>
-              <span className="submission-row-copy"><strong>{submission.description}</strong><small>{relativeTime(submission.createdAt)} · #{submission._id}</small></span>
+              <span className="submission-row-copy"><strong>{submission.description}</strong><small>{relativeTime(submission.createdAt)} · #{submission._id}{submission.contactUsername ? ` · @${submission.contactUsername}` : ""}</small></span>
               <span className={`submission-status ${submission.status}`}><i />{submission.status}</span>
               <span className="submission-row-flags">{submission.flags.slice(0, 2).map((item) => <i key={item}>{feedbackFlagLabel(item)}</i>)}{submission.flags.length > 2 ? <i>+{submission.flags.length - 2}</i> : null}</span>
             </button>
@@ -668,6 +669,17 @@ function FeedbackInspector({
         <time dateTime={new Date(submission.createdAt).toISOString()}>{new Date(submission.createdAt).toLocaleString()}</time>
       </header>
       <p className="submission-description">{submission.description}</p>
+      {submission.contactUsername ? (
+        <a
+          className="submission-contact"
+          href={`https://www.twitch.tv/${encodeURIComponent(submission.contactUsername)}`}
+          rel="noreferrer"
+          target="_blank"
+        >
+          <span><small>Contact on Twitch</small><strong>@{submission.contactUsername}</strong></span>
+          <ArrowIcon />
+        </a>
+      ) : <p className="submission-contact-empty">No contact username provided.</p>}
 
       <div className="classification-heading"><div><strong>Status</strong><span>Open is the default for every new submission.</span></div><div className="status-switch"><button aria-pressed={status === "open"} onClick={() => setStatus("open")} type="button">Open</button><button aria-pressed={status === "closed"} onClick={() => setStatus("closed")} type="button">Closed</button></div></div>
 

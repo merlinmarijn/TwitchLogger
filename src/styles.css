@@ -230,6 +230,15 @@ h2 { font-size: 18px; }
 .feedback-kind-picker small { overflow: hidden; color: #93939d; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .feedback-kind-mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: #303036; color: #aaaab5; font-size: 9px; font-weight: 850; letter-spacing: .06em; }
 .feedback-kind-picker button.selected .feedback-kind-mark { background: #4b3568; color: #eadcff; }
+.feedback-contact { display: grid; gap: 7px; }
+.feedback-contact > span { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.feedback-contact strong { color: #d8d8de; font-size: 11px; }
+.feedback-contact small { color: #85858f; font-size: 9px; }
+.feedback-contact > div { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; border: 1px solid #3b3b42; border-radius: 9px; background: #121214; color: #85858f; }
+.feedback-contact > div:focus-within { border-color: #7957ad; }
+.feedback-contact > div > span { padding-left: 12px; font-size: 12px; }
+.feedback-contact input { min-width: 0; height: 38px; border: 0; padding: 0 12px 0 3px; outline: 0; background: transparent; color: #efeff1; font-size: 12px; }
+.feedback-contact input::placeholder { color: #73737d; }
 .feedback-description { display: grid; gap: 7px; }
 .feedback-description > span { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .feedback-description strong { color: #d8d8de; font-size: 11px; }
@@ -240,6 +249,15 @@ h2 { font-size: 18px; }
 .feedback-error { border: 1px solid #70434a; border-radius: 7px; padding: 9px 10px; background: #361f23; color: #ffb1b9; font-size: 11px; line-height: 1.45; }
 .feedback-success { min-height: 130px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 11px; border: 1px solid #345d50; border-radius: 10px; background: #172b25; color: #a7dec9; font-size: 12px; }
 .feedback-success svg { width: 34px; height: 34px; fill: none; stroke: #74d6b0; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.feedback-cooldown { min-height: 210px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px solid #735f36; border-radius: 10px; padding: 24px; background: radial-gradient(circle at 50% 0, #3a3020 0, #211d18 58%, #191819 100%); color: #d7c293; text-align: center; }
+.feedback-cooldown > svg { width: 31px; height: 31px; margin-bottom: 3px; fill: none; stroke: #d9b866; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
+.feedback-cooldown-kicker { color: #a99875; font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.feedback-cooldown > strong { color: #f0d48e; font-size: 30px; font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
+.feedback-cooldown p { max-width: 360px; margin: 0; color: #aaa39a; font-size: 11px; line-height: 1.55; }
+.feedback-cooldown.checking { min-height: 160px; border-color: #433b4e; background: #1d1a21; }
+.feedback-cooldown.checking > strong { color: #ded4e9; font-size: 13px; letter-spacing: 0; }
+.feedback-cooldown-spinner { width: 23px; height: 23px; border: 2px solid #4d4458; border-top-color: #aa83df; border-radius: 50%; animation: feedback-spin .8s linear infinite; }
+@keyframes feedback-spin { to { transform: rotate(360deg); } }
 .filter-workspace { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(250px, 320px) minmax(0, 1fr); overflow: hidden; background: #0e0e10; }
 .filter-dialog { position: relative; width: min(1180px, 100%); height: min(760px, calc(100vh - 40px)); display: flex; overflow: hidden; border: 1px solid #414148; border-radius: 13px; background: #0e0e10; box-shadow: 0 24px 80px #000b; }
 .filter-dialog-close { position: absolute; z-index: 4; top: 12px; right: 12px; }

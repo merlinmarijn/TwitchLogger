@@ -6,6 +6,7 @@ import type { PostgresDatabase } from "./database";
 export interface FeedbackSubmission {
   kind: FeedbackKind;
   description: string;
+  contactUsername?: string;
 }
 
 export class FeedbackRequestError extends Error {
@@ -27,9 +28,7 @@ export class FeedbackService {
 
   async submit(input: unknown, ipAddress: string) {
     const submission = parseFeedbackSubmission(input);
-    const ipHash = createHmac("sha256", this.ipHashSecret)
-      .update(ipAddress)
-      .digest("hex");
+    const ipHash = this.hashIpAddress(ipAddress);
     const client = await this.database.pool.connect();
 
     try {
@@ -58,10 +57,15 @@ export class FeedbackService {
       }
 
       await client.query(`
-        INSERT INTO feedback_reports (kind, description, ip_hash)
-        VALUES ($1, $2, $3)
-      `, [submission.kind, submission.description, ipHash]);
+        INSERT INTO feedback_reports (kind, description, contact_username, ip_hash)
+        VALUES ($1, $2, $3, $4)
+      `, [submission.kind, submission.description, submission.contactUsername ?? null, ipHash]);
       await client.query("COMMIT");
+      const retryAfterSeconds = this.rateLimitMinutes * 60;
+      return {
+        retryAfterSeconds,
+        retryAt: Date.now() + retryAfterSeconds * 1_000,
+      };
     } catch (error) {
       if (!(error instanceof FeedbackRequestError)) {
         await rollback(client);
@@ -70,6 +74,32 @@ export class FeedbackService {
     } finally {
       client.release();
     }
+  }
+
+  async status(ipAddress: string) {
+    const recent = await this.database.query<{ retry_at: Date }>(`
+      SELECT created_at + ($2 * interval '1 minute') AS retry_at
+      FROM feedback_reports
+      WHERE ip_hash = $1
+        AND created_at > now() - ($2 * interval '1 minute')
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [this.hashIpAddress(ipAddress), this.rateLimitMinutes]);
+    const retryAt = recent.rows[0]?.retry_at.getTime();
+    const retryAfterSeconds = retryAt === undefined
+      ? 0
+      : Math.max(1, Math.ceil((retryAt - Date.now()) / 1_000));
+    return {
+      limited: retryAfterSeconds > 0,
+      retryAfterSeconds,
+      ...(retryAt === undefined ? {} : { retryAt }),
+    };
+  }
+
+  private hashIpAddress(ipAddress: string) {
+    return createHmac("sha256", this.ipHashSecret)
+      .update(ipAddress)
+      .digest("hex");
   }
 }
 
@@ -81,6 +111,10 @@ export function parseFeedbackSubmission(input: unknown): FeedbackSubmission {
   const description = typeof record?.description === "string"
     ? record.description.trim()
     : "";
+  const rawContactUsername = typeof record?.contactUsername === "string"
+    ? record.contactUsername.trim().replace(/^@/, "")
+    : "";
+  const contactUsername = rawContactUsername.toLowerCase();
 
   if (kind !== "feedback" && kind !== "issue") {
     throw new FeedbackRequestError("Choose feedback or issue report before submitting", 400);
@@ -91,8 +125,18 @@ export function parseFeedbackSubmission(input: unknown): FeedbackSubmission {
   if (description.length > 4_000) {
     throw new FeedbackRequestError("Keep the description under 4,000 characters", 400);
   }
+  if (contactUsername && !/^[a-z0-9_]{1,25}$/.test(contactUsername)) {
+    throw new FeedbackRequestError(
+      "Enter a valid Twitch username using letters, numbers, or underscores",
+      400,
+    );
+  }
 
-  return { kind, description };
+  return {
+    kind,
+    description,
+    ...(contactUsername ? { contactUsername } : {}),
+  };
 }
 
 function formatRateLimitMessage(seconds: number) {

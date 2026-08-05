@@ -152,6 +152,13 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .submission-inspector > header div { display: flex; align-items: center; gap: .65rem; color: var(--admin-muted); font-size: .56rem; }
 .submission-inspector > header time { color: var(--admin-muted); font-size: .55rem; }
 .submission-description { min-height: 8rem; margin: 0; padding: 1.5rem 0; color: var(--admin-ink); font: 400 clamp(1.35rem, 2.5vw, 2rem)/1.35 "Instrument Serif", serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+.submission-contact { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border: 1px solid var(--admin-line); margin: -0.4rem 0 1.5rem; padding: .75rem .85rem; color: var(--admin-ink); text-decoration: none; }
+.submission-contact:hover { border-color: var(--admin-signal); background: oklch(94% .03 72); }
+.submission-contact span { display: grid; gap: .2rem; }
+.submission-contact small { color: var(--admin-muted); font-size: .51rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.submission-contact strong { font-size: .72rem; }
+.submission-contact svg { width: 1rem; fill: none; stroke: var(--admin-signal); stroke-width: 1.6; }
+.submission-contact-empty { border: 1px dashed var(--admin-line); margin: -0.4rem 0 1.5rem; padding: .7rem .8rem; color: var(--admin-muted); font-size: .58rem; }
 .classification-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-block: 1px solid var(--admin-ink); padding: .85rem 0; }
 .classification-heading > div:first-child { display: grid; gap: .25rem; }
 .classification-heading strong, .flag-editor-heading strong { font-size: .68rem; }

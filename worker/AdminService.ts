@@ -346,14 +346,17 @@ export class AdminService {
       conditions.push(`flags @> ARRAY[${bind(options.flag)}]::text[]`);
     }
     const search = options.search?.trim().slice(0, 120);
-    if (search) conditions.push(`description ILIKE ${bind(`%${search}%`)}`);
+    if (search) {
+      const searchParameter = bind(`%${search}%`);
+      conditions.push(`(description ILIKE ${searchParameter} OR contact_username ILIKE ${searchParameter})`);
+    }
 
     const page = Math.min(1_000_000, Math.max(0, Math.floor(options.page ?? 0)));
     const pageSize = Math.max(1, Math.min(100, Math.floor(options.pageSize ?? 50)));
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const [reports, count, summary] = await Promise.all([
       this.database.query<FeedbackReportRow>(`
-        SELECT id, kind, description, status, flags, created_at, updated_at, closed_at
+        SELECT id, kind, description, contact_username, status, flags, created_at, updated_at, closed_at
         FROM feedback_reports
         ${where}
         ORDER BY (status = 'open') DESC, created_at DESC
@@ -424,7 +427,7 @@ export class AdminService {
               ELSE NULL
             END
         WHERE id = $1
-        RETURNING id, kind, description, status, flags, created_at, updated_at, closed_at
+        RETURNING id, kind, description, contact_username, status, flags, created_at, updated_at, closed_at
       `, [reportId, status, normalizedFlags]);
       await insertAudit(
         client,
@@ -913,6 +916,7 @@ interface FeedbackReportRow {
   id: string;
   kind: FeedbackKind;
   description: string;
+  contact_username: string | null;
   status: FeedbackStatus;
   flags: FeedbackFlag[];
   created_at: Date | string;
@@ -987,6 +991,7 @@ function toFeedbackReport(report: FeedbackReportRow) {
     _id: String(report.id),
     kind: report.kind,
     description: report.description,
+    ...(report.contact_username ? { contactUsername: report.contact_username } : {}),
     status: report.status,
     flags: report.flags,
     createdAt: timestampMs(report.created_at),

@@ -11,6 +11,25 @@ describe("feedback submissions", () => {
       .toThrow("Add a description");
     expect(() => parseFeedbackSubmission({ kind: "other", description: "A note" }))
       .toThrow("Choose feedback or issue report");
+    expect(() => parseFeedbackSubmission({
+      kind: "feedback",
+      description: "A note",
+      contactUsername: "invalid handle!",
+    })).toThrow("valid Twitch username");
+  });
+
+  it("normalizes an optional Twitch username", () => {
+    expect(parseFeedbackSubmission({
+      kind: "feedback",
+      description: "  A note  ",
+      contactUsername: "  @Example_User  ",
+    })).toEqual({
+      kind: "feedback",
+      description: "A note",
+      contactUsername: "example_user",
+    });
+    expect(parseFeedbackSubmission({ kind: "feedback", description: "A note" }))
+      .not.toHaveProperty("contactUsername");
   });
 
   it("stores a trimmed report with a one-way IP hash", async () => {
@@ -28,15 +47,20 @@ describe("feedback submissions", () => {
     const service = new FeedbackService(database, 15, "test-secret");
 
     await service.submit(
-      { kind: "issue", description: "  The channel list is stuck.  " },
+      {
+        kind: "issue",
+        description: "  The channel list is stuck.  ",
+        contactUsername: "@Example_User",
+      },
       "203.0.113.20",
     );
 
     const insert = queries.find((query) => query.text.includes("INSERT INTO feedback_reports"));
     expect(insert?.values?.[0]).toBe("issue");
     expect(insert?.values?.[1]).toBe("The channel list is stuck.");
-    expect(insert?.values?.[2]).toMatch(/^[a-f0-9]{64}$/);
-    expect(insert?.values?.[2]).not.toContain("203.0.113.20");
+    expect(insert?.values?.[2]).toBe("example_user");
+    expect(insert?.values?.[3]).toMatch(/^[a-f0-9]{64}$/);
+    expect(insert?.values?.[3]).not.toContain("203.0.113.20");
     expect(queries.at(-1)?.text).toBe("COMMIT");
   });
 
@@ -60,6 +84,20 @@ describe("feedback submissions", () => {
     )).rejects.toMatchObject({
       status: 429,
       message: expect.stringContaining("Please try again in 2 minutes"),
+    });
+  });
+
+  it("reports an active cooldown without accepting a submission", async () => {
+    const retryAt = new Date(Date.now() + 90_000);
+    const database = {
+      query: async () => ({ rows: [{ retry_at: retryAt }] }),
+    } as unknown as PostgresDatabase;
+    const service = new FeedbackService(database, 15, "test-secret");
+
+    await expect(service.status("203.0.113.20")).resolves.toMatchObject({
+      limited: true,
+      retryAfterSeconds: expect.any(Number),
+      retryAt: retryAt.getTime(),
     });
   });
 });

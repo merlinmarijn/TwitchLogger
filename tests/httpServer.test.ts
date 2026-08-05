@@ -6,6 +6,7 @@ import { AdminAuthError, AdminService } from "../worker/AdminService";
 import { createLogger } from "../worker/logger";
 import type { PostgresDatabase } from "../worker/database";
 import type { PostgresStore } from "../worker/PostgresStore";
+import { FeedbackRequestError } from "../worker/FeedbackService";
 
 const servers: Array<ReturnType<typeof createHttpServer> extends Promise<infer T> ? T : never> = [];
 
@@ -18,6 +19,46 @@ afterEach(async () => {
 });
 
 describe("setup-mode HTTP server", () => {
+  it("returns the feedback cooldown and retry header", async () => {
+    const configuration = {
+      ...loadConfiguration({
+        INGESTION_SECRET: "feedback-test-secret",
+        TWITCH_FRONTEND_URL: "http://localhost:5173",
+      }),
+      port: 0,
+    };
+    const server = await createHttpServer(
+      configuration,
+      { database: {} as PostgresDatabase },
+      createLogger("silent"),
+      {
+        createFeedbackService: () => ({
+          submit: async () => {
+            throw new FeedbackRequestError(
+              "You've recently sent a report. Please try again in 4 minutes.",
+              429,
+              240,
+            );
+          },
+        }),
+      },
+    );
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://localhost:5173" },
+      body: JSON.stringify({ kind: "feedback", description: "A useful idea" }),
+    });
+    const body = await response.json() as { error: string; retryAfterSeconds: number };
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("240");
+    expect(body.error).toContain("try again in 4 minutes");
+    expect(body.retryAfterSeconds).toBe(240);
+  });
+
   it("accepts the configured frontend origin when its URL has a trailing slash", async () => {
     const configuration = {
       ...loadConfiguration({ TWITCH_FRONTEND_URL: "http://localhost:5173/" }),

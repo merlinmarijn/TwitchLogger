@@ -148,6 +148,7 @@ export default function App() {
   const [auth, setAuth] = useState<TwitchAuthStatus>();
   const [adminAccess, setAdminAccess] = useState<AdminAccessStatus>();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [userSettings, setUserSettings] = useState<UserSettings>(loadSavedUserSettings);
   const [notice, setNotice] = useState<string>();
@@ -534,6 +535,7 @@ export default function App() {
             onSelect={setSelectedChannelMarker}
             onAdd={() => setDialogOpen(true)}
             onError={setNotice}
+            onOpenFeedback={() => setFeedbackDialogOpen(true)}
             onOpenSettings={() => setSettingsDialogOpen(true)}
           />
 
@@ -664,6 +666,9 @@ export default function App() {
             settings={userSettings}
           />
         )}
+        {feedbackDialogOpen && (
+          <FeedbackDialog onClose={() => setFeedbackDialogOpen(false)} />
+        )}
         {filterDialogOpen && (
           <div
             className="dialog-backdrop"
@@ -720,6 +725,7 @@ function ChannelSidebar({
   onSelect,
   onAdd,
   onError,
+  onOpenFeedback,
   onOpenSettings,
 }: {
   channels: Channel[];
@@ -728,6 +734,7 @@ function ChannelSidebar({
   onSelect: (id?: string) => void;
   onAdd: () => void;
   onError: (message: string) => void;
+  onOpenFeedback: () => void;
   onOpenSettings: () => void;
 }) {
   const setLogging = useMutation(api.channels.setLogging);
@@ -801,6 +808,12 @@ function ChannelSidebar({
         <div className="empty compact"><strong>No channels yet</strong><span>{isAdmin ? "Add one to begin logging." : "An admin can add the first channel."}</span></div>
       )}
       <div className="sidebar-footer">
+        <button className="settings-button feedback-button" onClick={onOpenFeedback} type="button">
+          <svg aria-hidden="true" viewBox="0 0 16 16">
+            <path d="M2.2 2.5h11.6v8.1H7l-3.7 2.9v-2.9H2.2V2.5Zm3 3.1h5.6M5.2 7.9h3.6" />
+          </svg>
+          Feedback &amp; issues
+        </button>
         <button className="settings-button" onClick={onOpenSettings} type="button">
           <svg aria-hidden="true" viewBox="0 0 16 16">
             <path d="M6.6 1.8h2.8l.4 1.6c.3.1.6.3.9.5l1.6-.5 1.4 2.4-1.2 1.1v1.2l1.2 1.1-1.4 2.4-1.6-.5-.9.5-.4 1.6H6.6l-.4-1.6-.9-.5-1.6.5-1.4-2.4 1.2-1.1V6.9L2.3 5.8l1.4-2.4 1.6.5.9-.5.4-1.6ZM8 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z" />
@@ -1694,6 +1707,174 @@ function InlineChatImage({ image }: { image: GalleryImage }) {
         src={image.previewUrl}
       />
     </a>
+  );
+}
+
+function FeedbackDialog({ onClose }: { onClose: () => void }) {
+  const submitFeedback = useMutation(api.feedback.submit);
+  const [kind, setKind] = useState<"feedback" | "issue">();
+  const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string>();
+  const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  const selectKind = (nextKind: "feedback" | "issue") => {
+    setKind(nextKind);
+    setError(undefined);
+  };
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const message = description.trim();
+    if (!kind) {
+      setError("Choose feedback or issue report before submitting.");
+      return;
+    }
+    if (!message) {
+      setError("Add a description before submitting.");
+      return;
+    }
+
+    setSaving(true);
+    setError(undefined);
+    try {
+      await submitFeedback({ kind, description: message });
+      setSubmitted(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Your report could not be sent.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const heading = kind === "feedback"
+    ? "Give feedback"
+    : kind === "issue"
+      ? "Report an issue"
+      : "Feedback & issues";
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={onClose} role="presentation">
+      <form
+        aria-labelledby="feedback-dialog-title"
+        aria-modal="true"
+        className="dialog feedback-dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={submit}
+        role="dialog"
+      >
+        <div className="feedback-dialog-heading">
+          <div>
+            <span className="eyebrow">Help improve Twitch Logger</span>
+            <h2 id="feedback-dialog-title">
+              {submitted ? "Thanks for helping" : heading}
+            </h2>
+            <p>
+              {submitted
+                ? `Your ${kind === "issue" ? "issue report" : "feedback"} has been sent.`
+                : kind === "issue"
+                  ? "Tell us what went wrong and what you expected to happen."
+                  : kind === "feedback"
+                    ? "Share an idea, suggestion, or something that could work better."
+                    : "Choose what you want to send, then add the details."}
+            </p>
+          </div>
+          <button
+            aria-label="Close feedback and issues"
+            className="dialog-close"
+            onClick={onClose}
+            type="button"
+          >
+            {"\u00d7"}
+          </button>
+        </div>
+
+        {submitted ? (
+          <div className="feedback-success" role="status">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="m5 12.5 4.2 4.2L19 7" />
+            </svg>
+            <span>We appreciate you taking the time.</span>
+          </div>
+        ) : (
+          <>
+            <fieldset className="feedback-kind-picker">
+              <legend>What would you like to send?</legend>
+              <div>
+                <button
+                  aria-pressed={kind === "feedback"}
+                  className={kind === "feedback" ? "selected" : ""}
+                  onClick={() => selectKind("feedback")}
+                  type="button"
+                >
+                  <span className="feedback-kind-mark">01</span>
+                  <span><strong>Give feedback</strong><small>Ideas and suggestions</small></span>
+                </button>
+                <button
+                  aria-pressed={kind === "issue"}
+                  className={kind === "issue" ? "selected" : ""}
+                  onClick={() => selectKind("issue")}
+                  type="button"
+                >
+                  <span className="feedback-kind-mark">02</span>
+                  <span><strong>Report an issue</strong><small>Something isn't working</small></span>
+                </button>
+              </div>
+            </fieldset>
+
+            <label className="feedback-description" htmlFor="feedback-description">
+              <span>
+                <strong>{kind === "issue" ? "What happened?" : "Your description"}</strong>
+                <small>{description.length.toLocaleString()} / 4,000</small>
+              </span>
+              <textarea
+                id="feedback-description"
+                maxLength={4_000}
+                onChange={(event) => {
+                  setDescription(event.target.value);
+                  setError(undefined);
+                }}
+                placeholder={kind === "issue"
+                  ? "Describe the problem, where you saw it, and how to reproduce it…"
+                  : "What would you like us to know?"}
+                required
+                rows={6}
+                value={description}
+              />
+            </label>
+
+            {error && <div className="feedback-error" role="alert">{error}</div>}
+          </>
+        )}
+
+        <div className="dialog-actions">
+          {submitted ? (
+            <button autoFocus className="button primary" onClick={onClose} type="button">
+              Done
+            </button>
+          ) : (
+            <>
+              <button className="button" onClick={onClose} type="button">Cancel</button>
+              <button
+                className="button primary"
+                disabled={!kind || !description.trim() || saving}
+                type="submit"
+              >
+                {saving ? "Sending…" : kind === "issue" ? "Send issue report" : "Send feedback"}
+              </button>
+            </>
+          )}
+        </div>
+      </form>
+    </div>
   );
 }
 

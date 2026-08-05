@@ -27,6 +27,7 @@ import {
   fetchTouhouWikiImage,
   type ProxiedImage,
 } from "./touhouWikiImage";
+import { FeedbackRequestError, FeedbackService } from "./FeedbackService";
 
 export interface ApplicationRuntimeState {
   auth?: TwitchAuthService;
@@ -45,6 +46,11 @@ export interface HttpServerDependencies {
     setupSecret: string,
     encryptionKey: Buffer,
   ) => AdminService;
+  createFeedbackService?: (
+    database: PostgresDatabase,
+    rateLimitMinutes: number,
+    ipHashSecret: string,
+  ) => Pick<FeedbackService, "submit">;
 }
 
 export function createHttpServer(
@@ -54,8 +60,11 @@ export function createHttpServer(
   dependencies: HttpServerDependencies = {},
 ): Promise<Server> {
   const app = express();
+  if (configuration.trustedProxyHops > 0) {
+    app.set("trust proxy", configuration.trustedProxyHops);
+  }
   const frontendOrigin = normalizeOrigin(configuration.frontendUrl);
-  const trustedAdminOrigins = new Set([
+  const trustedWriteOrigins = new Set([
     frontendOrigin,
     normalizeOrigin(configuration.publicWorkerUrl),
   ].filter((origin): origin is string => Boolean(origin)));
@@ -65,6 +74,14 @@ export function createHttpServer(
         runtime.database,
         configuration.adminOptions.setupSecret,
         configuration.adminOptions.encryptionKey,
+      )
+    : undefined;
+  const feedback = configuration.feedbackOptions && runtime.database
+    ? (dependencies.createFeedbackService ?? ((database, rateLimitMinutes, ipHashSecret) =>
+        new FeedbackService(database, rateLimitMinutes, ipHashSecret)))(
+        runtime.database,
+        configuration.feedbackOptions.rateLimitMinutes,
+        configuration.feedbackOptions.ipHashSecret,
       )
     : undefined;
   const failedAdminAttempts = new Map<string, { count: number; resetsAt: number }>();
@@ -92,7 +109,7 @@ export function createHttpServer(
     response.set("Cache-Control", "no-store");
     if (request.method === "POST") {
       const origin = request.get("origin");
-      if (origin && !trustedAdminOrigins.has(origin)) {
+      if (origin && !trustedWriteOrigins.has(origin)) {
         response.status(403).json({ error: "This admin request came from an untrusted origin" });
         return;
       }
@@ -103,7 +120,7 @@ export function createHttpServer(
   const requireAdminSession: express.RequestHandler = async (request, response, next) => {
     response.set("Cache-Control", "no-store");
     const origin = request.get("origin");
-    if (origin && !trustedAdminOrigins.has(origin)) {
+    if (origin && !trustedWriteOrigins.has(origin)) {
       response.status(403).json({ error: "This admin request came from an untrusted origin" });
       return;
     }
@@ -267,6 +284,40 @@ export function createHttpServer(
       response.status(202).json({ cancelling: true });
     } catch (error) {
       sendAdminError(response, error, logger);
+    }
+  });
+
+  app.post("/api/feedback", async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    const origin = request.get("origin");
+    if (origin && !trustedWriteOrigins.has(origin)) {
+      response.status(403).json({ error: "This report came from an untrusted origin" });
+      return;
+    }
+    if (!feedback) {
+      response.status(503).json({ error: "Feedback is temporarily unavailable. Please try again later." });
+      return;
+    }
+
+    try {
+      await feedback.submit(
+        request.body,
+        request.ip ?? request.socket.remoteAddress ?? "unknown",
+      );
+      response.status(201).json({ submitted: true });
+    } catch (error) {
+      if (error instanceof FeedbackRequestError) {
+        if (error.retryAfterSeconds) {
+          response.set("Retry-After", String(error.retryAfterSeconds));
+        }
+        response.status(error.status).json({
+          error: error.message,
+          retryAfterSeconds: error.retryAfterSeconds,
+        });
+        return;
+      }
+      logger.warn({ err: error }, "Feedback submission failed");
+      response.status(500).json({ error: "Your report could not be sent. Please try again later." });
     }
   });
 

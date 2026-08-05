@@ -86,6 +86,12 @@ type MessagePageArgs = {
 };
 
 export const api = {
+  feedback: {
+    submit: operation<{
+      kind: "feedback" | "issue";
+      description: string;
+    }, { submitted: true }>("/api/feedback", "POST"),
+  },
   platforms: {
     ensureSeeded: operation<Record<string, never>, null>("/api/data/platforms/ensure-seeded", "POST"),
   },

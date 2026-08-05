@@ -10,6 +10,10 @@ export interface LoadedConfiguration {
     setupSecret: string;
     encryptionKey: Buffer;
   };
+  feedbackOptions?: {
+    ipHashSecret: string;
+    rateLimitMinutes: number;
+  };
   databaseUrl?: string;
   issues: string[];
   warnings: string[];
@@ -17,6 +21,7 @@ export interface LoadedConfiguration {
   logLevel: string;
   publicWorkerUrl: string;
   frontendUrl: string;
+  trustedProxyHops: number;
 }
 
 const placeholderPatterns = [
@@ -68,6 +73,22 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
   const tokenEncryptionKey = readEncryptionKey(env, issues);
   const frontendUrl = env.TWITCH_FRONTEND_URL?.trim() || "http://localhost:5173";
   const publicWorkerUrl = env.PUBLIC_WORKER_URL?.trim().replace(/\/$/, "") ?? "";
+  const feedbackRateLimitMinutes = readIntegerSetting(
+    env.FEEDBACK_RATE_LIMIT_MINUTES,
+    15,
+    1,
+    1_440,
+    "FEEDBACK_RATE_LIMIT_MINUTES",
+    warnings,
+  );
+  const trustedProxyHops = readIntegerSetting(
+    env.TRUST_PROXY_HOPS,
+    0,
+    0,
+    10,
+    "TRUST_PROXY_HOPS",
+    warnings,
+  );
 
   const hasInitialAccessToken = Boolean(env.TWITCH_ACCESS_TOKEN?.trim());
   const hasInitialRefreshToken = Boolean(env.TWITCH_REFRESH_TOKEN?.trim());
@@ -116,10 +137,14 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
   const adminOptions = ingestionSecret && tokenEncryptionKey
     ? { setupSecret: ingestionSecret, encryptionKey: tokenEncryptionKey }
     : undefined;
+  const feedbackOptions = ingestionSecret
+    ? { ipHashSecret: ingestionSecret, rateLimitMinutes: feedbackRateLimitMinutes }
+    : undefined;
 
   return {
     options,
     adminOptions,
+    feedbackOptions,
     databaseUrl,
     issues,
     warnings,
@@ -127,5 +152,21 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
     logLevel: env.LOG_LEVEL ?? "info",
     publicWorkerUrl,
     frontendUrl,
+    trustedProxyHops,
   };
+}
+
+function readIntegerSetting(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  name: string,
+  warnings: string[],
+) {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum) return parsed;
+  warnings.push(`${name} must be a whole number between ${minimum} and ${maximum}; using ${fallback}`);
+  return fallback;
 }

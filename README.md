@@ -33,6 +33,8 @@ Configure:
 - `TWITCH_FRONTEND_URL`: public application origin without a trailing slash.
 - `TWITCH_TOKEN_ENCRYPTION_KEY`: base64-encoded 32-byte key used for OAuth tokens, TOTP, and signed admin sessions.
 - `PUBLIC_WORKER_URL`: leave empty when the container serves both UI and API; set it only for split-origin deployments.
+- `FEEDBACK_RATE_LIMIT_MINUTES`: cooldown between feedback or issue reports from the same IP (defaults to `15`).
+- `TRUST_PROXY_HOPS`: exact number of trusted reverse-proxy hops in front of the app (defaults to `0`). Set this correctly so feedback throttling uses the visitor IP without trusting spoofed forwarding headers.
 
 Build and run:
 

@@ -56,6 +56,22 @@ describe("loadConfiguration", () => {
     expect(configuration.adminOptions).toMatchObject({
       setupSecret: completeEnvironment.INGESTION_SECRET,
     });
+    expect(configuration.feedbackOptions).toEqual({
+      ipHashSecret: completeEnvironment.INGESTION_SECRET,
+      rateLimitMinutes: 15,
+    });
+    expect(configuration.trustedProxyHops).toBe(0);
+  });
+
+  it("configures the feedback cooldown and trusted proxy hops", () => {
+    const configuration = loadConfiguration({
+      ...completeEnvironment,
+      FEEDBACK_RATE_LIMIT_MINUTES: "30",
+      TRUST_PROXY_HOPS: "1",
+    });
+
+    expect(configuration.feedbackOptions?.rateLimitMinutes).toBe(30);
+    expect(configuration.trustedProxyHops).toBe(1);
   });
 
   it("ignores an incomplete optional bootstrap-token pair", () => {

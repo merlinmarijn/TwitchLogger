@@ -97,7 +97,7 @@ const operations: Array<{
     kind: "image_reindex",
     number: "01",
     title: "Re-index image links",
-    description: "Re-read every message, inspect linked files, and refresh gallery membership.",
+    description: "Re-read every message, inspect linked files, refresh gallery membership, and remove duplicate image URLs.",
     impact: "Writes message metadata",
   },
   {

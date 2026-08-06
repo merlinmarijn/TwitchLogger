@@ -12,6 +12,11 @@ import {
 import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
 import {
+  collectOldestImageOwners,
+  deduplicateImageUrls,
+  type ImageOwner,
+} from "./imageDeduplication";
+import {
   resolveImageIndexes,
   type RemoteImageDetectorLike,
 } from "./RemoteImageDetector";
@@ -103,6 +108,12 @@ export interface ColdArchiveRunResult {
   enabled: boolean;
   chunksCreated: number;
   messagesArchived: number;
+}
+
+export interface ImageDeduplicationResult {
+  changed: number;
+  removed: number;
+  scanned: number;
 }
 
 export class ColdMessageArchiveService {
@@ -346,6 +357,151 @@ export class ColdMessageArchiveService {
       await options.onProgress?.(processed);
     }
     return { processed, changed };
+  }
+
+  async deduplicateImages(options: {
+    isCancelled?: () => Promise<boolean>;
+  } = {}): Promise<ImageDeduplicationResult> {
+    const owners = new Map<string, ImageOwner>();
+    const chunks = await this.database.query<{ id: string }>(`
+      SELECT id FROM chat_message_cold_chunks ORDER BY period_start, first_timestamp, id
+    `);
+    let scanned = 0;
+    for (const chunk of chunks.rows) {
+      if (await options.isCancelled?.()) return { changed: 0, removed: 0, scanned };
+      const active = await this.database.query<{ id: string }>(`
+        SELECT id FROM chat_message_cold_catalog
+        WHERE chunk_id = $1 AND deleted_at IS NULL
+      `, [chunk.id]);
+      const activeIds = new Set(active.rows.map((message) => message.id));
+      const records = (await this.loadChunks([chunk.id])).get(chunk.id) ?? [];
+      for (const record of records) {
+        if (!activeIds.has(record.id)) continue;
+        collectOldestImageOwners(owners, {
+          id: record.id,
+          imageUrls: record.image_urls ?? [],
+          storageTier: "cold",
+          timestamp: record.timestamp,
+        });
+        scanned += 1;
+      }
+    }
+
+    let cursor = "";
+    while (true) {
+      if (await options.isCancelled?.()) return { changed: 0, removed: 0, scanned };
+      const page = await this.database.query<{
+        id: string;
+        image_urls: string[];
+        timestamp: string;
+      }>(`
+        SELECT id, image_urls, timestamp
+        FROM chat_messages
+        WHERE deleted_at IS NULL AND id > $1
+        ORDER BY id LIMIT $2
+      `, [cursor, MAX_CHUNK_MESSAGES]);
+      if (page.rows.length === 0) break;
+      for (const record of page.rows) {
+        collectOldestImageOwners(owners, {
+          id: record.id,
+          imageUrls: record.image_urls ?? [],
+          storageTier: "hot",
+          timestamp: Number(record.timestamp),
+        });
+        scanned += 1;
+      }
+      cursor = page.rows.at(-1)!.id;
+    }
+
+    let changed = 0;
+    let removed = 0;
+    cursor = "";
+    while (true) {
+      if (await options.isCancelled?.()) return { changed, removed, scanned };
+      const page = await this.database.query<{
+        hidden_image_urls: string[];
+        id: string;
+        image_urls: string[];
+        timestamp: string;
+      }>(`
+        SELECT id, image_urls, hidden_image_urls, timestamp
+        FROM chat_messages
+        WHERE deleted_at IS NULL AND id > $1
+        ORDER BY id LIMIT $2
+      `, [cursor, MAX_CHUNK_MESSAGES]);
+      if (page.rows.length === 0) break;
+      const client = await this.database.pool.connect();
+      try {
+        await client.query("BEGIN");
+        for (const record of page.rows) {
+          const deduplicated = deduplicateImageUrls(owners, {
+            id: record.id,
+            imageUrls: record.image_urls ?? [],
+            storageTier: "hot",
+            timestamp: Number(record.timestamp),
+          });
+          if (deduplicated.removedCount === 0) continue;
+          const hiddenImageUrls = [...new Set([
+            ...(record.hidden_image_urls ?? []),
+            ...deduplicated.suppressedUrls,
+          ])];
+          await client.query(`
+            UPDATE chat_messages
+            SET image_urls = $2::jsonb, hidden_image_urls = $3::jsonb,
+                has_images = $4,
+                gallery_channel_id = CASE WHEN $4 THEN channel_id ELSE NULL END
+            WHERE id = $1 AND deleted_at IS NULL
+          `, [
+            record.id,
+            JSON.stringify(deduplicated.imageUrls),
+            JSON.stringify(hiddenImageUrls),
+            deduplicated.imageUrls.length > 0,
+          ]);
+          changed += 1;
+          removed += deduplicated.removedCount;
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+      cursor = page.rows.at(-1)!.id;
+    }
+
+    for (const chunk of chunks.rows) {
+      if (await options.isCancelled?.()) return { changed, removed, scanned };
+      const active = await this.database.query<{ id: string }>(`
+        SELECT id FROM chat_message_cold_catalog
+        WHERE chunk_id = $1 AND deleted_at IS NULL
+      `, [chunk.id]);
+      const removedByMessage = new Map<string, number>();
+      const chunkChanged = await this.mutateMessages(
+        active.rows.map((message) => message.id),
+        (record) => {
+          const deduplicated = deduplicateImageUrls(owners, {
+            id: record.id,
+            imageUrls: record.image_urls ?? [],
+            storageTier: "cold",
+            timestamp: record.timestamp,
+          });
+          if (deduplicated.removedCount === 0) return false;
+          record.image_urls = deduplicated.imageUrls;
+          record.hidden_image_urls = [...new Set([
+            ...record.hidden_image_urls,
+            ...deduplicated.suppressedUrls,
+          ])];
+          record.has_images = record.image_urls.length > 0;
+          record.gallery_channel_id = record.has_images ? record.channel_id : null;
+          removedByMessage.set(record.id, deduplicated.removedCount);
+          return true;
+        },
+      );
+      changed += chunkChanged;
+      removed += [...removedByMessage.values()].reduce((sum, count) => sum + count, 0);
+    }
+    return { changed, removed, scanned };
   }
 
   async inspectIntegrity(issueLimit = 100) {

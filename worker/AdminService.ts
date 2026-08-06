@@ -71,7 +71,7 @@ type AdminJobStatus =
 const jobDefinitions: Record<AdminJobKind, { title: string; detail: string; unit: string }> = {
   image_reindex: {
     title: "Re-index image links",
-    detail: "Rechecks saved links and rebuilds image metadata and gallery membership.",
+    detail: "Rechecks saved links, rebuilds gallery membership, and removes duplicate image URLs.",
     unit: "messages",
   },
   view_reindex: {
@@ -679,6 +679,22 @@ export class AdminService {
         await yieldToEventLoop();
       },
     });
+    if (await this.isCancelling(id)) return;
+    await this.database.query(`
+      UPDATE admin_jobs SET detail = $2, updated_at = $3 WHERE id = $1
+    `, [id, "Removing duplicate gallery image URLs", Date.now()]);
+    const deduplicated = await cold.deduplicateImages({
+      isCancelled: () => this.isCancelling(id),
+    });
+    if (await this.isCancelling(id)) return;
+    await this.database.query(`
+      UPDATE admin_jobs SET detail = $2, metadata = $3::jsonb, updated_at = $4 WHERE id = $1
+    `, [
+      id,
+      `Image index complete · ${deduplicated.removed} duplicate ${deduplicated.removed === 1 ? "reference" : "references"} removed`,
+      JSON.stringify({ duplicateImageReferencesRemoved: deduplicated.removed }),
+      Date.now(),
+    ]);
   }
 
   private async runViewRefresh(id: string) {

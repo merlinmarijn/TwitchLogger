@@ -138,6 +138,7 @@ Use the base64 value for `TWITCH_TOKEN_ENCRYPTION_KEY` and the hex value for `IN
   available.
 - Removed messages remain hidden tombstones so retried Twitch events cannot restore them.
 - Removed image URLs remain suppressed during later image reindex operations.
+- Gallery image reindexing keeps only the oldest post for each identical image URL across hot and cold storage.
 - OAuth 401 responses trigger serialized refresh and one retry.
 - Shutdown closes the WebSocket, HTTP server, and PostgreSQL pool.
 

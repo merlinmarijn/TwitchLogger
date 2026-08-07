@@ -11,7 +11,6 @@ COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.htm
 COPY public ./public
 COPY shared ./shared
 COPY src ./src
-COPY convex ./convex
 COPY db ./db
 COPY scripts ./scripts
 COPY worker ./worker

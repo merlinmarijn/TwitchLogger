@@ -9,7 +9,6 @@ dist
 data
 coverage
 *.log
-.convex
 .vscode
 .idea
 tests

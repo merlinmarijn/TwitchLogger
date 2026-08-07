@@ -7,7 +7,6 @@ import {
 
 const record: ArchivedMessageRow = {
   id: "08f60902-e148-41c7-93e1-11a2f868c097",
-  convex_creation_time: null,
   channel_id: "a143bc00-cf84-4b12-9bc1-f72b89fab131",
   platform: "twitch",
   external_message_id: "95125038-6137-4222-8920-3dbd8a7dce30",

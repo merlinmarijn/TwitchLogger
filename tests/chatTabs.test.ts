@@ -7,7 +7,6 @@ import {
   type ChatViewTab,
 } from "../src/chatTabModel";
 import { applyMessageFilters } from "../src/filters";
-import { tabConditionsKey, tabMatchesMessage } from "../convex/chatTabs";
 import { LEGACY_IMAGE_GALLERY_FILTER_PATTERN } from "../shared/imageUrls";
 
 const tab: ChatViewTab = {
@@ -54,7 +53,8 @@ describe("chat tabs", () => {
     const message = { _id: "anything", messageText: "anything" } as ChatMessage;
 
     expect(parseChatTabs(serializeChatTabs([allImages]))).toEqual([allImages]);
-    expect(tabMatchesMessage(allImages, message)).toBe(true);
+    expect(applyMessageFilters([message], "", [chatTabAsFilter(allImages)]).messages)
+      .toEqual([message]);
   });
 
   it("loads tabs saved before gallery layouts as chat feeds", () => {
@@ -88,8 +88,6 @@ describe("chat tabs", () => {
 
     expect(applyMessageFilters(messages, "", [chatTabAsFilter(tab)]).messages)
       .toEqual([messages[0]]);
-    expect(tabMatchesMessage(tab, messages[0])).toBe(true);
-    expect(tabMatchesMessage(tab, messages[1])).toBe(false);
   });
 
   it("upgrades legacy image gallery rules to match Imgur albums", () => {
@@ -99,7 +97,6 @@ describe("chat tabs", () => {
     };
     const album = { _id: "imgur", messageText: "https://imgur.com/a/I5kYHtp" } as ChatMessage;
 
-    expect(tabMatchesMessage(legacyGallery, album)).toBe(true);
     expect(applyMessageFilters([album], "", [chatTabAsFilter(legacyGallery)]).messages)
       .toEqual([album]);
   });
@@ -114,17 +111,7 @@ describe("chat tabs", () => {
       messageText: "https://cdn.bsky.app/img/feed_thumbnail/plain/did:plc:23reh4wn7sc7wtcurl575tox/bafkreiefmuwe3ky6csho2szr4wsbllknenc6fl3pbaemwy3uyc2re7u5ma",
     } as ChatMessage;
 
-    expect(tabMatchesMessage(legacyGallery, image)).toBe(true);
     expect(applyMessageFilters([image], "", [chatTabAsFilter(legacyGallery)]).messages)
       .toEqual([image]);
-  });
-
-  it("rebuilds only when matching conditions change", () => {
-    const renamedAndRelayouted = { ...tab, name: "Renamed", layout: "chat" as const };
-    expect(tabConditionsKey(renamedAndRelayouted)).toBe(tabConditionsKey(tab));
-    expect(tabConditionsKey({
-      ...tab,
-      rules: [{ ...tab.rules[0], value: "\\.webp$" }],
-    })).not.toBe(tabConditionsKey(tab));
   });
 });

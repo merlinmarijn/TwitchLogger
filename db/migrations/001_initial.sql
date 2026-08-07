@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 CREATE TABLE IF NOT EXISTS platforms (
   id text PRIMARY KEY,
-  convex_creation_time double precision,
   name text NOT NULL,
   slug text NOT NULL UNIQUE,
   enabled boolean NOT NULL,
@@ -14,7 +13,6 @@ CREATE TABLE IF NOT EXISTS platforms (
 
 CREATE TABLE IF NOT EXISTS channels (
   id text PRIMARY KEY,
-  convex_creation_time double precision,
   platform text NOT NULL,
   external_channel_id text,
   username text NOT NULL,
@@ -37,7 +35,6 @@ CREATE INDEX IF NOT EXISTS channels_external_id_idx ON channels (external_channe
 
 CREATE TABLE IF NOT EXISTS chat_tabs (
   id text PRIMARY KEY,
-  convex_creation_time double precision,
   client_id text NOT NULL UNIQUE,
   name text NOT NULL,
   layout text NOT NULL CHECK (layout IN ('chat', 'gallery')),
@@ -52,7 +49,6 @@ CREATE TABLE IF NOT EXISTS chat_tabs (
 
 CREATE TABLE IF NOT EXISTS chat_messages (
   id text PRIMARY KEY,
-  convex_creation_time double precision,
   channel_id text NOT NULL REFERENCES channels(id),
   platform text NOT NULL,
   external_message_id text NOT NULL UNIQUE,
@@ -91,24 +87,8 @@ CREATE INDEX IF NOT EXISTS chat_messages_search_idx ON chat_messages USING gin (
   to_tsvector('simple', message_text || ' ' || sender_username || ' ' || sender_display_name || ' ' || channel_name)
 );
 
-CREATE TABLE IF NOT EXISTS chat_tab_matches (
-  id text PRIMARY KEY,
-  convex_creation_time double precision,
-  tab_id text NOT NULL REFERENCES chat_tabs(id) ON DELETE CASCADE,
-  revision bigint NOT NULL,
-  message_id text NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
-  channel_id text NOT NULL REFERENCES channels(id),
-  timestamp bigint NOT NULL,
-  has_images boolean NOT NULL,
-  UNIQUE (tab_id, revision, message_id)
-);
-CREATE INDEX IF NOT EXISTS chat_tab_matches_tab_timestamp_idx ON chat_tab_matches (tab_id, revision, timestamp DESC);
-CREATE INDEX IF NOT EXISTS chat_tab_matches_tab_channel_timestamp_idx ON chat_tab_matches (tab_id, revision, channel_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS chat_tab_matches_tab_images_timestamp_idx ON chat_tab_matches (tab_id, revision, has_images, timestamp DESC);
-
 CREATE TABLE IF NOT EXISTS admin_settings (
   id text PRIMARY KEY,
-  convex_creation_time double precision,
   key text NOT NULL UNIQUE,
   password_hash text NOT NULL,
   password_salt text NOT NULL,
@@ -122,7 +102,6 @@ CREATE TABLE IF NOT EXISTS admin_settings (
 
 CREATE TABLE IF NOT EXISTS admin_jobs (
   id text PRIMARY KEY,
-  convex_creation_time double precision,
   kind text NOT NULL,
   status text NOT NULL,
   title text NOT NULL,
@@ -144,7 +123,6 @@ CREATE INDEX IF NOT EXISTS admin_jobs_created_at_idx ON admin_jobs (created_at D
 
 CREATE TABLE IF NOT EXISTS admin_metrics (
   id text PRIMARY KEY,
-  convex_creation_time double precision,
   key text NOT NULL UNIQUE,
   function_calls bigint NOT NULL,
   error_count bigint NOT NULL,
@@ -156,7 +134,6 @@ CREATE TABLE IF NOT EXISTS admin_metrics (
 
 CREATE TABLE IF NOT EXISTS admin_database_stats (
   id text PRIMARY KEY,
-  convex_creation_time double precision,
   key text NOT NULL UNIQUE,
   generated_at bigint NOT NULL,
   document_count bigint NOT NULL,
@@ -165,17 +142,8 @@ CREATE TABLE IF NOT EXISTS admin_database_stats (
   scope text NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS maintenance_throttle (
-  id text PRIMARY KEY,
-  convex_creation_time double precision,
-  key text NOT NULL UNIQUE,
-  next_batch_at bigint NOT NULL,
-  updated_at bigint NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS admin_audit_log (
   id text PRIMARY KEY,
-  convex_creation_time double precision,
   event text NOT NULL,
   detail text NOT NULL,
   actor text NOT NULL,

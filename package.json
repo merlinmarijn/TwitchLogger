@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "concurrently -n web,worker -c cyan,yellow \"vite\" \"tsx watch worker/index.ts\"",
     "dev:web": "vite",
-    "dev:convex": "convex dev",
     "dev:worker": "tsx watch worker/index.ts",
     "build": "tsc -b && vite build",
     "archive:verify": "tsx scripts/verify-raw-archives.ts",
@@ -15,7 +14,6 @@
     "archive:enable-cold": "tsx scripts/enable-cold-archive.ts",
     "start:worker": "tsx worker/index.ts",
     "db:migrate": "tsx scripts/migrate-postgres.ts",
-    "migrate:convex": "tsx scripts/migrate-convex-to-postgres.ts",
     "test": "vitest run",
     "lint": "eslint ."
   },
@@ -39,7 +37,6 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@types/ws": "^8.18.1",
-    "convex": "latest",
     "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
     "eslint": "latest",

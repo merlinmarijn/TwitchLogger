@@ -33,7 +33,6 @@ const CODEC = "brotli-canonical-v1";
 
 export interface ArchivedMessageRow {
   id: string;
-  convex_creation_time: number | null;
   channel_id: string;
   platform: string;
   external_message_id: string;
@@ -65,13 +64,11 @@ export interface ArchivedMessageRow {
 interface ArchivedMessageDatabaseRow
   extends Omit<
     ArchivedMessageRow,
-    | "convex_creation_time"
     | "image_index_version"
     | "timestamp"
     | "deleted_at"
     | "created_at"
   > {
-  convex_creation_time: string | null;
   image_index_version: string | null;
   timestamp: string;
   deleted_at: string | null;
@@ -604,7 +601,7 @@ export class ColdMessageArchiveService {
     const periodEnd = periodStart + DAY_MS;
     const source = await this.database.query<ArchivedMessageDatabaseRow>(`
       SELECT
-        id, convex_creation_time, channel_id, platform, external_message_id,
+        id, channel_id, platform, external_message_id,
         event_notification_id, external_channel_id, channel_name, sender_id,
         sender_username, sender_display_name, message_text, has_images, image_urls,
         image_index_version, gallery_channel_id, timestamp, badges, user_color,
@@ -869,8 +866,6 @@ async function verifyStoredChunk(chunk: ColdChunkRow) {
 function toArchivedMessage(row: ArchivedMessageDatabaseRow): ArchivedMessageRow {
   return {
     ...row,
-    convex_creation_time:
-      row.convex_creation_time === null ? null : Number(row.convex_creation_time),
     image_index_version:
       row.image_index_version === null ? null : Number(row.image_index_version),
     timestamp: Number(row.timestamp),

@@ -12,7 +12,7 @@ The dashboard provides:
 - an authenticated `/admin` control room for configuration and log moderation;
 - admin-only single and bulk removal of messages and images.
 
-PostgreSQL is the only live application database. Convex is not used by the worker, frontend, admin authentication, dashboard, or maintenance jobs. The old Convex source and importer remain only as optional one-time cutover tooling for deployments that have not completed their historical data migration.
+PostgreSQL is the application's only database.
 
 ## Production container
 
@@ -141,16 +141,6 @@ Use the base64 value for `TWITCH_TOKEN_ENCRYPTION_KEY` and the hex value for `IN
 - Gallery image reindexing keeps only the oldest post for each identical image URL across hot and cold storage.
 - OAuth 401 responses trigger serialized refresh and one retry.
 - Shutdown closes the WebSocket, HTTP server, and PostgreSQL pool.
-
-## Historical Convex cutover tooling
-
-Deployments with data still in Convex can use the isolated importer described in [MIGRATION.md](MIGRATION.md):
-
-```powershell
-npm run migrate:convex
-```
-
-`CONVEX_URL` is needed only by that one-time command. It is not read by the live application and is intentionally absent from the production environment example.
 
 ## Useful commands
 

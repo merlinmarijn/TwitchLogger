@@ -87,6 +87,20 @@ type MessagePageArgs = {
 };
 
 export const api = {
+  shares: {
+    availability: operation<{ alias: string }, { alias: string; available: boolean }>(
+      "/api/shares/availability",
+      "POST",
+    ),
+    create: operation<{
+      alias: string;
+      pageSearch: string;
+      expiresInSeconds: number;
+    }, {
+      alias: string;
+      expiresAt: number;
+    }>("/api/shares", "POST"),
+  },
   feedback: {
     status: operation<Record<string, never>, {
       limited: boolean;

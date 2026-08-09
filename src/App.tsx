@@ -71,6 +71,7 @@ const GameScoreRoom = lazy(() => import("./GameScoreRoom"));
 const INITIAL_MESSAGE_COUNT = 50;
 const HISTORY_PAGE_SIZE = 100;
 const MAX_BULK_ITEMS = 100;
+const sharedPathPattern = /^\/s\/([a-z0-9](?:[a-z0-9-]{1,46}[a-z0-9]))\/?$/i;
 
 interface TwitchAuthStatus {
   configured?: boolean;
@@ -150,6 +151,7 @@ export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [userSettings, setUserSettings] = useState<UserSettings>(loadSavedUserSettings);
   const [notice, setNotice] = useState<string>();
   const [selectionMode, setSelectionMode] = useState(false);
@@ -157,6 +159,9 @@ export default function App() {
   const [scorePeriod, setScorePeriod] = useState<ScorePeriod>(
     initialPageState.scorePeriod ?? "all",
   );
+  const [sharedAlias] = useState(() => sharedAliasFromPath(window.location.pathname));
+  const [sharedPageState, setSharedPageState] = useState<PageUrlState>();
+  const sharedStateAppliedRef = useRef(false);
   const chatTabs = serverChatTabs === undefined ||
       (serverChatTabs.length === 0 && legacyChatTabs.length > 0)
     ? legacyChatTabs
@@ -195,6 +200,26 @@ export default function App() {
     serverSelectionFilters.length > 0;
   const galleryActive = activeChatTab?.layout === "gallery";
   const scoresActive = activeChatTab?.layout === "scores";
+  const currentPageState = useMemo<PageUrlState>(() => ({
+    channel: selectedChannel?.username,
+    tabId: activeChatTab?.id,
+    quickSearch: querySearch,
+    searchTokens,
+    searchMatch,
+    filters: activeFilters,
+    scoreGame: scoresActive ? scoreGame : undefined,
+    scorePeriod: scoresActive ? scorePeriod : undefined,
+  }), [
+    activeChatTab,
+    activeFilters,
+    querySearch,
+    scoreGame,
+    scorePeriod,
+    scoresActive,
+    searchMatch,
+    searchTokens,
+    selectedChannel,
+  ]);
   const queryArgs = useMemo(
     () => ({
       ...(selectedChannelId ? { channelId: selectedChannelId } : {}),
@@ -338,36 +363,55 @@ export default function App() {
   }, [chatTabs]);
 
   useEffect(() => {
-    if (!urlStateReady) return;
+    if (!sharedAlias) return;
+    const controller = new AbortController();
+    void fetch(`${workerUrl}/api/shares/${encodeURIComponent(sharedAlias)}`, {
+      signal: controller.signal,
+    }).then(async (response) => {
+      const body = await response.json() as { pageSearch?: string; error?: string };
+      if (!response.ok || typeof body.pageSearch !== "string") {
+        throw new Error(body.error ?? "This share link could not be opened.");
+      }
+      setSharedPageState(parsePageUrl(body.pageSearch));
+    }).catch((cause) => {
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      setNotice(cause instanceof Error ? cause.message : "This share link could not be opened.");
+    });
+    return () => controller.abort();
+  }, [sharedAlias]);
+
+  useEffect(() => {
+    if (!sharedPageState || sharedStateAppliedRef.current) return;
+    const dependenciesReady = (!sharedPageState.channel || channelResults !== undefined) &&
+      (!sharedPageState.tabId || serverChatTabs !== undefined ||
+        chatTabs.some((tab) => tab.id === sharedPageState.tabId));
+    if (!dependenciesReady) return;
+    let active = true;
+    queueMicrotask(() => {
+      if (!active || sharedStateAppliedRef.current) return;
+      sharedStateAppliedRef.current = true;
+      applyPageUrlState(sharedPageState);
+    });
+    return () => {
+      active = false;
+    };
+  }, [applyPageUrlState, channelResults, chatTabs, serverChatTabs, sharedPageState]);
+
+  useEffect(() => {
+    if (!urlStateReady || sharedAlias) return;
     const restoreFromUrl = () => applyPageUrlState(parsePageUrl(window.location.search));
     window.addEventListener("popstate", restoreFromUrl);
     return () => window.removeEventListener("popstate", restoreFromUrl);
-  }, [applyPageUrlState, urlStateReady]);
+  }, [applyPageUrlState, sharedAlias, urlStateReady]);
 
   useEffect(() => {
-    if (!urlStateReady) return;
-    const nextUrl = buildPageUrl(window.location.href, {
-      channel: selectedChannel?.username,
-      tabId: activeChatTab?.id,
-      quickSearch: querySearch,
-      searchTokens,
-      searchMatch,
-      filters: activeFilters,
-      scoreGame: scoresActive ? scoreGame : undefined,
-      scorePeriod: scoresActive ? scorePeriod : undefined,
-    });
+    if (!urlStateReady || sharedAlias) return;
+    const nextUrl = buildPageUrl(window.location.href, currentPageState);
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (nextUrl !== currentUrl) window.history.replaceState(window.history.state, "", nextUrl);
   }, [
-    activeChatTab,
-    activeFilters,
-    querySearch,
-    scoreGame,
-    scorePeriod,
-    scoresActive,
-    searchMatch,
-    searchTokens,
-    selectedChannel,
+    currentPageState,
+    sharedAlias,
     urlStateReady,
   ]);
 
@@ -500,6 +544,14 @@ export default function App() {
             </div>
           </div>
           <div className="topbar-actions">
+            <button
+              className="button share-view-trigger"
+              onClick={() => setShareDialogOpen(true)}
+              type="button"
+            >
+              <ShareIcon />
+              Share view
+            </button>
             {auth?.authenticated ? (
               <span className="auth-chip connected">Connected as {auth.login}</span>
             ) : auth?.configured === false ? (
@@ -669,6 +721,12 @@ export default function App() {
         {feedbackDialogOpen && (
           <FeedbackDialog onClose={() => setFeedbackDialogOpen(false)} />
         )}
+        {shareDialogOpen && (
+          <ShareDialog
+            onClose={() => setShareDialogOpen(false)}
+            pageState={currentPageState}
+          />
+        )}
         {filterDialogOpen && (
           <div
             className="dialog-backdrop"
@@ -715,6 +773,21 @@ function resolveChannel(channels: Channel[], marker?: string) {
     channel._id === marker ||
     channel.externalChannelId === marker ||
     channel.username.toLowerCase() === normalized
+  );
+}
+
+function sharedAliasFromPath(pathname: string) {
+  return sharedPathPattern.exec(pathname)?.[1]?.toLowerCase();
+}
+
+function ShareIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16">
+      <circle cx="4" cy="8" r="1.7" />
+      <circle cx="12" cy="3.5" r="1.7" />
+      <circle cx="12" cy="12.5" r="1.7" />
+      <path d="m5.5 7.1 5-2.7M5.5 8.9l5 2.7" />
+    </svg>
   );
 }
 
@@ -1801,6 +1874,276 @@ function InlineChatImage({ image }: { image: GalleryImage }) {
       />
     </a>
   );
+}
+
+const shareExpiryOptions = [
+  { seconds: 300, label: "5 minutes" },
+  { seconds: 3_600, label: "1 hour" },
+  { seconds: 14_400, label: "4 hours" },
+  { seconds: 28_800, label: "8 hours" },
+  { seconds: 57_600, label: "16 hours" },
+  { seconds: 86_400, label: "24 hours" },
+  { seconds: 604_800, label: "1 week" },
+  { seconds: 2_592_000, label: "30 days" },
+] as const;
+
+type ShareAvailability = "idle" | "checking" | "available" | "taken";
+
+function ShareDialog({
+  onClose,
+  pageState,
+}: {
+  onClose: () => void;
+  pageState: PageUrlState;
+}) {
+  const checkAvailability = useMutation(api.shares.availability);
+  const createShare = useMutation(api.shares.create);
+  const [mode, setMode] = useState<"random" | "custom">("random");
+  const [randomAlias, setRandomAlias] = useState(() => crypto.randomUUID());
+  const [customAlias, setCustomAlias] = useState("");
+  const [availabilityResult, setAvailabilityResult] = useState<{
+    alias: string;
+    status: ShareAvailability;
+  }>({ alias: "", status: "idle" });
+  const [expiresInSeconds, setExpiresInSeconds] = useState(86_400);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string>();
+  const [result, setResult] = useState<{ url: string; expiresAt: number }>();
+  const [copied, setCopied] = useState(false);
+  const alias = mode === "random" ? randomAlias : customAlias.trim().toLowerCase();
+  const customAliasError = mode === "custom" ? validateShareAlias(alias) : undefined;
+  const availability = mode === "custom" && !customAliasError &&
+      availabilityResult.alias === alias
+    ? availabilityResult.status
+    : "idle";
+  const sharePrefix = `${window.location.origin}/s/`;
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (mode !== "custom" || customAliasError) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setAvailabilityResult({ alias, status: "checking" });
+      void checkAvailability({ alias }).then((response) => {
+        if (active) setAvailabilityResult({
+          alias,
+          status: response.available ? "available" : "taken",
+        });
+      }).catch((cause) => {
+        if (!active) return;
+        setAvailabilityResult({ alias, status: "idle" });
+        setError(cause instanceof Error ? cause.message : "Availability could not be checked.");
+      });
+    }, 400);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [alias, checkAvailability, customAliasError, mode]);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (mode === "custom" && (customAliasError || availability !== "available")) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      const stateUrl = buildPageUrl(`${window.location.origin}/`, pageState);
+      const pageSearch = new URL(stateUrl, window.location.origin).search;
+      const created = await createShare({ alias, pageSearch, expiresInSeconds });
+      setResult({
+        url: `${sharePrefix}${created.alias}`,
+        expiresAt: created.expiresAt,
+      });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "The share link could not be created.";
+      setError(message);
+      if (mode === "custom" && message.toLowerCase().includes("already")) {
+        setAvailabilityResult({ alias, status: "taken" });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const copyResult = async () => {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(result.url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      setError("Copying was blocked by your browser. Select the link and copy it manually.");
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={onClose} role="presentation">
+      <form
+        aria-labelledby="share-dialog-title"
+        aria-modal="true"
+        className="dialog share-dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={submit}
+        role="dialog"
+      >
+        <div className="share-dialog-heading">
+          <div>
+            <span className="eyebrow">Portable view</span>
+            <h2 id="share-dialog-title">{result ? "Your link is ready" : "Share this view"}</h2>
+            <p>
+              {result
+                ? "Anyone with this link can open the same channel, tab, search, and filters."
+                : "Save this page setup as a short, temporary link."}
+            </p>
+          </div>
+          <button aria-label="Close share dialog" className="dialog-close" onClick={onClose} type="button">
+            {"\u00d7"}
+          </button>
+        </div>
+
+        {result ? (
+          <div className="share-result">
+            <button className="share-result-url" onClick={copyResult} type="button">
+              <span>{result.url}</span>
+              <strong>{copied ? "Copied" : "Copy"}</strong>
+            </button>
+            <p>
+              Expires {new Date(result.expiresAt).toLocaleString([], {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+            </p>
+          </div>
+        ) : (
+          <>
+            <fieldset className="share-link-choice">
+              <legend>Link address</legend>
+              <div>
+                <button
+                  aria-pressed={mode === "random"}
+                  className={mode === "random" ? "selected" : ""}
+                  onClick={() => {
+                    setMode("random");
+                    setError(undefined);
+                  }}
+                  type="button"
+                >
+                  Random
+                </button>
+                <button
+                  aria-pressed={mode === "custom"}
+                  className={mode === "custom" ? "selected" : ""}
+                  onClick={() => {
+                    setMode("custom");
+                    setError(undefined);
+                  }}
+                  type="button"
+                >
+                  Custom
+                </button>
+              </div>
+            </fieldset>
+
+            {mode === "random" ? (
+              <div className="share-random-link">
+                <span>{sharePrefix}</span>
+                <strong>{randomAlias}</strong>
+                <button
+                  aria-label="Generate a different random link"
+                  onClick={() => setRandomAlias(crypto.randomUUID())}
+                  title="Generate another"
+                  type="button"
+                >
+                  ↻
+                </button>
+              </div>
+            ) : (
+              <label className="share-custom-field">
+                <span>Custom address</span>
+                <div>
+                  <span>{sharePrefix}</span>
+                  <input
+                    autoFocus
+                    maxLength={48}
+                    onChange={(event) => {
+                      setCustomAlias(event.target.value.toLowerCase());
+                      setError(undefined);
+                    }}
+                    placeholder="my-favorite-view"
+                    spellCheck={false}
+                    value={customAlias}
+                  />
+                </div>
+                <small
+                  className={availability === "taken" || customAliasError ? "invalid" : ""}
+                  role="status"
+                >
+                  {customAliasError ?? (availability === "checking"
+                    ? "Checking availability…"
+                    : availability === "available"
+                      ? "This address is available."
+                      : availability === "taken"
+                        ? "That address is already in use. Choose another one."
+                        : "Use 3–48 letters, numbers, or hyphens.")}
+                </small>
+              </label>
+            )}
+
+            <label className="share-expiry-field">
+              <span>Keep this link for</span>
+              <select
+                onChange={(event) => setExpiresInSeconds(Number(event.target.value))}
+                value={expiresInSeconds}
+              >
+                {shareExpiryOptions.map((option) => (
+                  <option key={option.seconds} value={option.seconds}>{option.label}</option>
+                ))}
+              </select>
+              <small>The link stops working automatically after this time.</small>
+            </label>
+          </>
+        )}
+
+        {error && <div className="share-error" role="alert">{error}</div>}
+        <div className="dialog-actions">
+          {result ? (
+            <>
+              <button className="button" onClick={onClose} type="button">Done</button>
+              <button className="button primary" onClick={copyResult} type="button">
+                {copied ? "Copied to clipboard" : "Copy link"}
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="button" onClick={onClose} type="button">Cancel</button>
+              <button
+                className="button primary"
+                disabled={saving || (mode === "custom" && availability !== "available")}
+                type="submit"
+              >
+                {saving ? "Creating…" : "Create share link"}
+              </button>
+            </>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function validateShareAlias(alias: string) {
+  if (!alias) return "Enter a custom address.";
+  if (alias.length < 3) return "Use at least 3 characters.";
+  if (!/^[a-z0-9-]+$/.test(alias)) return "Use only letters, numbers, or hyphens.";
+  if (alias.startsWith("-") || alias.endsWith("-")) return "Do not start or end with a hyphen.";
+  return undefined;
 }
 
 const FEEDBACK_COOLDOWN_STORAGE_KEY = "twitch-logger-feedback-cooldown-until";

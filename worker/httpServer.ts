@@ -29,6 +29,7 @@ import {
   type ProxiedImage,
 } from "./touhouWikiImage";
 import { FeedbackRequestError, FeedbackService } from "./FeedbackService";
+import { ShareRequestError, ShareService } from "./ShareService";
 
 export interface ApplicationRuntimeState {
   auth?: TwitchAuthService;
@@ -52,6 +53,10 @@ export interface HttpServerDependencies {
     rateLimitMinutes: number,
     ipHashSecret: string,
   ) => Pick<FeedbackService, "submit" | "status">;
+  createShareService?: (database: PostgresDatabase) => Pick<
+    ShareService,
+    "availability" | "create" | "resolve"
+  >;
 }
 
 export function createHttpServer(
@@ -83,6 +88,11 @@ export function createHttpServer(
         runtime.database,
         configuration.feedbackOptions.rateLimitMinutes,
         configuration.feedbackOptions.ipHashSecret,
+      )
+    : undefined;
+  const shares = runtime.database
+    ? (dependencies.createShareService ?? ((database) => new ShareService(database)))(
+        runtime.database,
       )
     : undefined;
   const failedAdminAttempts = new Map<string, { count: number; resetsAt: number }>();
@@ -373,6 +383,41 @@ export function createHttpServer(
       }
       logger.warn({ err: error }, "Feedback submission failed");
       response.status(500).json({ error: "Your report could not be sent. Please try again later." });
+    }
+  });
+
+  app.post("/api/shares/availability", async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    if (!shares) return sendShareUnavailable(response);
+    try {
+      response.json(await shares.availability(request.body?.alias));
+    } catch (error) {
+      sendShareError(response, error, logger);
+    }
+  });
+
+  app.post("/api/shares", async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    const origin = request.get("origin");
+    if (origin && !trustedWriteOrigins.has(origin)) {
+      response.status(403).json({ error: "This share came from an untrusted origin" });
+      return;
+    }
+    if (!shares) return sendShareUnavailable(response);
+    try {
+      response.status(201).json(await shares.create(request.body));
+    } catch (error) {
+      sendShareError(response, error, logger);
+    }
+  });
+
+  app.get("/api/shares/:alias", async (request, response) => {
+    response.set("Cache-Control", "no-store");
+    if (!shares) return sendShareUnavailable(response);
+    try {
+      response.json(await shares.resolve(request.params.alias));
+    } catch (error) {
+      sendShareError(response, error, logger);
     }
   });
 
@@ -799,6 +844,19 @@ function clearAdminAttempts(
   address: string | undefined,
 ) {
   attempts.delete(address ?? "unknown");
+}
+
+function sendShareUnavailable(response: express.Response) {
+  response.status(503).json({ error: "Share links are temporarily unavailable" });
+}
+
+function sendShareError(response: express.Response, error: unknown, logger: Logger) {
+  if (error instanceof ShareRequestError) {
+    response.status(error.status).json({ error: error.message });
+    return;
+  }
+  logger.warn({ err: error }, "Share link request failed");
+  response.status(500).json({ error: "The share link service is temporarily unavailable" });
 }
 
 function parseMessageIds(value: unknown) {

@@ -18,11 +18,6 @@ import {
   type FeedbackStatus,
 } from "../shared/feedback";
 import { IMAGE_INDEX_VERSION } from "../shared/imageUrls";
-import { ARCHIVE_BROTLI_QUALITY } from "./ArchiveCompression";
-import {
-  reencodeColdArchiveChunk,
-  reencodeRawArchiveChunk,
-} from "./ArchiveReencodingService";
 import { ColdMessageArchiveService } from "./ColdMessageArchiveService";
 import type { PostgresDatabase } from "./database";
 import {
@@ -59,12 +54,12 @@ type EnrollmentPayload = {
   expiresAt: number;
 };
 
-export type AdminJobKind =
+export type StartableAdminJobKind =
   | "image_reindex"
   | "view_reindex"
   | "integrity_scan"
-  | "database_measurement"
-  | "archive_reencode";
+  | "database_measurement";
+export type AdminJobKind = StartableAdminJobKind | "archive_reencode";
 
 type AdminJobStatus =
   | "queued"
@@ -74,7 +69,7 @@ type AdminJobStatus =
   | "completed"
   | "failed";
 
-const jobDefinitions: Record<AdminJobKind, { title: string; detail: string; unit: string }> = {
+const jobDefinitions: Record<StartableAdminJobKind, { title: string; detail: string; unit: string }> = {
   image_reindex: {
     title: "Re-index image links",
     detail: "Rechecks saved links, rebuilds gallery membership, and removes duplicate image URLs.",
@@ -94,11 +89,6 @@ const jobDefinitions: Record<AdminJobKind, { title: string; detail: string; unit
     title: "Measure database",
     detail: "Measures PostgreSQL row counts and relation sizes for application tables.",
     unit: "tables",
-  },
-  archive_reencode: {
-    title: "Re-encode archive chunks",
-    detail: `Verifies and rewrites raw-event and cold-message chunks with Brotli quality ${ARCHIVE_BROTLI_QUALITY}.`,
-    unit: "chunks",
   },
 };
 
@@ -456,7 +446,7 @@ export class AdminService {
     }
   }
 
-  async startJob(sessionToken: string | undefined, kind: AdminJobKind) {
+  async startJob(sessionToken: string | undefined, kind: StartableAdminJobKind) {
     await this.requireSession(sessionToken);
     const definition = jobDefinitions[kind];
     const client = await this.database.pool.connect();
@@ -474,7 +464,6 @@ export class AdminService {
       const now = Date.now();
       let total: number | null = null;
       let detail = definition.detail;
-      let metadata: Record<string, unknown> = {};
       if (kind === "image_reindex") {
         const count = await client.query<{ count: string }>(`
           SELECT
@@ -484,22 +473,6 @@ export class AdminService {
         `);
         total = Number(count.rows[0]?.count ?? 0);
         detail = `Indexing ${total} saved messages`;
-      } else if (kind === "archive_reencode") {
-        const count = await client.query<{ count: string }>(`
-          SELECT
-            (SELECT count(*) FROM chat_raw_event_chunks WHERE created_at < $1) +
-            (SELECT count(*) FROM chat_message_cold_chunks WHERE created_at < $1)
-            AS count
-        `, [now]);
-        total = Number(count.rows[0]?.count ?? 0);
-        detail = `Re-encoding ${total} archive chunks with Brotli quality ${ARCHIVE_BROTLI_QUALITY}`;
-        metadata = {
-          archiveCutoff: now,
-          phase: "raw",
-          bytesBefore: 0,
-          bytesAfter: 0,
-          messagesProcessed: 0,
-        };
       }
       await client.query(`
         INSERT INTO admin_jobs (
@@ -507,7 +480,7 @@ export class AdminService {
           metadata, requested_by, created_at, updated_at
         ) VALUES ($1, $2, 'queued', $3, $4, 0, $5, $6, NULL, $7::jsonb, $8, $9, $9)
       `, [id, kind, definition.title, detail, total, definition.unit,
-        JSON.stringify(metadata), "super-admin", now]);
+        JSON.stringify({}), "super-admin", now]);
       await insertAudit(client, "job.started", definition.title, "super-admin");
       await client.query("COMMIT");
     } catch (error) {
@@ -601,7 +574,7 @@ export class AdminService {
       else if (job.kind === "view_reindex") await this.runViewRefresh(id);
       else if (job.kind === "integrity_scan") await this.runIntegrityScan(id);
       else if (job.kind === "database_measurement") await this.runDatabaseMeasurement(id);
-      else await this.runArchiveReencode(id);
+      else throw new Error("Archive re-encoding is no longer available");
       if (await this.isCancelling(id)) await this.finishCancelled(id);
       else await this.completeJob(id);
       await this.recordMetric(performance.now() - started, false);
@@ -808,120 +781,6 @@ export class AdminService {
     `, [randomUUID(), STATS_KEY, generatedAt, documentCount, documentBytes,
       JSON.stringify(tables),
       "PostgreSQL relation sizes, including table data, indexes, and TOAST storage."]);
-  }
-
-  private async runArchiveReencode(id: string) {
-    const jobResult = await this.database.query<{
-      current: string;
-      cursor: string | null;
-      metadata: Record<string, unknown> | null;
-    }>("SELECT current, cursor, metadata FROM admin_jobs WHERE id = $1", [id]);
-    const job = jobResult.rows[0];
-    if (!job) return;
-    const archiveCutoff = numericMetadata(job.metadata, "archiveCutoff");
-    let bytesBefore = numericMetadata(job.metadata, "bytesBefore", 0);
-    let bytesAfter = numericMetadata(job.metadata, "bytesAfter", 0);
-    let messagesProcessed = numericMetadata(job.metadata, "messagesProcessed", 0);
-    let current = Number(job.current);
-    let phase: "raw" | "cold" = job.cursor?.startsWith("cold:") ? "cold" : "raw";
-    let cursor = job.cursor?.slice(phase.length + 1) ?? "";
-
-    while (true) {
-      if (await this.isCancelling(id)) return;
-      const table = phase === "raw" ? "chat_raw_event_chunks" : "chat_message_cold_chunks";
-      const page = await this.database.query<{ id: string }>(`
-        SELECT id FROM ${table}
-        WHERE created_at < $1 AND id > $2
-        ORDER BY id
-        LIMIT 1
-      `, [archiveCutoff, cursor]);
-      const chunkId = page.rows[0]?.id;
-      if (!chunkId) {
-        if (phase === "raw") {
-          phase = "cold";
-          cursor = "";
-          await this.database.query(`
-            UPDATE admin_jobs
-            SET cursor = 'cold:', detail = $2, metadata = $3::jsonb, updated_at = $4
-            WHERE id = $1
-          `, [
-            id,
-            "Raw-event chunks complete · re-encoding cold-message chunks",
-            JSON.stringify({
-              archiveCutoff,
-              phase,
-              bytesBefore,
-              bytesAfter,
-              messagesProcessed,
-            }),
-            Date.now(),
-          ]);
-          continue;
-        }
-        break;
-      }
-
-      const client = await this.database.pool.connect();
-      try {
-        await client.query("BEGIN");
-        const result = phase === "raw"
-          ? await reencodeRawArchiveChunk(client, chunkId)
-          : await reencodeColdArchiveChunk(client, chunkId);
-        current += 1;
-        bytesBefore += result.beforeBytes;
-        bytesAfter += result.afterBytes;
-        messagesProcessed += result.messageCount;
-        cursor = chunkId;
-        await client.query(`
-          UPDATE admin_jobs
-          SET current = $2, cursor = $3, detail = $4, metadata = $5::jsonb, updated_at = $6
-          WHERE id = $1
-        `, [
-          id,
-          current,
-          `${phase}:${cursor}`,
-          `${phase === "raw" ? "Raw-event" : "Cold-message"} chunks · ${current} verified and re-encoded`,
-          JSON.stringify({
-            archiveCutoff,
-            phase,
-            bytesBefore,
-            bytesAfter,
-            messagesProcessed,
-          }),
-          Date.now(),
-        ]);
-        await client.query("COMMIT");
-      } catch (error) {
-        await client.query("ROLLBACK").catch(() => undefined);
-        throw error;
-      } finally {
-        client.release();
-      }
-      await yieldToEventLoop();
-    }
-
-    const bytesSaved = bytesBefore - bytesAfter;
-    const savingPercent = bytesBefore > 0 ? (bytesSaved / bytesBefore) * 100 : 0;
-    const detail = current === 0
-      ? "No archive chunks needed re-encoding"
-      : bytesSaved >= 0
-        ? `Re-encoded ${current} chunks · saved ${formatByteCount(bytesSaved)} (${savingPercent.toFixed(1)}%)`
-        : `Re-encoded ${current} chunks · payload grew by ${formatByteCount(-bytesSaved)}`;
-    await this.database.query(`
-      UPDATE admin_jobs SET detail = $2, metadata = $3::jsonb, updated_at = $4 WHERE id = $1
-    `, [
-      id,
-      detail,
-      JSON.stringify({
-        archiveCutoff,
-        phase: "complete",
-        bytesBefore,
-        bytesAfter,
-        bytesSaved,
-        messagesProcessed,
-      }),
-      Date.now(),
-    ]);
   }
 
   private async isCancelling(id: string) {
@@ -1143,28 +1002,6 @@ async function insertAudit(
 
 function yieldToEventLoop() {
   return new Promise<void>((resolve) => setImmediate(resolve));
-}
-
-function numericMetadata(
-  metadata: Record<string, unknown> | null,
-  key: string,
-  fallback?: number,
-) {
-  const value = metadata?.[key];
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (fallback !== undefined) return fallback;
-  throw new Error(`Archive re-encoding job is missing ${key} metadata`);
-}
-
-function formatByteCount(bytes: number) {
-  const units = ["B", "kB", "MB", "GB", "TB"];
-  let value = bytes;
-  let index = 0;
-  while (value >= 1_000 && index < units.length - 1) {
-    value /= 1_000;
-    index += 1;
-  }
-  return `${value.toFixed(index === 0 ? 0 : value >= 10 ? 1 : 2)} ${units[index]}`;
 }
 
 function toFeedbackReport(report: FeedbackReportRow) {

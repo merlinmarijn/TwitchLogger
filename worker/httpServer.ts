@@ -19,7 +19,7 @@ import type {
 import {
   AdminAuthError,
   AdminService,
-  type AdminJobKind,
+  type StartableAdminJobKind,
   type FeedbackListOptions,
 } from "./AdminService";
 import { isImgurPost, isTouhouWikiImage } from "../shared/imageUrls";
@@ -296,14 +296,13 @@ export function createHttpServer(
 
   app.post("/api/admin/jobs", async (request, response) => {
     if (!admin) return sendAdminUnavailable(response);
-    const validKinds = new Set<AdminJobKind>([
+    const validKinds = new Set<StartableAdminJobKind>([
       "image_reindex",
       "view_reindex",
       "integrity_scan",
       "database_measurement",
-      "archive_reencode",
     ]);
-    const kind = request.body?.kind as AdminJobKind;
+    const kind = request.body?.kind as StartableAdminJobKind;
     if (!validKinds.has(kind)) {
       response.status(400).json({ error: "Unknown maintenance operation" });
       return;

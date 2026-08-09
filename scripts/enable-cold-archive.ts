@@ -14,12 +14,12 @@ const database = new PostgresDatabase(databaseUrl);
 try {
   const rawPending = await database.query<{ count: string }>(`
     SELECT count(*)::bigint AS count
-    FROM chat_messages
-    WHERE timestamp < $1 AND raw_message_data IS NOT NULL
+    FROM chat_raw_events
+    WHERE timestamp < $1
   `, [Date.now() - 90 * 86_400_000]);
   if (Number(rawPending.rows[0].count) !== 0) {
     throw new Error(
-      "Refusing to enable cold archival while eligible messages still have raw sources",
+      "Refusing to enable cold archival while eligible raw events are still staged",
     );
   }
   const result = await database.query<{ enabled: boolean }>(`

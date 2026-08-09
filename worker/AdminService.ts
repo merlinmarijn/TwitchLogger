@@ -97,6 +97,11 @@ const measuredTables = [
   "channels",
   "chat_tabs",
   "chat_messages",
+  "chat_senders",
+  "chat_sender_profiles",
+  "chat_channel_profiles",
+  "chat_badge_sets",
+  "chat_message_types",
   "chat_raw_events",
   "chat_raw_event_chunks",
   "chat_message_cold_catalog",
@@ -624,8 +629,8 @@ export class AdminService {
         this.remoteImageDetector,
         page.rows.map((message) => ({
           messageText: message.message_text,
-          indexedImageUrls: message.image_urls,
-          hiddenImageUrls: message.hidden_image_urls,
+          indexedImageUrls: message.image_urls ?? [],
+          hiddenImageUrls: message.hidden_image_urls ?? [],
         })),
         8,
         createProgressReporter(async (completed) => {
@@ -642,10 +647,14 @@ export class AdminService {
           const imageUrls = resolvedImageUrls[index];
           await client.query(`
             UPDATE chat_messages
-            SET has_images = $2, image_urls = $3::jsonb, image_index_version = $4,
-                gallery_channel_id = CASE WHEN $2 THEN channel_id ELSE NULL END
+            SET has_images = $2, image_urls = $3::jsonb, image_index_version = $4
             WHERE id = $1 AND deleted_at IS NULL
-          `, [message.id, imageUrls.length > 0, JSON.stringify(imageUrls), IMAGE_INDEX_VERSION]);
+          `, [
+            message.id,
+            imageUrls.length > 0,
+            imageUrls.length > 0 ? JSON.stringify(imageUrls) : null,
+            IMAGE_INDEX_VERSION,
+          ]);
         }
         cursor = page.rows[page.rows.length - 1].id;
         current += page.rows.length;
@@ -955,8 +964,8 @@ interface ImageReindexRow {
   id: string;
   channel_id: string;
   message_text: string;
-  image_urls: string[];
-  hidden_image_urls: string[];
+  image_urls: string[] | null;
+  hidden_image_urls: string[] | null;
 }
 
 function toAdminJob(job: AdminJobRow) {

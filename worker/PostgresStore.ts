@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { extractImageUrls, IMAGE_INDEX_VERSION, upgradeGalleryFilterPattern } from "../shared/imageUrls";
+import { compactNativeEmotes, type NativeEmote } from "../shared/nativeEmotes";
 import {
   filterRuleError,
   matchesMessageFilter,
@@ -70,7 +71,8 @@ interface MessageRow {
   is_vip: boolean;
   message_type: string;
   image_urls: string[] | null;
-  metadata: Record<string, unknown> | null;
+  native_emotes?: NativeEmote[] | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export class PostgresStore implements ChatRepository {
@@ -178,30 +180,63 @@ export class PostgresStore implements ChatRepository {
         this.logger.debug({ messageId: message.messageId }, "Ignored archived duplicate chat message");
         return;
       }
+      const roleFlags =
+        (message.isBroadcaster ? 1 : 0) |
+        (message.isModerator ? 2 : 0) |
+        (message.isSubscriber ? 4 : 0) |
+        (message.isVip ? 8 : 0);
       const result = await client.query<{ id: string }>(`
-        INSERT INTO chat_messages (
-          id, channel_id, platform, external_message_id, event_notification_id,
-          external_channel_id, channel_name, sender_id, sender_username,
-          sender_display_name, message_text, has_images, image_urls,
-          image_index_version, gallery_channel_id, timestamp, badges, user_color,
-          is_broadcaster, is_moderator, is_subscriber, is_vip, message_type,
-          metadata, raw_message_data, created_at
-        ) VALUES (
-          $1, $2, 'twitch', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb,
-          $13, $14, $15, $16::jsonb, $17, $18, $19, $20, $21, $22,
-          $23::jsonb, $24::jsonb, $25
+        WITH sender AS (
+          INSERT INTO chat_senders (external_user_id)
+          VALUES ($4)
+          ON CONFLICT (external_user_id) DO UPDATE
+          SET external_user_id = EXCLUDED.external_user_id
+          RETURNING id
+        ), sender_profile AS (
+          INSERT INTO chat_sender_profiles (
+            sender_id, username, display_name, user_color
+          )
+          SELECT id, $5, $6, $7 FROM sender
+          ON CONFLICT ON CONSTRAINT chat_sender_profiles_identity_key DO UPDATE
+          SET username = EXCLUDED.username
+          RETURNING id
+        ), channel_profile AS (
+          INSERT INTO chat_channel_profiles (
+            channel_id, external_channel_id, username
+          ) VALUES ($2, $9, $10)
+          ON CONFLICT ON CONSTRAINT chat_channel_profiles_identity_key DO UPDATE
+          SET username = EXCLUDED.username
+          RETURNING id
+        ), badge_set AS (
+          INSERT INTO chat_badge_sets (badges)
+          VALUES ($11::jsonb)
+          ON CONFLICT (badges) DO UPDATE SET badges = EXCLUDED.badges
+          RETURNING id
+        ), message_kind AS (
+          INSERT INTO chat_message_types (name)
+          VALUES ($12)
+          ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+          RETURNING id
         )
+        INSERT INTO chat_messages (
+          id, channel_id, external_message_id, sender_profile_id,
+          channel_profile_id, badge_set_id, message_type_id, role_flags,
+          message_text, has_images, image_urls, image_index_version,
+          timestamp, native_emotes
+        )
+        SELECT $1, $2, $3, sender_profile.id, channel_profile.id,
+          badge_set.id, message_kind.id, $13, $14, $15, $16::jsonb,
+          $17, $8, $18::jsonb
+        FROM sender_profile, channel_profile, badge_set, message_kind
         ON CONFLICT (external_message_id) DO NOTHING
         RETURNING id
       `, [
-        randomUUID(), channel.storageId, message.messageId, message.eventNotificationId,
-        message.channelId, message.channelName, message.userId, message.username,
-        message.displayName, message.messageText, imageUrls.length > 0,
-        JSON.stringify(imageUrls), IMAGE_INDEX_VERSION,
-        imageUrls.length > 0 ? channel.storageId : null, timestamp,
-        JSON.stringify(message.badges), message.userColor ?? null, message.isBroadcaster,
-        message.isModerator, message.isSubscriber, message.isVip, message.messageType,
-        JSON.stringify(message.metadata), JSON.stringify(message.rawMessageData), now,
+        randomUUID(), channel.storageId, message.messageId, message.userId,
+        message.username, message.displayName, message.userColor ?? null, timestamp,
+        message.channelId, message.channelName, JSON.stringify(message.badges),
+        message.messageType, roleFlags, message.messageText, imageUrls.length > 0,
+        imageUrls.length > 0 ? JSON.stringify(imageUrls) : null, IMAGE_INDEX_VERSION,
+        message.nativeEmotes.length > 0 ? JSON.stringify(message.nativeEmotes) : null,
       ]);
       if (!result.rowCount) {
         await client.query("ROLLBACK");
@@ -238,7 +273,6 @@ export class PostgresStore implements ChatRepository {
     if (insertedMessageId) {
       void this.indexRemoteImages(
         insertedMessageId,
-        channel.storageId,
         message.messageText,
         imageUrls,
       );
@@ -247,7 +281,6 @@ export class PostgresStore implements ChatRepository {
 
   private async indexRemoteImages(
     messageId: string,
-    channelId: string,
     messageText: string,
     knownImageUrls: readonly string[],
   ) {
@@ -260,12 +293,11 @@ export class PostgresStore implements ChatRepository {
         await this.database.query(`
           UPDATE chat_messages
           SET image_urls = COALESCE(image_urls, '[]'::jsonb) || jsonb_build_array($2::text),
-              has_images = true,
-              gallery_channel_id = $3
+              has_images = true
           WHERE id = $1 AND deleted_at IS NULL
             AND NOT (COALESCE(image_urls, '[]'::jsonb) ? $2::text)
             AND NOT (COALESCE(hidden_image_urls, '[]'::jsonb) ? $2::text)
-        `, [messageId, url, channelId]);
+        `, [messageId, url]);
       }
       if (detectedUrls.length > 0) {
         this.logger.debug(
@@ -449,17 +481,16 @@ export class PostgresStore implements ChatRepository {
     for (const image of images) {
       const result = await this.database.query<{ id: string }>(`
         UPDATE chat_messages
-        SET image_urls = COALESCE(image_urls, '[]'::jsonb) - $2::text,
+        SET image_urls = NULLIF(
+              COALESCE(image_urls, '[]'::jsonb) - $2::text,
+              '[]'::jsonb
+            ),
             hidden_image_urls = CASE
-              WHEN hidden_image_urls ? $2::text THEN hidden_image_urls
-              ELSE hidden_image_urls || jsonb_build_array($2::text)
+              WHEN COALESCE(hidden_image_urls, '[]'::jsonb) ? $2::text
+                THEN hidden_image_urls
+              ELSE COALESCE(hidden_image_urls, '[]'::jsonb) || jsonb_build_array($2::text)
             END,
-            has_images = jsonb_array_length(COALESCE(image_urls, '[]'::jsonb) - $2::text) > 0,
-            gallery_channel_id = CASE
-              WHEN jsonb_array_length(COALESCE(image_urls, '[]'::jsonb) - $2::text) > 0
-                THEN channel_id
-              ELSE NULL
-            END
+            has_images = jsonb_array_length(COALESCE(image_urls, '[]'::jsonb) - $2::text) > 0
         WHERE id = $1
           AND deleted_at IS NULL
           AND COALESCE(image_urls, '[]'::jsonb) ? $2::text
@@ -506,8 +537,8 @@ export class PostgresStore implements ChatRepository {
       SELECT id, external_channel_id, channel_name, sender_username,
         sender_display_name, message_text, timestamp, badges, user_color,
         is_broadcaster, is_moderator, is_subscriber, is_vip, message_type,
-        image_urls, metadata
-      FROM chat_messages
+        image_urls, native_emotes
+      FROM chat_messages_expanded
       ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
       ORDER BY timestamp DESC, id DESC
       LIMIT $${values.length}
@@ -622,12 +653,19 @@ export class PostgresStore implements ChatRepository {
       message_count: string;
     }>(`
       WITH sender AS (
-        SELECT sender_username, sender_display_name, channel_id, timestamp, deleted_at
-        FROM chat_messages
+        SELECT profile.username AS sender_username,
+               profile.display_name AS sender_display_name,
+               message.channel_id, message.timestamp, message.deleted_at
+        FROM chat_messages AS message
+        JOIN chat_sender_profiles AS profile ON profile.id = message.sender_profile_id
         UNION ALL
-        SELECT sender_username, sender_display_name, channel_id, timestamp, deleted_at
-        FROM chat_message_cold_catalog
-        WHERE sender_username IS NOT NULL AND sender_display_name IS NOT NULL
+        SELECT COALESCE(profile.username, catalog.sender_username),
+               COALESCE(profile.display_name, catalog.sender_display_name),
+               catalog.channel_id, catalog.timestamp, catalog.deleted_at
+        FROM chat_message_cold_catalog AS catalog
+        LEFT JOIN chat_sender_profiles AS profile ON profile.id = catalog.sender_profile_id
+        WHERE profile.id IS NOT NULL OR
+          (catalog.sender_username IS NOT NULL AND catalog.sender_display_name IS NOT NULL)
       )
       SELECT
         sender_username,
@@ -693,7 +731,7 @@ export class PostgresStore implements ChatRepository {
 }
 
 function toClientMessage(row: MessageRow) {
-  const fragments = row.metadata?.fragments;
+  const nativeEmotes = row.native_emotes ?? compactNativeEmotes(row.metadata?.fragments);
   return {
     _id: row.id,
     externalChannelId: row.external_channel_id,
@@ -710,7 +748,7 @@ function toClientMessage(row: MessageRow) {
     isVip: row.is_vip,
     messageType: row.message_type,
     ...(row.image_urls ? { imageUrls: row.image_urls } : {}),
-    ...(fragments === undefined ? {} : { metadata: { fragments } }),
+    ...(nativeEmotes.length > 0 ? { nativeEmotes } : {}),
   };
 }
 

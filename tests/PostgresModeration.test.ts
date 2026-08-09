@@ -40,7 +40,7 @@ describe("PostgreSQL message moderation", () => {
     }])).resolves.toBe(1);
 
     expect(calls[0].text).toContain("hidden_image_urls");
-    expect(calls[0].text).toContain("gallery_channel_id");
+    expect(calls[0].text).toContain("NULLIF");
     expect(calls[0].values).toEqual(["message", "https://example.test/image.png"]);
   });
 });

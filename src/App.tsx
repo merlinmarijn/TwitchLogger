@@ -1688,7 +1688,7 @@ function MessageRow({
 }) {
   const messageParts = buildMessageParts(
     message.messageText,
-    message.metadata?.fragments,
+    message.nativeEmotes,
     emotes,
   );
   const postedAt = new Date(message.timestamp);

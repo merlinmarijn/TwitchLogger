@@ -47,6 +47,39 @@ describe("normalizeChatMessage", () => {
       rawMessageData: raw,
     });
     expect(message.messageTimestamp.toISOString()).toBe("2026-07-16T12:34:56.123Z");
+    expect(message.nativeEmotes).toEqual([]);
+  });
+
+  it("stores only compact native-emote offsets", () => {
+    const message = normalizeChatMessage({
+      metadata: {
+        message_id: "notification-3",
+        message_type: "notification",
+        message_timestamp: "2026-07-16T12:34:56Z",
+      },
+      event: {
+        broadcaster_user_id: "100",
+        broadcaster_user_login: "channel",
+        broadcaster_user_name: "Channel",
+        chatter_user_id: "200",
+        chatter_user_login: "viewer",
+        chatter_user_name: "Viewer",
+        message_id: "message-3",
+        message: {
+          text: "👋 Kappa",
+          fragments: [
+            { type: "text", text: "👋 " },
+            { type: "emote", text: "Kappa", emote: { id: "25", format: ["animated"] } },
+          ],
+        },
+        color: "",
+        badges: [],
+        message_type: "text",
+      },
+      raw: {},
+    });
+
+    expect(message.nativeEmotes).toEqual([[2, 5, "25", true]]);
   });
 
   it("recognizes the broadcaster by matching Twitch user IDs", () => {

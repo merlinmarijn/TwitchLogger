@@ -1,3 +1,5 @@
+import type { NativeEmote } from "../shared/nativeEmotes";
+
 export interface TwitchOptions {
   clientId: string;
   clientSecret: string;
@@ -71,7 +73,7 @@ export interface TwitchChatMessage {
   isSubscriber: boolean;
   isVip: boolean;
   messageType: string;
-  metadata: Record<string, unknown>;
+  nativeEmotes: NativeEmote[];
   rawMessageData: unknown;
 }
 

@@ -5,6 +5,7 @@ import {
   constants as zlibConstants,
 } from "node:zlib";
 import { promisify } from "node:util";
+import type { NativeEmote } from "../shared/nativeEmotes";
 import {
   IMAGE_INDEX_VERSION,
   mergeIndexedImageUrls,
@@ -30,14 +31,14 @@ const MAX_CHUNK_MESSAGES = 10_000;
 const MAX_ARCHIVE_CHUNKS_PER_RUN = 10;
 const MAX_COLD_SCAN = 1_000;
 const ARCHIVE_INTERVAL_MS = 60 * 60 * 1_000;
-const CODEC = "brotli-canonical-v1";
+const CODEC = "brotli-canonical-v2";
 
 export interface ArchivedMessageRow {
   id: string;
   channel_id: string;
   platform: string;
   external_message_id: string;
-  event_notification_id: string;
+  event_notification_id?: string;
   external_channel_id: string;
   channel_name: string;
   sender_id: string;
@@ -47,7 +48,7 @@ export interface ArchivedMessageRow {
   has_images: boolean;
   image_urls: string[] | null;
   image_index_version: number | null;
-  gallery_channel_id: string | null;
+  gallery_channel_id?: string | null;
   timestamp: number;
   badges: Array<{ setId: string; id: string; info: string }>;
   user_color: string | null;
@@ -56,10 +57,12 @@ export interface ArchivedMessageRow {
   is_subscriber: boolean;
   is_vip: boolean;
   message_type: string;
-  metadata: Record<string, unknown> | null;
+  native_emotes?: NativeEmote[] | null;
+  metadata?: Record<string, unknown> | null;
   hidden_image_urls: string[];
   deleted_at: number | null;
-  created_at: number;
+  created_at?: number;
+  sender_profile_id?: string | number;
 }
 
 interface ArchivedMessageDatabaseRow
@@ -68,12 +71,12 @@ interface ArchivedMessageDatabaseRow
     | "image_index_version"
     | "timestamp"
     | "deleted_at"
-    | "created_at"
+    | "hidden_image_urls"
   > {
   image_index_version: string | null;
   timestamp: string;
   deleted_at: string | null;
-  created_at: string;
+  hidden_image_urls: string[] | null;
 }
 
 interface ColdChunkRow {
@@ -260,7 +263,6 @@ export class ColdMessageArchiveService {
       record.image_urls = record.image_urls.filter((candidate) => candidate !== url);
       if (!record.hidden_image_urls.includes(url)) record.hidden_image_urls.push(url);
       record.has_images = record.image_urls.length > 0;
-      record.gallery_channel_id = record.has_images ? record.channel_id : null;
       return true;
     });
   }
@@ -337,16 +339,13 @@ export class ColdMessageArchiveService {
             record.hidden_image_urls,
           );
           const hasImages = imageUrls.length > 0;
-          const galleryChannelId = hasImages ? record.channel_id : null;
           const isChanged =
             JSON.stringify(record.image_urls ?? []) !== JSON.stringify(imageUrls) ||
             record.has_images !== hasImages ||
-            record.gallery_channel_id !== galleryChannelId ||
             record.image_index_version !== IMAGE_INDEX_VERSION;
           if (!isChanged) return false;
           record.image_urls = imageUrls;
           record.has_images = hasImages;
-          record.gallery_channel_id = galleryChannelId;
           record.image_index_version = IMAGE_INDEX_VERSION;
           return true;
         },
@@ -446,13 +445,14 @@ export class ColdMessageArchiveService {
           await client.query(`
             UPDATE chat_messages
             SET image_urls = $2::jsonb, hidden_image_urls = $3::jsonb,
-                has_images = $4,
-                gallery_channel_id = CASE WHEN $4 THEN channel_id ELSE NULL END
+                has_images = $4
             WHERE id = $1 AND deleted_at IS NULL
           `, [
             record.id,
-            JSON.stringify(deduplicated.imageUrls),
-            JSON.stringify(hiddenImageUrls),
+            deduplicated.imageUrls.length > 0
+              ? JSON.stringify(deduplicated.imageUrls)
+              : null,
+            hiddenImageUrls.length > 0 ? JSON.stringify(hiddenImageUrls) : null,
             deduplicated.imageUrls.length > 0,
           ]);
           changed += 1;
@@ -491,7 +491,6 @@ export class ColdMessageArchiveService {
             ...deduplicated.suppressedUrls,
           ])];
           record.has_images = record.image_urls.length > 0;
-          record.gallery_channel_id = record.has_images ? record.channel_id : null;
           removedByMessage.set(record.id, deduplicated.removedCount);
           return true;
         },
@@ -579,20 +578,23 @@ export class ColdMessageArchiveService {
     const result = await this.database.query<{
       channel_id: string;
       period_start: string;
-      raw_message_data: unknown;
+      raw_pending: boolean;
     }>(`
       SELECT channel_id, (timestamp / $2::bigint) * $2::bigint AS period_start,
-             raw_message_data
-      FROM chat_messages
+             EXISTS (
+               SELECT 1 FROM chat_raw_events AS raw
+               WHERE raw.external_message_id = message.external_message_id
+             ) AS raw_pending
+      FROM chat_messages AS message
       WHERE timestamp < $1
       ORDER BY timestamp, channel_id
       LIMIT 1
     `, [cutoff, DAY_MS]);
     const row = result.rows[0];
     if (!row) return undefined;
-    if (row.raw_message_data !== null) {
+    if (row.raw_pending) {
       throw new Error(
-        "An eligible canonical message still contains unarchived raw data; cold archival paused",
+        "An eligible canonical message still has an unarchived raw event; cold archival paused",
       );
     }
     return { channelId: row.channel_id, periodStart: Number(row.period_start) };
@@ -603,14 +605,17 @@ export class ColdMessageArchiveService {
     const source = await this.database.query<ArchivedMessageDatabaseRow>(`
       SELECT
         id, channel_id, platform, external_message_id,
-        event_notification_id, external_channel_id, channel_name, sender_id,
+        external_channel_id, channel_name, sender_id,
         sender_username, sender_display_name, message_text, has_images, image_urls,
-        image_index_version, gallery_channel_id, timestamp, badges, user_color,
+        image_index_version, timestamp, badges, user_color,
         is_broadcaster, is_moderator, is_subscriber, is_vip, message_type,
-        metadata, hidden_image_urls, deleted_at, created_at
-      FROM chat_messages
+        native_emotes, hidden_image_urls, deleted_at, sender_profile_id
+      FROM chat_messages_expanded
       WHERE channel_id = $1 AND timestamp >= $2 AND timestamp < $3
-        AND raw_message_data IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_raw_events AS raw
+          WHERE raw.external_message_id = chat_messages_expanded.external_message_id
+        )
       ORDER BY timestamp, id
       LIMIT $4
     `, [channelId, periodStart, periodEnd, MAX_CHUNK_MESSAGES]);
@@ -653,12 +658,14 @@ export class ColdMessageArchiveService {
       await client.query(`
         INSERT INTO chat_message_cold_catalog (
           id, external_message_id, chunk_id, channel_id,
-          timestamp, has_images, deleted_at, sender_username, sender_display_name
+          timestamp, has_images, deleted_at, sender_username,
+          sender_display_name, sender_profile_id
         )
         SELECT *
         FROM unnest(
           $1::text[], $2::text[], $3::text[], $4::text[],
-          $5::bigint[], $6::boolean[], $7::bigint[], $8::text[], $9::text[]
+          $5::bigint[], $6::boolean[], $7::bigint[], $8::text[],
+          $9::text[], $10::bigint[]
         )
       `, [
         records.map((record) => record.id),
@@ -668,8 +675,9 @@ export class ColdMessageArchiveService {
         records.map((record) => record.timestamp),
         records.map((record) => record.has_images),
         records.map((record) => record.deleted_at),
-        records.map((record) => record.sender_username),
-        records.map((record) => record.sender_display_name),
+        records.map(() => null),
+        records.map(() => null),
+        records.map((record) => record.sender_profile_id),
       ]);
       const deleted = await client.query(`
         DELETE FROM chat_messages WHERE id = ANY($1::text[])
@@ -867,11 +875,11 @@ async function verifyStoredChunk(chunk: ColdChunkRow) {
 function toArchivedMessage(row: ArchivedMessageDatabaseRow): ArchivedMessageRow {
   return {
     ...row,
+    hidden_image_urls: row.hidden_image_urls ?? [],
     image_index_version:
       row.image_index_version === null ? null : Number(row.image_index_version),
     timestamp: Number(row.timestamp),
     deleted_at: row.deleted_at === null ? null : Number(row.deleted_at),
-    created_at: Number(row.created_at),
   };
 }
 

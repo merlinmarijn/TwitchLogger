@@ -44,24 +44,17 @@ try {
       }
       seenMessageIds.add(record.externalMessageId);
     }
-    const source = await database.query<{
-      present: string;
-      raw_present: string;
-    }>(`
-      SELECT count(*)::bigint AS present,
-             count(raw_message_data)::bigint AS raw_present
-      FROM chat_messages
-      WHERE external_message_id = ANY($1::text[])
+    const source = await database.query<{ present: string }>(`
+      SELECT (
+        SELECT count(*) FROM chat_messages
+        WHERE external_message_id = ANY($1::text[])
+      ) + (
+        SELECT count(*) FROM chat_message_cold_catalog
+        WHERE external_message_id = ANY($1::text[])
+      ) AS present
     `, [records.map((record) => record.externalMessageId)]);
     if (Number(source.rows[0].present) !== records.length) {
       throw new Error(`Chunk ${chunk.id} does not have a canonical row for every raw event`);
-    }
-    const rawPresent = Number(source.rows[0].raw_present);
-    if (chunk.source_cleared_at === null && rawPresent !== records.length) {
-      throw new Error(`Chunk ${chunk.id} is not marked cleared but a raw source is missing`);
-    }
-    if (chunk.source_cleared_at !== null && rawPresent !== 0) {
-      throw new Error(`Chunk ${chunk.id} is marked cleared but a raw source remains`);
     }
     archivedMessages += records.length;
     compressedBytes += chunk.payload.length;
@@ -71,15 +64,9 @@ try {
 
   const state = await database.query<{
     staged: string;
-    source_rows: string;
-    cleanup_enabled: boolean;
   }>(`
     SELECT
-      (SELECT count(*) FROM chat_raw_events)::bigint AS staged,
-      (SELECT count(*) FROM chat_messages WHERE raw_message_data IS NOT NULL)::bigint AS source_rows,
-      COALESCE((
-        SELECT enabled FROM archive_settings WHERE key = 'raw_source_cleanup'
-      ), false) AS cleanup_enabled
+      (SELECT count(*) FROM chat_raw_events)::bigint AS staged
   `);
   const current = state.rows[0];
   console.log(JSON.stringify({
@@ -88,8 +75,7 @@ try {
     clearedChunks,
     archivedMessages,
     stagedMessages: Number(current.staged),
-    sourceRows: Number(current.source_rows),
-    cleanupEnabled: current.cleanup_enabled,
+    sourceRows: 0,
     uncompressedBytes,
     compressedBytes,
     compressionRatio: uncompressedBytes === 0 ? null : compressedBytes / uncompressedBytes,

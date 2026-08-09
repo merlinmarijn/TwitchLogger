@@ -1,3 +1,4 @@
+import { compactNativeEmotes } from "../../shared/nativeEmotes";
 import type { TwitchChatMessage } from "../types";
 import type { TwitchChatNotification } from "./TwitchEventSubClient";
 
@@ -28,7 +29,7 @@ export function normalizeChatMessage(
     isSubscriber: badgeIds.has("subscriber") || badgeIds.has("founder"),
     isVip: badgeIds.has("vip"),
     messageType: event.message_type,
-    metadata: { fragments: event.message.fragments },
+    nativeEmotes: compactNativeEmotes(event.message.fragments),
     rawMessageData: notification.raw,
   };
 }

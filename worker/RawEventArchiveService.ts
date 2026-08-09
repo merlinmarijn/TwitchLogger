@@ -48,7 +48,6 @@ export interface RawArchiveRunResult {
   messagesArchived: number;
   sourcesStaged: number;
   sourcesCleared: number;
-  cleanupEnabled: boolean;
 }
 
 export class RawEventArchiveService {
@@ -92,15 +91,10 @@ export class RawEventArchiveService {
   }
 
   private async performRun(): Promise<RawArchiveRunResult> {
-    const cleanupEnabled = await this.isSourceCleanupEnabled();
     let chunksCreated = 0;
     let messagesArchived = 0;
-    let sourcesCleared = cleanupEnabled
-      ? await this.clearPreviouslyVerifiedSources()
-      : 0;
-    const sourcesStaged = cleanupEnabled
-      ? await this.stageUnarchivedSources()
-      : 0;
+    let sourcesCleared = await this.clearPreviouslyVerifiedSources();
+    const sourcesStaged = 0;
     const cutoff = startOfUtcDay(Date.now());
 
     for (let index = 0; index < MAX_STARTUP_CHUNKS; index += 1) {
@@ -109,7 +103,6 @@ export class RawEventArchiveService {
       const archived = await this.archiveGroup(
         group.channelId,
         group.periodStart,
-        cleanupEnabled,
       );
       chunksCreated += 1;
       messagesArchived += archived.messagesArchived;
@@ -121,42 +114,11 @@ export class RawEventArchiveService {
       messagesArchived,
       sourcesStaged,
       sourcesCleared,
-      cleanupEnabled,
     };
     if (chunksCreated > 0 || sourcesStaged > 0 || sourcesCleared > 0) {
       this.logger.info(result, "Raw Twitch events archived and verified");
     }
     return result;
-  }
-
-  private async isSourceCleanupEnabled() {
-    const result = await this.database.query<{ enabled: boolean }>(`
-      SELECT enabled FROM archive_settings WHERE key = 'raw_source_cleanup'
-    `);
-    return result.rows[0]?.enabled === true;
-  }
-
-  private async stageUnarchivedSources() {
-    const result = await this.database.query(`
-      INSERT INTO chat_raw_events (
-        external_message_id, event_notification_id, channel_id,
-        timestamp, raw_message_data, created_at
-      )
-      SELECT
-        message.external_message_id,
-        message.event_notification_id,
-        message.channel_id,
-        message.timestamp,
-        message.raw_message_data,
-        message.created_at
-      FROM chat_messages AS message
-      LEFT JOIN chat_raw_events AS staged
-        ON staged.external_message_id = message.external_message_id
-      WHERE message.raw_message_data IS NOT NULL
-        AND staged.external_message_id IS NULL
-      ON CONFLICT (external_message_id) DO NOTHING
-    `);
-    return result.rowCount ?? 0;
   }
 
   private async oldestSealedGroup(cutoff: number) {
@@ -179,7 +141,6 @@ export class RawEventArchiveService {
   private async archiveGroup(
     channelId: string,
     periodStart: number,
-    cleanupEnabled: boolean,
   ) {
     const periodEnd = periodStart + DAY_MS;
     const result = await this.database.query<RawEventRow>(`
@@ -226,19 +187,10 @@ export class RawEventArchiveService {
         );
       }
 
-      let sourcesCleared = 0;
-      if (cleanupEnabled) {
-        const cleared = await client.query(`
-          UPDATE chat_messages
-          SET raw_message_data = NULL
-          WHERE external_message_id = ANY($1::text[])
-            AND raw_message_data IS NOT NULL
-        `, [messageIds]);
-        sourcesCleared = cleared.rowCount ?? 0;
-        await client.query(`
-          UPDATE chat_raw_event_chunks SET source_cleared_at = $2 WHERE id = $1
-        `, [chunkId, Date.now()]);
-      }
+      const sourcesCleared = deleted.rowCount ?? 0;
+      await client.query(`
+        UPDATE chat_raw_event_chunks SET source_cleared_at = $2 WHERE id = $1
+      `, [chunkId, Date.now()]);
       await client.query("COMMIT");
       return { messagesArchived: records.length, sourcesCleared };
     } catch (error) {
@@ -323,23 +275,17 @@ export class RawEventArchiveService {
       `);
       const chunk = result.rows[0];
       if (!chunk) break;
-      const records = await verifyStoredChunk(chunk);
+      await verifyStoredChunk(chunk);
       const client = await this.database.pool.connect();
       try {
         await client.query("BEGIN");
-        const updated = await client.query(`
-          UPDATE chat_messages
-          SET raw_message_data = NULL
-          WHERE external_message_id = ANY($1::text[])
-            AND raw_message_data IS NOT NULL
-        `, [records.map((record) => record.externalMessageId)]);
         await client.query(`
           UPDATE chat_raw_event_chunks
           SET source_cleared_at = $2
           WHERE id = $1 AND source_cleared_at IS NULL
         `, [chunk.id, Date.now()]);
         await client.query("COMMIT");
-        cleared += updated.rowCount ?? 0;
+        cleared += Number(chunk.message_count);
       } catch (error) {
         await client.query("ROLLBACK").catch(() => undefined);
         throw error;

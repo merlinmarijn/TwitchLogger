@@ -1,18 +1,10 @@
 import { createElement, type ReactNode } from "react";
+import { isNativeEmote, type NativeEmote } from "../shared/nativeEmotes";
 
 export interface ThirdPartyEmote {
   name: string;
   url: string;
   source: "bttv" | "ffz" | "7tv";
-}
-
-export interface TwitchMessageFragment {
-  type?: string;
-  text?: string;
-  emote?: {
-    id?: string;
-    format?: string[];
-  } | null;
 }
 
 export interface MessagePart {
@@ -24,28 +16,42 @@ export interface MessagePart {
 
 export function buildMessageParts(
   messageText: string,
-  fragments: unknown,
+  nativeEmotes: unknown,
   thirdPartyEmotes: ReadonlyMap<string, ThirdPartyEmote>,
 ): MessagePart[] {
-  if (!Array.isArray(fragments)) return replaceThirdPartyEmotes(messageText, thirdPartyEmotes);
-
-  const typedFragments = fragments as TwitchMessageFragment[];
-  if (typedFragments.some((fragment) => typeof fragment.text !== "string")) {
+  if (!Array.isArray(nativeEmotes) || nativeEmotes.length === 0) {
+    return replaceThirdPartyEmotes(messageText, thirdPartyEmotes);
+  }
+  if (!nativeEmotes.every(isNativeEmote)) {
     return replaceThirdPartyEmotes(messageText, thirdPartyEmotes);
   }
 
-  return typedFragments.flatMap((fragment) => {
-    const text = fragment.text ?? "";
-    const id = fragment.type === "emote" ? fragment.emote?.id : undefined;
-    if (!id) return replaceThirdPartyEmotes(text, thirdPartyEmotes);
-    const format = fragment.emote?.format?.includes("animated") ? "animated" : "static";
-    return [{
-      type: "emote" as const,
+  const codePoints = Array.from(messageText);
+  const parts: MessagePart[] = [];
+  let cursor = 0;
+  for (const [start, length, id, animated] of nativeEmotes as NativeEmote[]) {
+    if (start < cursor || start + length > codePoints.length) {
+      return replaceThirdPartyEmotes(messageText, thirdPartyEmotes);
+    }
+    if (start > cursor) {
+      parts.push(...replaceThirdPartyEmotes(
+        codePoints.slice(cursor, start).join(""),
+        thirdPartyEmotes,
+      ));
+    }
+    const text = codePoints.slice(start, start + length).join("");
+    parts.push({
+      type: "emote",
       text,
-      url: `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(id)}/${format}/dark/2.0`,
-      source: "twitch" as const,
-    }];
-  });
+      url: `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(id)}/${animated ? "animated" : "static"}/dark/2.0`,
+      source: "twitch",
+    });
+    cursor = start + length;
+  }
+  if (cursor < codePoints.length) {
+    parts.push(...replaceThirdPartyEmotes(codePoints.slice(cursor).join(""), thirdPartyEmotes));
+  }
+  return parts;
 }
 
 export function replaceThirdPartyEmotes(

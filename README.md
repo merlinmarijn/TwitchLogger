@@ -133,9 +133,12 @@ Use the base64 value for `TWITCH_TOKEN_ENCRYPTION_KEY` and the hex value for `IN
 - Original Twitch EventSub envelopes are copied into sealed daily Brotli archive
   chunks. Every chunk is decompressed and checked against its SHA-256 manifest
   before its staging rows can be removed.
-- Raw source cleanup is fail-closed and disabled by default. If archival later
-  fails verification, Twitch ingestion pauses while existing chat reads remain
-  available.
+- Canonical messages reference immutable sender/channel profiles, badge bundles,
+  and message-type dictionaries instead of repeating those values in every row.
+- Only compact native-emote offsets are retained; plain Twitch fragments that
+  duplicate the canonical message text are discarded.
+- Raw events live only in the staging/archive path. If archival verification
+  fails, Twitch ingestion pauses while existing chat reads remain available.
 - Removed messages remain hidden tombstones so retried Twitch events cannot restore them.
 - Removed image URLs remain suppressed during later image reindex operations.
 - Gallery image reindexing keeps only the oldest post for each identical image URL across hot and cold storage.
@@ -155,22 +158,10 @@ npm run archive:verify-cold
 npm run start:worker
 ```
 
-After a new archival deployment, leave source cleanup disabled until
-`npm run archive:verify` reports `"verified": true` in production. Enable it
-explicitly only after taking a database backup:
-
-```powershell
-npm run archive:enable-cleanup -- --confirm
-```
-
-Cleanup only nulls redundant `raw_message_data` values after their verified
-archive chunk is committed. Canonical message columns used by chat, search,
-filters, galleries, scores, and moderation are not changed.
-
 Legacy timestamp indexes and the unused `chat_tab_matches` cache are removed
 after the archive rollout. The retained partial keyset indexes cover live chat,
-channel, gallery, and score pagination while the trigram indexes continue to
-serve text and sender search.
+channel, gallery, and score pagination. Message text has its own trigram index;
+sender-name indexes live on the much smaller profile dimension.
 
 Canonical messages remain in the indexed hot table for 90 days. After the
 separate cold-archive gate is enabled, older complete UTC days are moved in the

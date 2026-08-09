@@ -1,4 +1,5 @@
 import type { MessageFilter } from "../shared/messageFilters";
+import type { NativeEmote } from "../shared/nativeEmotes";
 import type { ChatViewTab } from "./chatTabModel";
 
 export interface Channel {
@@ -29,7 +30,7 @@ export interface ChatMessage {
   isVip: boolean;
   messageType: string;
   imageUrls?: string[];
-  metadata?: { fragments?: unknown; [key: string]: unknown };
+  nativeEmotes?: NativeEmote[];
 }
 
 export interface ChatBadgeDefinition {

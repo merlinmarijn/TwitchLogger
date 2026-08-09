@@ -10,10 +10,7 @@ describe("message emotes", () => {
   it("renders Twitch emote fragments with the preferred animated format", () => {
     const parts = buildMessageParts(
       "Hello Kappa",
-      [
-        { type: "text", text: "Hello " },
-        { type: "emote", text: "Kappa", emote: { id: "25", format: ["static", "animated"] } },
-      ],
+      [[6, 5, "25", true]],
       new Map(),
     );
 

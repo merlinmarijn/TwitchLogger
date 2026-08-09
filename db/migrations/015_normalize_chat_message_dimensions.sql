@@ -67,6 +67,18 @@ INSERT INTO chat_message_types (name)
 SELECT DISTINCT message_type FROM chat_messages
 ON CONFLICT (name) DO NOTHING;
 
+-- Remove the large indexes that contain columns this migration normalizes
+-- before touching every row. Keeping them during backfill multiplies their
+-- entries and was the cause of the failed migration's storage spike.
+DROP INDEX IF EXISTS chat_messages_search_trigram_idx;
+DROP INDEX IF EXISTS chat_messages_visible_sender_username_trigram_idx;
+DROP INDEX IF EXISTS chat_messages_visible_sender_display_name_trigram_idx;
+DROP INDEX IF EXISTS chat_messages_image_version_idx;
+
+ALTER TABLE chat_messages
+  ALTER COLUMN hidden_image_urls DROP NOT NULL,
+  ALTER COLUMN hidden_image_urls DROP DEFAULT;
+
 ALTER TABLE chat_messages
   ADD COLUMN IF NOT EXISTS sender_profile_id bigint,
   ADD COLUMN IF NOT EXISTS channel_profile_id bigint,
@@ -74,32 +86,6 @@ ALTER TABLE chat_messages
   ADD COLUMN IF NOT EXISTS message_type_id smallint,
   ADD COLUMN IF NOT EXISTS role_flags smallint,
   ADD COLUMN IF NOT EXISTS native_emotes jsonb;
-
-UPDATE chat_messages AS message
-SET sender_profile_id = profile.id,
-    channel_profile_id = channel_profile.id,
-    badge_set_id = badge_set.id,
-    message_type_id = message_type.id,
-    role_flags =
-      (CASE WHEN message.is_broadcaster THEN 1 ELSE 0 END) |
-      (CASE WHEN message.is_moderator THEN 2 ELSE 0 END) |
-      (CASE WHEN message.is_subscriber THEN 4 ELSE 0 END) |
-      (CASE WHEN message.is_vip THEN 8 ELSE 0 END)
-FROM chat_senders AS sender,
-     chat_sender_profiles AS profile,
-     chat_channel_profiles AS channel_profile,
-     chat_badge_sets AS badge_set,
-     chat_message_types AS message_type
-WHERE sender.external_user_id = message.sender_id
-  AND profile.sender_id = sender.id
-  AND profile.username = message.sender_username
-  AND profile.display_name = message.sender_display_name
-  AND profile.user_color IS NOT DISTINCT FROM message.user_color
-  AND channel_profile.channel_id = message.channel_id
-  AND channel_profile.external_channel_id = message.external_channel_id
-  AND channel_profile.username = message.channel_name
-  AND badge_set.badges = message.badges
-  AND message_type.name = message.message_type;
 
 -- The UI only needs native Twitch emote locations. Plain fragments duplicate
 -- message_text, while non-emote fragment kinds are already rendered as text.
@@ -116,9 +102,9 @@ WITH fragments AS (
            0
          )::integer AS start_offset
   FROM chat_messages AS message
-  CROSS JOIN LATERAL jsonb_array_elements(
+  LEFT JOIN LATERAL jsonb_array_elements(
     COALESCE(message.metadata->'fragments', '[]'::jsonb)
-  ) WITH ORDINALITY AS fragment(value, ordinality)
+  ) WITH ORDINALITY AS fragment(value, ordinality) ON true
 ), compact AS (
   SELECT id,
          jsonb_agg(
@@ -129,23 +115,43 @@ WITH fragments AS (
              COALESCE((value #> '{emote,format}') ? 'animated', false)
            )
            ORDER BY ordinality
+         ) FILTER (
+           WHERE value->>'type' = 'emote'
+             AND value #>> '{emote,id}' IS NOT NULL
          ) AS native_emotes
   FROM fragments
-  WHERE value->>'type' = 'emote'
-    AND value #>> '{emote,id}' IS NOT NULL
   GROUP BY id
 )
 UPDATE chat_messages AS message
-SET native_emotes = compact.native_emotes
-FROM compact
-WHERE message.id = compact.id;
-
-ALTER TABLE chat_messages
-  ALTER COLUMN hidden_image_urls DROP NOT NULL,
-  ALTER COLUMN hidden_image_urls DROP DEFAULT;
-
-UPDATE chat_messages SET image_urls = NULL WHERE image_urls = '[]'::jsonb;
-UPDATE chat_messages SET hidden_image_urls = NULL WHERE hidden_image_urls = '[]'::jsonb;
+SET sender_profile_id = profile.id,
+    channel_profile_id = channel_profile.id,
+    badge_set_id = badge_set.id,
+    message_type_id = message_type.id,
+    role_flags =
+      (CASE WHEN message.is_broadcaster THEN 1 ELSE 0 END) |
+      (CASE WHEN message.is_moderator THEN 2 ELSE 0 END) |
+      (CASE WHEN message.is_subscriber THEN 4 ELSE 0 END) |
+      (CASE WHEN message.is_vip THEN 8 ELSE 0 END),
+    native_emotes = compact.native_emotes,
+    image_urls = NULLIF(message.image_urls, '[]'::jsonb),
+    hidden_image_urls = NULLIF(message.hidden_image_urls, '[]'::jsonb)
+FROM chat_senders AS sender,
+     chat_sender_profiles AS profile,
+     chat_channel_profiles AS channel_profile,
+     chat_badge_sets AS badge_set,
+     chat_message_types AS message_type,
+     compact
+WHERE compact.id = message.id
+  AND sender.external_user_id = message.sender_id
+  AND profile.sender_id = sender.id
+  AND profile.username = message.sender_username
+  AND profile.display_name = message.sender_display_name
+  AND profile.user_color IS NOT DISTINCT FROM message.user_color
+  AND channel_profile.channel_id = message.channel_id
+  AND channel_profile.external_channel_id = message.external_channel_id
+  AND channel_profile.username = message.channel_name
+  AND badge_set.badges = message.badges
+  AND message_type.name = message.message_type;
 
 ALTER TABLE chat_messages
   ALTER COLUMN sender_profile_id SET NOT NULL,
@@ -163,11 +169,6 @@ ALTER TABLE chat_messages
     FOREIGN KEY (message_type_id) REFERENCES chat_message_types(id),
   ADD CONSTRAINT chat_messages_role_flags_check
     CHECK (role_flags BETWEEN 0 AND 15);
-
-DROP INDEX IF EXISTS chat_messages_search_trigram_idx;
-DROP INDEX IF EXISTS chat_messages_visible_sender_username_trigram_idx;
-DROP INDEX IF EXISTS chat_messages_visible_sender_display_name_trigram_idx;
-DROP INDEX IF EXISTS chat_messages_image_version_idx;
 
 ALTER TABLE chat_messages
   DROP COLUMN platform,

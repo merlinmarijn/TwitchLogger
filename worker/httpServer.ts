@@ -301,6 +301,7 @@ export function createHttpServer(
       "view_reindex",
       "integrity_scan",
       "database_measurement",
+      "archive_reencode",
     ]);
     const kind = request.body?.kind as AdminJobKind;
     if (!validKinds.has(kind)) {

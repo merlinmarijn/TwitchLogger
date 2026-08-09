@@ -6,6 +6,7 @@ import {
 } from "node:zlib";
 import { promisify } from "node:util";
 import type { PoolClient } from "pg";
+import { ARCHIVE_BROTLI_QUALITY } from "./ArchiveCompression";
 import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
 
@@ -358,7 +359,7 @@ export async function encodeRawArchiveChunk(records: RawEventArchiveRecord[]) {
   );
   const payload = await compress(uncompressed, {
     params: {
-      [zlibConstants.BROTLI_PARAM_QUALITY]: 4,
+      [zlibConstants.BROTLI_PARAM_QUALITY]: ARCHIVE_BROTLI_QUALITY,
       [zlibConstants.BROTLI_PARAM_MODE]: zlibConstants.BROTLI_MODE_TEXT,
     },
   });

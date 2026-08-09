@@ -16,7 +16,12 @@ type AdminStatus = {
   error?: string;
 };
 
-type JobKind = "image_reindex" | "view_reindex" | "integrity_scan" | "database_measurement";
+type JobKind =
+  | "image_reindex"
+  | "view_reindex"
+  | "integrity_scan"
+  | "database_measurement"
+  | "archive_reencode";
 type JobStatus = "queued" | "running" | "cancelling" | "cancelled" | "completed" | "failed";
 
 type AdminJob = {
@@ -120,6 +125,13 @@ const operations: Array<{
     title: "Measure database",
     description: "Count rows and measure PostgreSQL relations to refresh the stored capacity report.",
     impact: "Read-only",
+  },
+  {
+    kind: "archive_reencode",
+    number: "05",
+    title: "Re-encode archive chunks",
+    description: "Verify every raw-event and cold-message chunk, then rewrite its compressed payload with Brotli quality 9.",
+    impact: "Rewrites archived payloads",
   },
 ];
 
@@ -360,6 +372,12 @@ function DashboardScreen({
   const maintenanceBusy = activeJobs.length > 0;
 
   const run = async (kind: JobKind) => {
+    if (
+      kind === "archive_reencode" &&
+      !window.confirm(
+        "Re-encode every archived chunk with Brotli quality 9? The job is resumable and verifies each chunk before replacing its payload.",
+      )
+    ) return;
     setWorking(kind);
     try {
       await adminFetch("/jobs", { method: "POST", body: { kind } });

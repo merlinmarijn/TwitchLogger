@@ -9,6 +9,7 @@ import {
   IMAGE_INDEX_VERSION,
   mergeIndexedImageUrls,
 } from "../shared/imageUrls";
+import { ARCHIVE_BROTLI_QUALITY } from "./ArchiveCompression";
 import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
 import {
@@ -818,7 +819,7 @@ export async function encodeColdMessageChunk(records: ArchivedMessageRow[]) {
   );
   const payload = await compress(uncompressed, {
     params: {
-      [zlibConstants.BROTLI_PARAM_QUALITY]: 4,
+      [zlibConstants.BROTLI_PARAM_QUALITY]: ARCHIVE_BROTLI_QUALITY,
       [zlibConstants.BROTLI_PARAM_MODE]: zlibConstants.BROTLI_MODE_TEXT,
     },
   });

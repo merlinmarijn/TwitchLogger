@@ -50,6 +50,7 @@ import { workerUrl } from "./runtimeConfig";
 import type { GameId, ScorePeriod } from "./gameScores";
 import {
   buildPageUrl,
+  buildRootPageUrl,
   mergeUrlFilters,
   parsePageUrl,
   type PageUrlState,
@@ -162,6 +163,8 @@ export default function App() {
   const [sharedAlias] = useState(() => sharedAliasFromPath(window.location.pathname));
   const [sharedPageState, setSharedPageState] = useState<PageUrlState>();
   const sharedStateAppliedRef = useRef(false);
+  const sharedStateBaselineRef = useRef<string | undefined>(undefined);
+  const sharedLinkDetachedRef = useRef(false);
   const chatTabs = serverChatTabs === undefined ||
       (serverChatTabs.length === 0 && legacyChatTabs.length > 0)
     ? legacyChatTabs
@@ -405,8 +408,20 @@ export default function App() {
   }, [applyPageUrlState, sharedAlias, urlStateReady]);
 
   useEffect(() => {
-    if (!urlStateReady || sharedAlias) return;
-    const nextUrl = buildPageUrl(window.location.href, currentPageState);
+    if (!urlStateReady) return;
+    if (sharedAlias && !sharedLinkDetachedRef.current) {
+      if (!sharedStateAppliedRef.current) return;
+      const currentStatePath = buildRootPageUrl(window.location.href, currentPageState);
+      if (sharedStateBaselineRef.current === undefined) {
+        sharedStateBaselineRef.current = currentStatePath;
+        return;
+      }
+      if (currentStatePath === sharedStateBaselineRef.current) return;
+      sharedLinkDetachedRef.current = true;
+    }
+    const nextUrl = sharedAlias
+      ? buildRootPageUrl(window.location.href, currentPageState)
+      : buildPageUrl(window.location.href, currentPageState);
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (nextUrl !== currentUrl) window.history.replaceState(window.history.state, "", nextUrl);
   }, [
@@ -1954,7 +1969,7 @@ function ShareDialog({
     setSaving(true);
     setError(undefined);
     try {
-      const stateUrl = buildPageUrl(`${window.location.origin}/`, pageState);
+      const stateUrl = buildRootPageUrl(window.location.href, pageState);
       const pageSearch = new URL(stateUrl, window.location.origin).search;
       const created = await createShare({ alias, pageSearch, expiresInSeconds });
       setResult({

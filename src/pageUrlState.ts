@@ -79,6 +79,13 @@ export function buildPageUrl(currentHref: string, state: PageUrlState) {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+export function buildRootPageUrl(currentHref: string, state: PageUrlState) {
+  const currentUrl = new URL(currentHref);
+  const rootUrl = new URL("/", currentUrl.origin);
+  rootUrl.hash = currentUrl.hash;
+  return buildPageUrl(rootUrl.href, state);
+}
+
 export function mergeUrlFilters(saved: FilterState, urlFilters: MessageFilter[]): FilterState {
   const urlById = new Map(urlFilters.map((filter) => [filter.id, filter]));
   const filters = saved.filters.map((filter) => urlById.get(filter.id) ?? filter);

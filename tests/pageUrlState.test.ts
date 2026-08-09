@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FilterState } from "../src/filters";
 import {
   buildPageUrl,
+  buildRootPageUrl,
   mergeUrlFilters,
   parsePageUrl,
   type PageUrlState,
@@ -59,6 +60,21 @@ describe("page URL state", () => {
     expect(url.searchParams.has("tab")).toBe(false);
     expect(url.searchParams.has("q")).toBe(false);
     expect(url.searchParams.has("match")).toBe(false);
+  });
+
+  it("detaches an edited shared view from its short-link path", () => {
+    const path = buildRootPageUrl("https://logs.example/s/my-view#feed", {
+      channel: "cirno_tv",
+      tabId: "gallery",
+      quickSearch: "",
+      searchTokens: [createSmartSearchToken("sender", "equals", "alice", "User: Alice")],
+      searchMatch: "all",
+      filters: [],
+    });
+
+    expect(path.startsWith("/?channel=cirno_tv&tab=gallery&tokens=")).toBe(true);
+    expect(path).not.toContain("/s/my-view");
+    expect(path.endsWith("#feed")).toBe(true);
   });
 
   it("ignores malformed or unsupported URL values", () => {

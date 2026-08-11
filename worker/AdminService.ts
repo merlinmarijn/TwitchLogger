@@ -106,6 +106,8 @@ const measuredTables = [
   "chat_raw_event_chunks",
   "chat_message_cold_catalog",
   "chat_message_cold_chunks",
+  "chat_message_cold_chunk_keys",
+  "chat_message_cold_sender_stats",
   "admin_jobs",
   "admin_audit_log",
   "feedback_reports",
@@ -473,7 +475,9 @@ export class AdminService {
         const count = await client.query<{ count: string }>(`
           SELECT
             (SELECT count(*) FROM chat_messages WHERE deleted_at IS NULL) +
-            (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL)
+            (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL) +
+            (SELECT COALESCE(sum(active_message_count), 0)
+             FROM chat_message_cold_chunks WHERE compact_indexed = true)
             AS count
         `);
         total = Number(count.rows[0]?.count ?? 0);
@@ -608,7 +612,9 @@ export class AdminService {
       const count = await this.database.query<{ count: string }>(`
         SELECT
           (SELECT count(*) FROM chat_messages WHERE deleted_at IS NULL) +
-          (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL)
+          (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL) +
+          (SELECT COALESCE(sum(active_message_count), 0)
+           FROM chat_message_cold_chunks WHERE compact_indexed = true)
           AS count
       `);
       const total = Number(count.rows[0]?.count ?? 0);
@@ -723,7 +729,9 @@ export class AdminService {
     const totalResult = await this.database.query<{ count: string }>(`
       SELECT
         (SELECT count(*) FROM chat_messages WHERE deleted_at IS NULL) +
-        (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL)
+        (SELECT count(*) FROM chat_message_cold_catalog WHERE deleted_at IS NULL) +
+        (SELECT COALESCE(sum(active_message_count), 0)
+         FROM chat_message_cold_chunks WHERE compact_indexed = true)
         AS count
     `);
     const total = Number(totalResult.rows[0]?.count ?? 0);

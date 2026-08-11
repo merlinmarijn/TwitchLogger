@@ -45,13 +45,18 @@ try {
       seenMessageIds.add(record.externalMessageId);
     }
     const source = await database.query<{ present: string }>(`
-      SELECT (
-        SELECT count(*) FROM chat_messages
-        WHERE external_message_id = ANY($1::text[])
-      ) + (
-        SELECT count(*) FROM chat_message_cold_catalog
-        WHERE external_message_id = ANY($1::text[])
-      ) AS present
+      SELECT count(*)::bigint AS present
+      FROM unnest($1::text[]) AS source(external_message_id)
+      WHERE EXISTS (
+        SELECT 1 FROM chat_messages
+        WHERE chat_messages.external_message_id = source.external_message_id
+      ) OR EXISTS (
+        SELECT 1 FROM chat_message_cold_catalog
+        WHERE chat_message_cold_catalog.external_message_id = source.external_message_id
+      ) OR EXISTS (
+        SELECT 1 FROM chat_message_cold_chunk_keys
+        WHERE external_message_ids @> ARRAY[source.external_message_id::uuid]
+      )
     `, [records.map((record) => record.externalMessageId)]);
     if (Number(source.rows[0].present) !== records.length) {
       throw new Error(`Chunk ${chunk.id} does not have a canonical row for every raw event`);

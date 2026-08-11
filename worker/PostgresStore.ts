@@ -174,6 +174,11 @@ export class PostgresStore implements ChatRepository {
         SELECT 1
         FROM chat_message_cold_catalog
         WHERE external_message_id = $1
+        UNION ALL
+        SELECT 1
+        FROM chat_message_cold_chunk_keys
+        WHERE external_message_ids @> ARRAY[$1::uuid]
+        LIMIT 1
       `, [message.messageId]);
       if (archived.rowCount) {
         await client.query("ROLLBACK");
@@ -655,22 +660,40 @@ export class PostgresStore implements ChatRepository {
       WITH sender AS (
         SELECT profile.username AS sender_username,
                profile.display_name AS sender_display_name,
-               message.channel_id, message.timestamp, message.deleted_at
+               message.channel_id, message.timestamp, message.deleted_at,
+               1::bigint AS message_count
         FROM chat_messages AS message
         JOIN chat_sender_profiles AS profile ON profile.id = message.sender_profile_id
         UNION ALL
         SELECT COALESCE(profile.username, catalog.sender_username),
                COALESCE(profile.display_name, catalog.sender_display_name),
-               catalog.channel_id, catalog.timestamp, catalog.deleted_at
+               catalog.channel_id, catalog.timestamp, catalog.deleted_at,
+               1::bigint AS message_count
         FROM chat_message_cold_catalog AS catalog
+        JOIN chat_message_cold_chunks AS legacy_chunk
+          ON legacy_chunk.id = catalog.chunk_id
         LEFT JOIN chat_sender_profiles AS profile ON profile.id = catalog.sender_profile_id
-        WHERE profile.id IS NOT NULL OR
+        WHERE legacy_chunk.compact_indexed = false AND (
+          profile.id IS NOT NULL OR
           (catalog.sender_username IS NOT NULL AND catalog.sender_display_name IS NOT NULL)
+        )
+        UNION ALL
+        SELECT COALESCE(profile.username, stats.sender_username),
+               COALESCE(profile.display_name, stats.sender_display_name),
+               chunk.channel_id, stats.last_timestamp, NULL::bigint,
+               stats.message_count::bigint
+        FROM chat_message_cold_sender_stats AS stats
+        JOIN chat_message_cold_chunks AS chunk ON chunk.id = stats.chunk_id
+        LEFT JOIN chat_sender_profiles AS profile ON profile.id = stats.sender_profile_id
+        WHERE chunk.compact_indexed = true AND (
+          profile.id IS NOT NULL OR
+          (stats.sender_username IS NOT NULL AND stats.sender_display_name IS NOT NULL)
+        )
       )
       SELECT
         sender_username,
         max(sender_display_name) AS sender_display_name,
-        count(*) AS message_count
+        sum(message_count) AS message_count
       FROM sender
       WHERE ${conditions.join(" AND ")}
       GROUP BY sender_username
@@ -680,7 +703,7 @@ export class PostgresStore implements ChatRepository {
           WHEN lower(sender_username) LIKE $3 ESCAPE '\\' THEN 1
           ELSE 2
         END,
-        count(*) DESC,
+        sum(message_count) DESC,
         max(timestamp) DESC
       LIMIT $${values.length}
     `, values);

@@ -165,9 +165,19 @@ sender-name indexes live on the much smaller profile dimension.
 
 Canonical messages remain in the indexed hot table for 90 days. After the
 separate cold-archive gate is enabled, older complete UTC days are moved in the
-same transaction into verified Brotli chunks plus a small pagination catalog.
+same transaction into verified Brotli chunks. Cold pagination merges the chunk
+streams by timestamp, exact archived-ID membership is stored once per chunk,
+and sender autocomplete uses aggregated per-chunk statistics. This avoids a
+second PostgreSQL row and several B-tree entries for every archived message.
 The API transparently reads those chunks when hot results are exhausted, and
 archived moderation rewrites and re-verifies the affected chunk.
+
+Migration `017_compact_cold_archive.sql` is additive. Existing legacy chunks
+remain readable while the worker converts at most ten per archive run. Each
+chunk is decompressed and checked against its manifest and legacy catalog in a
+single transaction; compact keys, counts, and sender statistics are verified
+before the legacy per-message catalog rows are removed. A failure rolls back
+that chunk and pauses ingestion rather than discarding either representation.
 
 Enable this tier only after its verification command succeeds:
 

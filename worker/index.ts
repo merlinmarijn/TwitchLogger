@@ -6,6 +6,7 @@ import {
   type ApplicationRuntimeState,
 } from "./httpServer";
 import { ColdMessageArchiveService } from "./ColdMessageArchiveService";
+import { ClickHouseMirrorService } from "./ClickHouseMirrorService";
 import { createLogger } from "./logger";
 import { PostgresStore } from "./PostgresStore";
 import { RawEventArchiveService } from "./RawEventArchiveService";
@@ -26,6 +27,7 @@ let chat: TwitchChatService | undefined;
 let database: PostgresDatabase | undefined;
 let rawArchive: RawEventArchiveService | undefined;
 let coldArchive: ColdMessageArchiveService | undefined;
+let clickHouseMirror: ClickHouseMirrorService | undefined;
 let archiveReady = false;
 
 for (const warning of configuration.warnings) logger.warn({ warning }, "Configuration warning");
@@ -55,6 +57,22 @@ if (configuration.databaseUrl) {
 }
 
 if (database && runtime.store) {
+  if (configuration.clickHouseOptions) {
+    try {
+      clickHouseMirror = new ClickHouseMirrorService(
+        database,
+        configuration.clickHouseOptions,
+        logger,
+      );
+      clickHouseMirror.start();
+    } catch (error) {
+      logger.warn(
+        { err: error },
+        "ClickHouse mirror configuration is invalid; PostgreSQL remains active",
+      );
+    }
+  }
+
   try {
     rawArchive = new RawEventArchiveService(database, logger);
     const rawResult = await rawArchive.runOnce();
@@ -113,6 +131,7 @@ async function shutdown(signal: string) {
   coldArchive?.stop();
   abortController.abort();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await clickHouseMirror?.stop();
   await database?.close();
 }
 

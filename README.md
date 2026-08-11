@@ -12,7 +12,7 @@ The dashboard provides:
 - an authenticated `/admin` control room for configuration and log moderation;
 - admin-only single and bulk removal of messages and images.
 
-PostgreSQL is the application's only database.
+PostgreSQL is the application's source of truth and the only database used for application reads. An optional write-only ClickHouse mirror can collect the complete PostgreSQL dataset for performance experiments without affecting live behavior.
 
 ## Production container
 
@@ -27,6 +27,7 @@ Copy-Item .env.production.example .env.production
 Configure:
 
 - `DATABASE_URL`: PostgreSQL connection string.
+- `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USERNAME`, and `CLICKHOUSE_PASSWORD`: optional write-only mirror connection. See [CLICKHOUSE.md](CLICKHOUSE.md).
 - `INGESTION_SECRET`: long random server-side value used as the one-time `/admin` setup key.
 - `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`: confidential Twitch application credentials.
 - `TWITCH_REDIRECT_URI`: public callback URL such as `https://chatlogs.example.com/auth/twitch/callback`.
@@ -65,6 +66,9 @@ Twitch OAuth + Helix + EventSub WebSocket
   -> TwitchChatService
       -> PostgresStore
           -> PostgreSQL 18
+              -> key-only mirror outbox
+                  -> ClickHouseMirrorService
+                      -> ClickHouse 26.3 (write-only)
 
 /admin
   -> AdminService
@@ -79,6 +83,7 @@ Main components:
 - `TwitchEventSubClient`: WebSocket lifecycle, keepalives, reconnects, and notification deduplication.
 - `TwitchChatService`: channel lifecycle and normalized chat ingestion.
 - `PostgresStore`: channels, messages, saved views, search, pagination, durable Twitch-message deduplication, and moderation tombstones.
+- `ClickHouseMirrorService`: non-blocking initial backfill and continuous mirroring of PostgreSQL inserts, updates, and deletes; never serves application data.
 - `AdminService`: PostgreSQL-backed authentication, TOTP, sessions, metrics, audit events, and maintenance jobs.
 
 ## Admin control room

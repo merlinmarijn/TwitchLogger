@@ -15,6 +15,14 @@ export interface LoadedConfiguration {
     rateLimitMinutes: number;
   };
   databaseUrl?: string;
+  clickHouseOptions?: {
+    url: string;
+    database: string;
+    username: string;
+    password: string;
+    batchSize: number;
+    pollIntervalMs: number;
+  };
   issues: string[];
   warnings: string[];
   port: number;
@@ -66,6 +74,7 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
   }
 
   const databaseUrl = required(env, "DATABASE_URL", issues);
+  const clickHouseUrl = env.CLICKHOUSE_URL?.trim().replace(/\/$/, "");
   const ingestionSecret = required(env, "INGESTION_SECRET", issues);
   const clientId = required(env, "TWITCH_CLIENT_ID", issues);
   const clientSecret = required(env, "TWITCH_CLIENT_SECRET", issues);
@@ -87,6 +96,22 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
     0,
     10,
     "TRUST_PROXY_HOPS",
+    warnings,
+  );
+  const clickHouseBatchSize = readIntegerSetting(
+    env.CLICKHOUSE_MIRROR_BATCH_SIZE,
+    1_000,
+    1,
+    10_000,
+    "CLICKHOUSE_MIRROR_BATCH_SIZE",
+    warnings,
+  );
+  const clickHousePollIntervalMs = readIntegerSetting(
+    env.CLICKHOUSE_MIRROR_INTERVAL_MS,
+    1_000,
+    100,
+    60_000,
+    "CLICKHOUSE_MIRROR_INTERVAL_MS",
     warnings,
   );
 
@@ -140,12 +165,23 @@ export function loadConfiguration(env: Environment = process.env): LoadedConfigu
   const feedbackOptions = ingestionSecret
     ? { ipHashSecret: ingestionSecret, rateLimitMinutes: feedbackRateLimitMinutes }
     : undefined;
+  const clickHouseOptions = clickHouseUrl
+    ? {
+        url: clickHouseUrl,
+        database: env.CLICKHOUSE_DATABASE?.trim() || "twitch_logs",
+        username: env.CLICKHOUSE_USERNAME?.trim() || "default",
+        password: env.CLICKHOUSE_PASSWORD ?? "",
+        batchSize: clickHouseBatchSize,
+        pollIntervalMs: clickHousePollIntervalMs,
+      }
+    : undefined;
 
   return {
     options,
     adminOptions,
     feedbackOptions,
     databaseUrl,
+    clickHouseOptions,
     issues,
     warnings,
     port,

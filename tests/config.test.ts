@@ -74,33 +74,6 @@ describe("loadConfiguration", () => {
     expect(configuration.trustedProxyHops).toBe(1);
   });
 
-  it("configures the optional write-only ClickHouse mirror", () => {
-    const configuration = loadConfiguration({
-      ...completeEnvironment,
-      CLICKHOUSE_URL: "http://clickhouse:8123/",
-      CLICKHOUSE_DATABASE: "analytics",
-      CLICKHOUSE_USERNAME: "mirror",
-      CLICKHOUSE_PASSWORD: "secret",
-      CLICKHOUSE_MIRROR_BATCH_SIZE: "2500",
-      CLICKHOUSE_MIRROR_INTERVAL_MS: "500",
-    });
-
-    expect(configuration.clickHouseOptions).toEqual({
-      url: "http://clickhouse:8123",
-      database: "analytics",
-      username: "mirror",
-      password: "secret",
-      batchSize: 2500,
-      pollIntervalMs: 500,
-    });
-  });
-
-  it("leaves ClickHouse disabled when its URL is absent", () => {
-    const configuration = loadConfiguration(completeEnvironment);
-
-    expect(configuration.clickHouseOptions).toBeUndefined();
-  });
-
   it("ignores an incomplete optional bootstrap-token pair", () => {
     const configuration = loadConfiguration({
       ...completeEnvironment,

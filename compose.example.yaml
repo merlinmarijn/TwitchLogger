@@ -14,25 +14,6 @@ services:
       timeout: 5s
       retries: 5
 
-  clickhouse:
-    image: clickhouse/clickhouse-server:26.3
-    restart: unless-stopped
-    environment:
-      CLICKHOUSE_DB: twitch_logs
-      CLICKHOUSE_USER: twitch_logs
-      CLICKHOUSE_PASSWORD: change_this_password
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-    ports:
-      - "127.0.0.1:8123:8123"
-      - "127.0.0.1:9000:9000"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   twitch-logs:
     build:
       context: .
@@ -60,4 +41,3 @@ services:
 volumes:
   twitch_tokens:
   postgres_data:
-  clickhouse_data:

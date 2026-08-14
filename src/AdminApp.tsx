@@ -403,6 +403,16 @@ function DashboardScreen({
     onSessionChanged();
   };
 
+  const scrollToSection = (sectionId: string) => {
+    const section = document.getElementById(sectionId);
+    if (!section) return;
+    section.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      block: "start",
+    });
+    window.history.pushState(null, "", `#${sectionId}`);
+  };
+
   const jumpToSection = (queryInput = jumpQuery) => {
     const query = queryInput.trim().toLowerCase();
     const sections = [
@@ -415,8 +425,7 @@ function DashboardScreen({
     ];
     const match = sections.find((section) => section.terms.includes(query));
     if (match) {
-      document.getElementById(match.id)?.scrollIntoView({ block: "start" });
-      window.history.pushState(null, "", `#${match.id}`);
+      scrollToSection(match.id);
     } else onNotice(`No admin section matches “${queryInput}”.`);
     setJumpQuery("");
   };
@@ -440,10 +449,10 @@ function DashboardScreen({
       <aside className="admin-rail">
         <div className="rail-heading"><span>Administration</span><small>Control plane</small></div>
         <nav aria-label="Admin sections">
-          <a className="active" href="#overview"><OverviewIcon />Overview</a>
-          <a href="#submissions"><InboxIcon />Submissions</a>
-          <a href="#operations"><PulseIcon />Operations{activeJobs.length ? <b>{activeJobs.length}</b> : null}</a>
-          <a href="#database"><DatabaseIcon />Database</a>
+          <a className="active" href="#overview" onClick={(event) => { event.preventDefault(); scrollToSection("overview"); }}><OverviewIcon />Overview</a>
+          <a href="#submissions" onClick={(event) => { event.preventDefault(); scrollToSection("submissions"); }}><InboxIcon />Submissions</a>
+          <a href="#operations" onClick={(event) => { event.preventDefault(); scrollToSection("operations"); }}><PulseIcon />Operations{activeJobs.length ? <b>{activeJobs.length}</b> : null}</a>
+          <a href="#database" onClick={(event) => { event.preventDefault(); scrollToSection("database"); }}><DatabaseIcon />Database</a>
           <button onClick={() => setSecurityOpen((value) => !value)}><LockIcon />Security</button>
         </nav>
         <div className="rail-status">

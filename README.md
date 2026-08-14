@@ -35,6 +35,8 @@ Configure:
 - `PUBLIC_WORKER_URL`: leave empty when the container serves both UI and API; set it only for split-origin deployments.
 - `FEEDBACK_RATE_LIMIT_MINUTES`: cooldown between feedback or issue reports from the same IP (defaults to `15`).
 - `TRUST_PROXY_HOPS`: exact number of trusted reverse-proxy hops in front of the app (defaults to `0`). Set this correctly so feedback throttling uses the visitor IP without trusting spoofed forwarding headers.
+- `COLD_ARCHIVE_CACHE_MAX_CHUNKS` / `COLD_ARCHIVE_CACHE_MAX_BYTES`: decoded cold-block LRU bounds (defaults: `32` and `67108864`).
+- `INDEX_REINDEX_FREE_BYTES`: database-host free-space reading used only when the worker cannot inspect PostgreSQL's data filesystem directly. The admin reindex job skips rebuilds when neither check is available.
 
 Submitted feedback and bug reports can be reviewed from the protected **Submissions** section at `/admin`. New submissions start open and can be closed, reopened, flagged, searched, and filtered there.
 
@@ -125,6 +127,24 @@ Use the base64 value for `TWITCH_TOKEN_ENCRYPTION_KEY` and the hex value for `IN
 
 `npm run dev` starts Vite and the Node worker. The worker opens PostgreSQL, applies pending migrations, and begins ingestion when Twitch configuration is complete.
 
+### Local production-data baseline
+
+The local PostgreSQL 18 copy runs in Docker on `127.0.0.1:5433`. Its data is
+kept in the `twitchlogger-local_twitchlogger_local_postgres_data` Docker volume.
+The ignored `data/backups/production-baseline.dump` file is the immutable reset
+point copied from production.
+
+Reset all local database changes back to that baseline with:
+
+```powershell
+npm run db:reset-local
+```
+
+The reset verifies the dump checksum, force-drops only the database inside the
+`twitchlogger-local-postgres` container, restores the baseline, updates planner
+statistics, and prints verification counts. Production is not contacted by the
+reset command.
+
 ## Runtime behavior
 
 - EventSub reconnects recreate desired subscriptions after a new welcome message.
@@ -153,6 +173,7 @@ npm run build
 npm test
 npm run lint
 npm run db:migrate
+npm run db:reset-local
 npm run archive:verify
 npm run archive:verify-cold
 npm run start:worker
@@ -172,12 +193,25 @@ second PostgreSQL row and several B-tree entries for every archived message.
 The API transparently reads those chunks when hot results are exhausted, and
 archived moderation rewrites and re-verifies the affected chunk.
 
-Migration `017_compact_cold_archive.sql` is additive. Existing legacy chunks
-remain readable while the worker converts at most ten per archive run. Each
-chunk is decompressed and checked against its manifest and legacy catalog in a
-single transaction; compact keys, counts, and sender statistics are verified
-before the legacy per-message catalog rows are removed. A failure rolls back
-that chunk and pauses ingestion rather than discarding either representation.
+Migration `024_optimize_message_storage.sql` adds integer storage keys, native
+UUID external IDs, compact cold metadata, and the sparse cold gallery
+projection. New cold chunks use the positional v3 codec and contain at most
+2,000 records. Existing v1/v2 chunks remain readable while the worker or the
+admin **Re-encode cold archive** operation verifies and converts each chunk in
+its own transaction. A failure rolls back that chunk rather than discarding
+either representation.
+
+The internal hot message ID stays text while legacy CUIDs remain. Check and run
+the guarded conversion only after those rows have naturally aged into cold
+storage:
+
+```powershell
+npm run db:convert-hot-ids
+```
+
+The command refuses to run while even one non-UUID hot ID exists. For a remote
+database it additionally requires the explicit maintenance-window value
+`ALLOW_REMOTE_HOT_ID_UUID_MIGRATION=convert-verified-hot-ids`.
 
 Enable this tier only after its verification command succeeds:
 

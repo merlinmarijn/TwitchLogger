@@ -25,10 +25,33 @@ describe("PostgreSQL message selection", () => {
       }),
     ]);
 
-    expect(result.sql.join(" ")).toContain("is_moderator");
+    expect(result.sql.join(" ")).toContain("role_flags & 2");
     expect(result.sql.join(" ")).toContain("NOT");
     expect(result.values).toEqual(["!%"]);
     expect(result.requiresPostFilter).toBe(false);
+  });
+
+  it("uses resolved dimension keys for fast single-token quick search", () => {
+    const result = compileMessageSelectionSql("alice", [], 0, {
+      quickSenderProfileIds: [4, 7],
+      quickChannelProfileIds: [2],
+      senderEquals: {},
+    });
+
+    expect(result.sql.join(" ")).toContain("sender_profile_id = ANY");
+    expect(result.sql.join(" ")).toContain("channel_profile_id = ANY");
+    expect(result.values).toEqual(["%alice%", [4, 7], [2]]);
+  });
+
+  it("preserves cross-field semantics for multi-word quick search", () => {
+    const result = compileMessageSelectionSql("hello alice", [], 0, {
+      quickSenderProfileIds: [],
+      quickChannelProfileIds: [],
+      senderEquals: {},
+    });
+
+    expect(result.sql.join(" ")).toContain("message_text || ' '");
+    expect(result.sql.join(" ")).toContain("SELECT username");
   });
 
   it("compiles exact sender tokens against usernames and display names", () => {
@@ -38,8 +61,9 @@ describe("PostgreSQL message selection", () => {
       }),
     ]);
 
-    expect(result.sql.join(" ")).toContain("lower(sender_username)");
-    expect(result.sql.join(" ")).toContain("lower(sender_display_name)");
+    expect(result.sql.join(" ")).toContain("sender_profile_id IN");
+    expect(result.sql.join(" ")).toContain("lower(username)");
+    expect(result.sql.join(" ")).toContain("lower(display_name)");
     expect(result.values).toEqual(["alice"]);
     expect(result.requiresPostFilter).toBe(false);
   });

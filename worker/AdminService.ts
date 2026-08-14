@@ -7,6 +7,7 @@ import {
   scrypt,
   timingSafeEqual,
 } from "node:crypto";
+import { statfs } from "node:fs/promises";
 import QRCode from "qrcode";
 import {
   isFeedbackFlag,
@@ -61,8 +62,10 @@ export type StartableAdminJobKind =
   | "image_reindex"
   | "view_reindex"
   | "integrity_scan"
-  | "database_measurement";
-export type AdminJobKind = StartableAdminJobKind | "archive_reencode";
+  | "database_measurement"
+  | "archive_reencode"
+  | "index_reindex";
+export type AdminJobKind = StartableAdminJobKind;
 
 type AdminJobStatus =
   | "queued"
@@ -93,7 +96,25 @@ const jobDefinitions: Record<StartableAdminJobKind, { title: string; detail: str
     detail: "Measures PostgreSQL row counts and relation sizes for application tables.",
     unit: "tables",
   },
+  archive_reencode: {
+    title: "Re-encode cold archive",
+    detail: "Verifies and converts legacy cold chunks to the compact positional codec.",
+    unit: "chunks",
+  },
+  index_reindex: {
+    title: "Reclaim hot indexes",
+    detail: "Measures time-ordered indexes and concurrently rebuilds only materially bloated indexes.",
+    unit: "indexes",
+  },
 };
+
+const reindexCandidates = [
+  { name: "chat_messages_visible_channel_timestamp_id_idx", healthyBytesPerRow: 116 },
+  { name: "chat_messages_visible_timestamp_id_idx", healthyBytesPerRow: 66 },
+  { name: "chat_messages_sender_profile_timestamp_idx", healthyBytesPerRow: 32 },
+] as const;
+const REINDEX_MIN_RECLAIMABLE_BYTES = 16 * 1024 * 1024;
+const REINDEX_MIN_RECLAIMABLE_RATIO = 0.25;
 
 const measuredTables = [
   "platforms",
@@ -111,6 +132,8 @@ const measuredTables = [
   "chat_message_cold_chunks",
   "chat_message_cold_chunk_keys",
   "chat_message_cold_sender_stats",
+  "chat_message_cold_sender_stats_legacy",
+  "chat_message_cold_images",
   "admin_jobs",
   "admin_audit_log",
   "feedback_reports",
@@ -520,6 +543,11 @@ export class AdminService {
         `);
         total = Number(count.rows[0]?.count ?? 0);
         detail = `Indexing ${total} saved messages`;
+      } else if (kind === "archive_reencode") {
+        total = await new ColdMessageArchiveService(this.database).countReencodeCandidates();
+        detail = `Re-encoding ${total} cold archive chunks`;
+      } else if (kind === "index_reindex") {
+        total = reindexCandidates.length;
       }
       await client.query(`
         INSERT INTO admin_jobs (
@@ -644,7 +672,8 @@ export class AdminService {
       else if (job.kind === "view_reindex") await this.runViewRefresh(id);
       else if (job.kind === "integrity_scan") await this.runIntegrityScan(id);
       else if (job.kind === "database_measurement") await this.runDatabaseMeasurement(id);
-      else throw new Error("Archive re-encoding is no longer available");
+      else if (job.kind === "archive_reencode") await this.runArchiveReencode(id);
+      else if (job.kind === "index_reindex") await this.runIndexReindex(id);
       if (await this.isCancelling(id)) await this.finishCancelled(id);
       else await this.completeJob(id);
       await this.recordMetric(performance.now() - started, false);
@@ -686,7 +715,7 @@ export class AdminService {
     while (true) {
       if (await this.isCancelling(id)) return;
       const page = await this.database.query<ImageReindexRow>(`
-        SELECT id, channel_id, message_text, image_urls, hidden_image_urls
+        SELECT id, message_text, image_urls, hidden_image_urls
         FROM chat_messages
         WHERE deleted_at IS NULL AND id > $1
         ORDER BY id LIMIT $2
@@ -801,7 +830,7 @@ export class AdminService {
         CASE WHEN c.id IS NULL THEN 'Missing channel reference'
              ELSE 'Image metadata does not match indexed URLs' END AS issue
       FROM chat_messages m
-      LEFT JOIN channels c ON c.id = m.channel_id
+      LEFT JOIN channels c ON c.storage_key = m.channel_key
       WHERE m.deleted_at IS NULL AND (
         c.id IS NULL OR
         COALESCE(m.has_images, false) <>
@@ -859,6 +888,103 @@ export class AdminService {
     `, [randomUUID(), STATS_KEY, generatedAt, documentCount, documentBytes,
       JSON.stringify(tables),
       "PostgreSQL relation sizes, including table data, indexes, and TOAST storage."]);
+  }
+
+  private async runArchiveReencode(id: string) {
+    const archive = new ColdMessageArchiveService(this.database);
+    const total = await archive.countReencodeCandidates();
+    await this.database.query(`
+      UPDATE admin_jobs SET total=$2, current=0, updated_at=$3 WHERE id=$1
+    `, [id, total, Date.now()]);
+    const processed = await archive.reencodeChunks({
+      isCancelled: () => this.isCancelling(id),
+      onProgress: async (current) => {
+        await this.database.query(`
+          UPDATE admin_jobs SET current=$2, cursor=$2::text, updated_at=$3 WHERE id=$1
+        `, [id, current, Date.now()]);
+        await yieldToEventLoop();
+      },
+    });
+    await this.database.query(`
+      UPDATE admin_jobs SET current=$2, detail=$3, updated_at=$4 WHERE id=$1
+    `, [id, processed, `${processed} cold chunks verified and re-encoded`, Date.now()]);
+  }
+
+  private async runIndexReindex(id: string) {
+    await this.database.query("ANALYZE chat_messages");
+    const state = await this.database.query<{ current: string; cursor: string | null }>(
+      "SELECT current, cursor FROM admin_jobs WHERE id=$1",
+      [id],
+    );
+    let current = Number(state.rows[0]?.current ?? 0);
+    const completedThrough = state.rows[0]?.cursor;
+    let resumeReached = completedThrough === null;
+    const outcomes: Array<Record<string, unknown>> = [];
+    for (const candidate of reindexCandidates) {
+      if (!resumeReached) {
+        resumeReached = candidate.name === completedThrough;
+        continue;
+      }
+      if (await this.isCancelling(id)) return;
+      const measured = await this.database.query<{
+        bytes: string;
+        live_rows: string;
+      }>(`
+        SELECT pg_relation_size($1::regclass)::bigint AS bytes,
+               greatest(reltuples, 0)::bigint AS live_rows
+        FROM pg_class WHERE oid = 'chat_messages'::regclass
+      `, [candidate.name]);
+      const bytes = Number(measured.rows[0]?.bytes ?? 0);
+      const liveRows = Number(measured.rows[0]?.live_rows ?? 0);
+      const healthyBytes = Math.max(8192, liveRows * candidate.healthyBytesPerRow);
+      const reclaimableBytes = Math.max(0, bytes - healthyBytes);
+      const reclaimableRatio = bytes > 0 ? reclaimableBytes / bytes : 0;
+      const disk = await this.databaseDiskSpace();
+      const requiredFreeBytes = Math.ceil(bytes * 1.2);
+      const thresholdMet = reclaimableBytes >= REINDEX_MIN_RECLAIMABLE_BYTES &&
+        reclaimableRatio >= REINDEX_MIN_RECLAIMABLE_RATIO;
+      const diskCheckPassed = disk.freeBytes >= requiredFreeBytes;
+      let action = "healthy";
+      if (thresholdMet && diskCheckPassed) {
+        await this.database.query(`REINDEX INDEX CONCURRENTLY ${candidate.name}`);
+        action = "reindexed";
+      } else if (thresholdMet) {
+        action = "skipped_disk_check";
+      }
+      outcomes.push({
+        index: candidate.name,
+        bytes,
+        reclaimableBytes,
+        reclaimableRatio,
+        requiredFreeBytes,
+        freeBytes: disk.freeBytes,
+        diskSource: disk.source,
+        action,
+      });
+      current += 1;
+      await this.database.query(`
+        UPDATE admin_jobs SET current=$2, cursor=$3, metadata=$4::jsonb,
+          detail=$5, updated_at=$6 WHERE id=$1
+      `, [id, current, candidate.name, JSON.stringify({ indexes: outcomes }),
+        `${current}/${reindexCandidates.length} hot indexes measured`, Date.now()]);
+      await yieldToEventLoop();
+    }
+  }
+
+  private async databaseDiskSpace() {
+    try {
+      const result = await this.database.query<{ data_directory: string }>(
+        "SELECT current_setting('data_directory') AS data_directory",
+      );
+      const stats = await statfs(result.rows[0].data_directory);
+      return { freeBytes: Number(stats.bavail) * Number(stats.bsize), source: "filesystem" };
+    } catch {
+      const configured = Number(process.env.INDEX_REINDEX_FREE_BYTES ?? 0);
+      return {
+        freeBytes: Number.isFinite(configured) && configured > 0 ? configured : 0,
+        source: configured > 0 ? "INDEX_REINDEX_FREE_BYTES" : "unavailable",
+      };
+    }
   }
 
   private async isCancelling(id: string) {
@@ -1039,7 +1165,6 @@ interface FeedbackSummaryRow {
 
 interface ImageReindexRow {
   id: string;
-  channel_id: string;
   message_text: string;
   image_urls: string[] | null;
   hidden_image_urls: string[] | null;

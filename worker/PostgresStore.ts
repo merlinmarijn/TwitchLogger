@@ -16,7 +16,10 @@ import {
 } from "./ColdMessageArchiveService";
 import type { PostgresDatabase } from "./database";
 import type { Logger } from "./logger";
-import { compileMessageSelectionSql } from "./messageSearchSql";
+import {
+  compileMessageSelectionSql,
+  type ResolvedMessageDimensions,
+} from "./messageSearchSql";
 import {
   RemoteImageDetector,
   type RemoteImageDetectorLike,
@@ -173,11 +176,10 @@ export class PostgresStore implements ChatRepository {
       const archived = await client.query(`
         SELECT 1
         FROM chat_message_cold_catalog
-        WHERE external_message_id = $1
+        WHERE external_message_id = $1::uuid
         UNION ALL
         SELECT 1
-        FROM chat_message_cold_chunk_keys
-        WHERE external_message_ids @> ARRAY[$1::uuid]
+        FROM find_cold_message_chunk($1::uuid)
         LIMIT 1
       `, [message.messageId]);
       if (archived.rowCount) {
@@ -219,6 +221,8 @@ export class PostgresStore implements ChatRepository {
           ON CONFLICT ON CONSTRAINT chat_sender_profiles_identity_key DO UPDATE
           SET username = EXCLUDED.username
           RETURNING id
+        ), channel_storage AS (
+          SELECT storage_key FROM channels WHERE id = $2
         ), channel_profile AS (
           INSERT INTO chat_channel_profiles (
             channel_id, external_channel_id, username
@@ -235,15 +239,15 @@ export class PostgresStore implements ChatRepository {
           SELECT $12::integer AS id
         )
         INSERT INTO chat_messages (
-          id, channel_id, external_message_id, sender_profile_id,
+          id, channel_key, external_message_id, sender_profile_id,
           channel_profile_id, badge_set_id, message_type_id, role_flags,
           message_text, has_images, image_urls, image_index_version,
           timestamp, native_emotes
         )
-        SELECT $1, $2, $3, sender_profile.id, channel_profile.id,
+        SELECT $1, channel_storage.storage_key, $3, sender_profile.id, channel_profile.id,
           badge_set.id, message_kind.id, $13, $14, $15, $16::jsonb,
           $17, $8, $18::jsonb
-        FROM sender_profile, channel_profile, badge_set, message_kind
+        FROM sender_profile, channel_storage, channel_profile, badge_set, message_kind
         ON CONFLICT (external_message_id) DO NOTHING
         RETURNING id
       `, [
@@ -525,7 +529,7 @@ export class PostgresStore implements ChatRepository {
     const conditions: string[] = ["deleted_at IS NULL"];
     if (normalized.channelId) {
       values.push(normalized.channelId);
-      conditions.push(`channel_id = $${values.length}`);
+      conditions.push(`channel_key = (SELECT storage_key FROM channels WHERE id = $${values.length})`);
     }
     if (normalized.afterTimestamp) {
       values.push(normalized.afterTimestamp);
@@ -544,20 +548,77 @@ export class PostgresStore implements ChatRepository {
     if (normalized.tabId && !tab) throw new Error("Unknown chat tab");
     const filters = [...normalized.filters];
     if (tab) filters.push(tabAsFilter(tab));
-    const selection = compileMessageSelectionSql(normalized.quickSearch, filters, values.length);
+    const senderEquals = [...new Set(filters.flatMap((filter) =>
+      filter.rules
+        .filter((rule) => rule.field === "sender" &&
+          (rule.operator === "equals" || rule.operator === "notEquals"))
+        .map((rule) => rule.value.trim().toLowerCase())
+        .filter(Boolean),
+    ))];
+    let resolvedDimensions: ResolvedMessageDimensions | undefined;
+    if (normalized.quickSearch) {
+      const pattern = `%${escapeLikeValue(normalized.quickSearch.toLowerCase())}%`;
+      const dimensions = await this.database.query<{
+        sender_ids: number[];
+        channel_ids: number[];
+      }>(`
+        SELECT
+          ARRAY(SELECT id FROM chat_sender_profiles
+                WHERE lower(username) LIKE $1 ESCAPE '\\'
+                   OR lower(display_name) LIKE $1 ESCAPE '\\') AS sender_ids,
+          ARRAY(SELECT id FROM chat_channel_profiles
+                WHERE lower(username) LIKE $1 ESCAPE '\\') AS channel_ids
+      `, [pattern]);
+      resolvedDimensions = {
+        quickSenderProfileIds: dimensions.rows[0]?.sender_ids ?? [],
+        quickChannelProfileIds: dimensions.rows[0]?.channel_ids ?? [],
+        senderEquals: {},
+      };
+    }
+    if (senderEquals.length > 0) {
+      const exact = await this.database.query<{ value: string; ids: number[] }>(`
+        SELECT search.value, ARRAY(
+          SELECT id FROM chat_sender_profiles
+          WHERE lower(username) = search.value OR lower(display_name) = search.value
+        ) AS ids
+        FROM unnest($1::text[]) AS search(value)
+      `, [senderEquals]);
+      resolvedDimensions ??= {
+        quickSenderProfileIds: [],
+        quickChannelProfileIds: [],
+        senderEquals: {},
+      };
+      resolvedDimensions.senderEquals = Object.fromEntries(
+        exact.rows.map((row) => [row.value, row.ids]),
+      );
+    }
+    const selection = compileMessageSelectionSql(
+      normalized.quickSearch,
+      filters,
+      values.length,
+      resolvedDimensions,
+    );
     conditions.push(...selection.sql);
     values.push(...selection.values);
     const scanLimit = selection.requiresPostFilter ? MAX_MESSAGE_SCAN : requested + 1;
     values.push(scanLimit);
     const result = await this.database.query<MessageRow>(`
-      SELECT id, external_channel_id, channel_name, sender_username,
-        sender_display_name, message_text, timestamp, badges, user_color,
-        is_broadcaster, is_moderator, is_subscriber, is_vip, message_type,
-        image_urls, native_emotes
-      FROM chat_messages_expanded
-      ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
-      ORDER BY timestamp DESC, id DESC
-      LIMIT $${values.length}
+      WITH selected_message AS MATERIALIZED (
+        SELECT id, timestamp
+        FROM chat_messages
+        ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
+        ORDER BY timestamp DESC, id DESC
+        LIMIT $${values.length}
+      )
+      SELECT expanded.id, expanded.external_channel_id, expanded.channel_name,
+        expanded.sender_username, expanded.sender_display_name,
+        expanded.message_text, expanded.timestamp, expanded.badges,
+        expanded.user_color, expanded.is_broadcaster, expanded.is_moderator,
+        expanded.is_subscriber, expanded.is_vip, expanded.message_type,
+        expanded.image_urls, expanded.native_emotes
+      FROM selected_message
+      JOIN chat_messages_expanded AS expanded ON expanded.id = selected_message.id
+      ORDER BY selected_message.timestamp DESC, selected_message.id DESC
     `, values);
 
     const page = [];
@@ -671,19 +732,21 @@ export class PostgresStore implements ChatRepository {
       WITH sender AS (
         SELECT profile.username AS sender_username,
                profile.display_name AS sender_display_name,
-               message.channel_id, message.timestamp, message.deleted_at,
+               channel.id AS channel_id, message.timestamp, message.deleted_at,
                1::bigint AS message_count
         FROM chat_messages AS message
         JOIN chat_sender_profiles AS profile ON profile.id = message.sender_profile_id
+        JOIN channels AS channel ON channel.storage_key = message.channel_key
         UNION ALL
         SELECT COALESCE(profile.username, catalog.sender_username),
                COALESCE(profile.display_name, catalog.sender_display_name),
-               catalog.channel_id, catalog.timestamp, catalog.deleted_at,
+               channel.id, catalog.timestamp, catalog.deleted_at,
                1::bigint AS message_count
         FROM chat_message_cold_catalog AS catalog
         JOIN chat_message_cold_chunks AS legacy_chunk
           ON legacy_chunk.id = catalog.chunk_id
         LEFT JOIN chat_sender_profiles AS profile ON profile.id = catalog.sender_profile_id
+        JOIN channels AS channel ON channel.storage_key = catalog.channel_key
         WHERE legacy_chunk.compact_indexed = false AND (
           profile.id IS NOT NULL OR
           (catalog.sender_username IS NOT NULL AND catalog.sender_display_name IS NOT NULL)
@@ -691,15 +754,23 @@ export class PostgresStore implements ChatRepository {
         UNION ALL
         SELECT COALESCE(profile.username, stats.sender_username),
                COALESCE(profile.display_name, stats.sender_display_name),
-               chunk.channel_id, stats.last_timestamp, NULL::bigint,
+               channel.id, stats.last_timestamp, NULL::bigint,
                stats.message_count::bigint
-        FROM chat_message_cold_sender_stats AS stats
+        FROM chat_message_cold_sender_stats_legacy AS stats
         JOIN chat_message_cold_chunks AS chunk ON chunk.id = stats.chunk_id
         LEFT JOIN chat_sender_profiles AS profile ON profile.id = stats.sender_profile_id
+        JOIN channels AS channel ON channel.storage_key = chunk.channel_key
         WHERE chunk.compact_indexed = true AND (
           profile.id IS NOT NULL OR
           (stats.sender_username IS NOT NULL AND stats.sender_display_name IS NOT NULL)
         )
+        UNION ALL
+        SELECT profile.username, profile.display_name, channel.id,
+               stats.last_timestamp, NULL::bigint, stats.message_count::bigint
+        FROM chat_message_cold_sender_stats AS stats
+        JOIN chat_message_cold_chunks AS chunk ON chunk.id = stats.chunk_id
+        JOIN chat_sender_profiles AS profile ON profile.id = stats.sender_profile_id
+        JOIN channels AS channel ON channel.storage_key = chunk.channel_key
       )
       SELECT
         sender_username,

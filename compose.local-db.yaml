@@ -1,0 +1,24 @@
+name: twitchlogger-local
+
+services:
+  postgres:
+    image: postgres:18-bookworm
+    container_name: twitchlogger-local-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: twitchlogger
+      POSTGRES_USER: twitchlogger_local
+      POSTGRES_PASSWORD: ${LOCAL_POSTGRES_PASSWORD:?Set LOCAL_POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - twitchlogger_local_postgres_data:/var/lib/postgresql
+      - ./data/backups:/backups:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U twitchlogger_local -d twitchlogger"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  twitchlogger_local_postgres_data:

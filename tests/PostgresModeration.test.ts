@@ -78,6 +78,7 @@ describe("PostgreSQL message pagination", () => {
 
   it("pushes quick search into PostgreSQL before limiting the page", async () => {
     const { calls, store } = createStore([
+      { rowCount: 1, rows: [{ sender_ids: [], channel_ids: [] }] },
       { rowCount: 1, rows: [makeMessageRow("match", 100, "Hello Alice")] },
     ]);
 
@@ -86,9 +87,11 @@ describe("PostgreSQL message pagination", () => {
       paginationOpts: { numItems: 50 },
     }, false);
 
-    expect(calls[0].text).toContain("lower(message_text");
-    expect(calls[0].values).toContain("%alice%");
-    expect(calls[0].values.at(-1)).toBe(51);
+    expect(calls[0].text).toContain("chat_sender_profiles");
+    expect(calls[1].text).toContain("lower(message_text");
+    expect(calls[1].text).toContain("selected_message AS MATERIALIZED");
+    expect(calls[1].values).toContain("%alice%");
+    expect(calls[1].values.at(-1)).toBe(51);
   });
 
   it("limits the score-room page to candidate game shares", async () => {

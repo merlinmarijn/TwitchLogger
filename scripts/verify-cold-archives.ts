@@ -65,10 +65,12 @@ try {
       has_images: boolean;
       deleted_at: string | null;
       }>(`
-        SELECT id, external_message_id, channel_id, timestamp, has_images, deleted_at
-        FROM chat_message_cold_catalog
-        WHERE chunk_id = $1
-        ORDER BY timestamp, id
+        SELECT catalog.id, catalog.external_message_id, channel.id AS channel_id,
+               catalog.timestamp, catalog.has_images, catalog.deleted_at
+        FROM chat_message_cold_catalog AS catalog
+        JOIN channels AS channel ON channel.storage_key = catalog.channel_key
+        WHERE catalog.chunk_id = $1
+        ORDER BY catalog.timestamp, catalog.id
       `, [chunk.id]);
       if (catalog.rows.length !== records.length) {
         throw new Error(`Cold chunk ${chunk.id} catalog count does not match its manifest`);

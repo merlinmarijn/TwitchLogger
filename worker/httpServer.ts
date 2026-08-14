@@ -311,6 +311,8 @@ export function createHttpServer(
       "view_reindex",
       "integrity_scan",
       "database_measurement",
+      "archive_reencode",
+      "index_reindex",
     ]);
     const kind = request.body?.kind as StartableAdminJobKind;
     if (!validKinds.has(kind)) {

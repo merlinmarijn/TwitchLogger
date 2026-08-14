@@ -179,7 +179,7 @@ export class RawEventArchiveService {
       const messageIds = records.map((record) => record.externalMessageId);
       const deleted = await client.query(`
         DELETE FROM chat_raw_events
-        WHERE external_message_id = ANY($1::text[])
+        WHERE external_message_id = ANY($1::uuid[])
       `, [messageIds]);
       if (deleted.rowCount !== records.length) {
         throw new Error(

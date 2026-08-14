@@ -28,12 +28,14 @@ const compress = promisify(brotliCompress);
 const decompress = promisify(brotliDecompress);
 const DAY_MS = 86_400_000;
 const RETENTION_DAYS = 90;
-const MAX_CHUNK_MESSAGES = 10_000;
+const MAX_CHUNK_MESSAGES = 2_000;
 const MAX_ARCHIVE_CHUNKS_PER_RUN = 10;
 const MAX_LEGACY_MIGRATIONS_PER_RUN = 10;
 const MAX_COLD_SCAN = 1_000;
 const ARCHIVE_INTERVAL_MS = 60 * 60 * 1_000;
-const CODEC = "brotli-canonical-v2";
+const CODEC = "brotli-positional-v3";
+const DEFAULT_CACHE_CHUNKS = 32;
+const DEFAULT_CACHE_BYTES = 64 * 1024 * 1024;
 
 export interface ArchivedMessageRow {
   id: string;
@@ -91,6 +93,7 @@ interface ColdChunkRow {
   compact_indexed?: boolean;
   active_message_count?: string | null;
   image_message_count?: string | null;
+  codec?: string;
 }
 
 interface CatalogRow {
@@ -108,6 +111,10 @@ interface CompactChunkMeta {
 interface ColdCandidatePage {
   rows: ArchivedMessageRow[];
   hasMore: boolean;
+}
+
+interface ColdImageRow {
+  record: ArchivedMessageRow;
 }
 
 interface ColdSenderStat {
@@ -147,11 +154,30 @@ export class ColdMessageArchiveService {
   private activeRun?: Promise<ColdArchiveRunResult>;
   private stopped = false;
   private readonly decodedChunks = new Map<string, ArchivedMessageRow[]>();
+  private readonly decodedChunkBytes = new Map<string, number>();
+  private cachedBytes = 0;
+  private readonly cacheMetrics = { hits: 0, misses: 0, evictions: 0 };
+  private readonly maxCacheChunks = positiveInteger(
+    process.env.COLD_ARCHIVE_CACHE_MAX_CHUNKS,
+    DEFAULT_CACHE_CHUNKS,
+  );
+  private readonly maxCacheBytes = positiveInteger(
+    process.env.COLD_ARCHIVE_CACHE_MAX_BYTES,
+    DEFAULT_CACHE_BYTES,
+  );
 
   constructor(
     private readonly database: PostgresDatabase,
     private readonly logger?: Logger,
   ) {}
+
+  getCacheMetrics() {
+    return {
+      ...this.cacheMetrics,
+      chunks: this.decodedChunks.size,
+      bytes: this.cachedBytes,
+    };
+  }
 
   start(onFatalError: (error: Error) => void) {
     this.timer = setInterval(() => {
@@ -202,11 +228,18 @@ export class ColdMessageArchiveService {
     matches: (row: ArchivedMessageRow) => boolean;
   }): Promise<ColdArchivePage> {
     const candidateLimit = MAX_COLD_SCAN + 1;
-    const [legacy, compact] = await Promise.all([
+    const [legacy, compact, images] = await Promise.all([
       this.legacyCandidates(args, candidateLimit),
       this.compactCandidates(args, candidateLimit),
+      args.imagesOnly
+        ? this.imageCandidates(args, candidateLimit)
+        : Promise.resolve({ rows: [], hasMore: false }),
     ]);
-    const candidates = mergeCandidateRows(legacy.rows, compact.rows, candidateLimit);
+    const candidates = mergeCandidateRows(
+      mergeCandidateRows(legacy.rows, compact.rows, candidateLimit),
+      images.rows,
+      candidateLimit,
+    );
     const rows: ArchivedMessageRow[] = [];
     let consumed: ColdArchiveCursor | undefined;
     let scanned = 0;
@@ -224,7 +257,62 @@ export class ColdMessageArchiveService {
         rows.length > args.limit ||
         candidates.length > scanned ||
         legacy.hasMore ||
-        compact.hasMore,
+        compact.hasMore ||
+        images.hasMore,
+    };
+  }
+
+  async countReencodeCandidates() {
+    const result = await this.database.query<{ count: string }>(`
+      SELECT count(*) AS count FROM chat_message_cold_chunks
+      WHERE compact_indexed = false OR codec <> $1 OR image_projection_indexed = false
+    `, [CODEC]);
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async reencodeChunks(options: {
+    isCancelled?: () => Promise<boolean>;
+    onProgress?: (processed: number) => Promise<void>;
+  } = {}) {
+    let processed = 0;
+    while (!await options.isCancelled?.()) {
+      const migrated = await this.migrateLegacyChunks(1);
+      if (migrated === 0) break;
+      processed += migrated;
+      await options.onProgress?.(processed);
+    }
+    return processed;
+  }
+
+  private async imageCandidates(
+    args: { channelId?: string; afterTimestamp?: number; cursor?: ColdArchiveCursor },
+    limit: number,
+  ): Promise<ColdCandidatePage> {
+    const values: unknown[] = [];
+    const conditions: string[] = [];
+    if (args.channelId) {
+      values.push(args.channelId);
+      conditions.push(`image.channel_key = (SELECT storage_key FROM channels WHERE id = $${values.length})`);
+    }
+    if (args.afterTimestamp) {
+      values.push(args.afterTimestamp);
+      conditions.push(`image.timestamp > $${values.length}`);
+    }
+    if (args.cursor) {
+      values.push(args.cursor.timestamp, args.cursor.id);
+      conditions.push(`(image.timestamp, image.id) < ($${values.length - 1}, $${values.length})`);
+    }
+    values.push(limit);
+    const result = await this.database.query<ColdImageRow>(`
+      SELECT image.record
+      FROM chat_message_cold_images AS image
+      ${conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""}
+      ORDER BY image.timestamp DESC, image.id DESC
+      LIMIT $${values.length}
+    `, values);
+    return {
+      rows: result.rows.slice(0, limit - 1).map((row) => row.record),
+      hasMore: result.rows.length === limit,
     };
   }
 
@@ -241,7 +329,7 @@ export class ColdMessageArchiveService {
     const conditions = ["catalog.deleted_at IS NULL", "chunk.compact_indexed = false"];
     if (args.channelId) {
       values.push(args.channelId);
-      conditions.push(`catalog.channel_id = $${values.length}`);
+      conditions.push(`catalog.channel_key = (SELECT storage_key FROM channels WHERE id = $${values.length})`);
     }
     if (args.afterTimestamp) {
       values.push(args.afterTimestamp);
@@ -288,25 +376,28 @@ export class ColdMessageArchiveService {
     limit: number,
   ): Promise<ColdCandidatePage> {
     const values: unknown[] = [];
-    const conditions = ["compact_indexed = true", "active_message_count > 0"];
+    const conditions = ["chunk.compact_indexed = true", "chunk.active_message_count > 0"];
     if (args.channelId) {
       values.push(args.channelId);
-      conditions.push(`channel_id = $${values.length}`);
+      conditions.push(`chunk.channel_key = (SELECT storage_key FROM channels WHERE id = $${values.length})`);
     }
     if (args.afterTimestamp) {
       values.push(args.afterTimestamp);
-      conditions.push(`last_timestamp > $${values.length}`);
+      conditions.push(`chunk.last_timestamp > $${values.length}`);
     }
     if (args.cursor) {
       values.push(args.cursor.timestamp);
-      conditions.push(`first_timestamp <= $${values.length}`);
+      conditions.push(`chunk.first_timestamp <= $${values.length}`);
     }
-    if (args.imagesOnly) conditions.push("image_message_count > 0");
+    if (args.imagesOnly) {
+      conditions.push("chunk.image_message_count > 0");
+      conditions.push("chunk.image_projection_indexed = false");
+    }
     const metadata = await this.database.query<CompactChunkMeta>(`
-      SELECT id, first_timestamp, last_timestamp
-      FROM chat_message_cold_chunks
+      SELECT chunk.id, chunk.first_timestamp, chunk.last_timestamp
+      FROM chat_message_cold_chunks AS chunk
       WHERE ${conditions.join(" AND ")}
-      ORDER BY last_timestamp DESC, id DESC
+      ORDER BY chunk.last_timestamp DESC, chunk.id DESC
     `, values);
     const streams: Array<{ rows: ArchivedMessageRow[]; index: number }> = [];
     const output: ArchivedMessageRow[] = [];
@@ -369,7 +460,11 @@ export class ColdMessageArchiveService {
     for (let index = 0; index < MAX_ARCHIVE_CHUNKS_PER_RUN; index += 1) {
       const oldest = await this.oldestEligibleGroup(cutoff);
       if (!oldest) break;
-      const archived = await this.archiveGroup(oldest.channelId, oldest.periodStart);
+      const archived = await this.archiveGroup(
+        oldest.channelId,
+        oldest.periodStart,
+        oldest.channelProfileId,
+      );
       chunksCreated += 1;
       messagesArchived += archived;
     }
@@ -383,10 +478,10 @@ export class ColdMessageArchiveService {
   private async migrateLegacyChunks(limit: number) {
     const legacy = await this.database.query<{ id: string }>(`
       SELECT id FROM chat_message_cold_chunks
-      WHERE compact_indexed = false
+      WHERE compact_indexed = false OR codec <> $2 OR image_projection_indexed = false
       ORDER BY period_start, first_timestamp, id
       LIMIT $1
-    `, [limit]);
+    `, [limit, CODEC]);
     let migrated = 0;
     for (const row of legacy.rows) {
       const client = await this.database.pool.connect();
@@ -394,17 +489,17 @@ export class ColdMessageArchiveService {
         await client.query("BEGIN");
         const chunkResult = await client.query<ColdChunkRow>(`
           SELECT id, message_count, uncompressed_bytes, compressed_bytes,
-                 sha256, payload, compact_indexed
+                 sha256, payload, compact_indexed, codec
           FROM chat_message_cold_chunks
           WHERE id = $1 FOR UPDATE
         `, [row.id]);
         const chunk = chunkResult.rows[0];
-        if (!chunk || chunk.compact_indexed) {
+        if (!chunk) {
           await client.query("COMMIT");
           continue;
         }
         const records = await verifyStoredChunk(chunk);
-        const catalog = await client.query<{
+        const catalog = chunk.compact_indexed ? undefined : await client.query<{
           id: string;
           external_message_id: string;
           channel_id: string;
@@ -412,19 +507,41 @@ export class ColdMessageArchiveService {
           has_images: boolean;
           deleted_at: string | null;
         }>(`
-          SELECT id, external_message_id, channel_id, timestamp,
-                 has_images, deleted_at
-          FROM chat_message_cold_catalog
-          WHERE chunk_id = $1
+          SELECT catalog.id, catalog.external_message_id,
+                 channel.id AS channel_id, catalog.timestamp,
+                 catalog.has_images, catalog.deleted_at
+          FROM chat_message_cold_catalog AS catalog
+          JOIN channels AS channel ON channel.storage_key = catalog.channel_key
+          WHERE catalog.chunk_id = $1
         `, [row.id]);
-        verifyLegacyCatalog(row.id, records, catalog.rows);
+        if (catalog) verifyLegacyCatalog(row.id, records, catalog.rows);
+        if (chunk.codec !== CODEC) {
+          const encoded = await encodeColdMessageChunk(records);
+          const verified = await verifyColdMessageChunk(encoded.payload, {
+            sha256: encoded.sha256,
+            messageCount: records.length,
+            uncompressedBytes: encoded.uncompressedBytes,
+          });
+          if (JSON.stringify(verified) !== JSON.stringify(records)) {
+            throw new Error(`Cold chunk ${row.id} changed while re-encoding`);
+          }
+          await client.query(`
+            UPDATE chat_message_cold_chunks
+            SET codec=$2, uncompressed_bytes=$3, compressed_bytes=$4,
+                sha256=$5, payload=$6
+            WHERE id=$1
+          `, [row.id, CODEC, encoded.uncompressedBytes, encoded.compressedBytes,
+            encoded.sha256, encoded.payload]);
+        }
         await this.writeCompactIndexes(client, row.id, records);
-        const deleted = await client.query(
-          "DELETE FROM chat_message_cold_catalog WHERE chunk_id = $1",
-          [row.id],
-        );
-        if (deleted.rowCount !== records.length) {
-          throw new Error(`Legacy cold catalog ${row.id} changed during migration`);
+        if (catalog) {
+          const deleted = await client.query(
+            "DELETE FROM chat_message_cold_catalog WHERE chunk_id = $1",
+            [row.id],
+          );
+          if (deleted.rowCount !== records.length) {
+            throw new Error(`Legacy cold catalog ${row.id} changed during migration`);
+          }
         }
         await client.query("COMMIT");
         migrated += 1;
@@ -670,9 +787,11 @@ export class ColdMessageArchiveService {
         has_images: boolean;
         deleted_at: string | null;
       }>(`
-          SELECT id, channel_id, timestamp, has_images, deleted_at
-          FROM chat_message_cold_catalog
-          WHERE chunk_id = $1
+          SELECT catalog.id, channel.id AS channel_id, catalog.timestamp,
+                 catalog.has_images, catalog.deleted_at
+          FROM chat_message_cold_catalog AS catalog
+          JOIN channels AS channel ON channel.storage_key = catalog.channel_key
+          WHERE catalog.chunk_id = $1
         `, [chunk.id]);
       const catalogById = new Map(catalog?.rows.map((row) => [row.id, row]) ?? []);
       if (compactIssue) {
@@ -725,17 +844,20 @@ export class ColdMessageArchiveService {
   private async oldestEligibleGroup(cutoff: number) {
     const result = await this.database.query<{
       channel_id: string;
+      channel_profile_id: number;
       period_start: string;
       raw_pending: boolean;
     }>(`
-      SELECT channel_id, (timestamp / $2::bigint) * $2::bigint AS period_start,
+      SELECT channel.id AS channel_id, message.channel_profile_id,
+             (message.timestamp / $2::bigint) * $2::bigint AS period_start,
              EXISTS (
                SELECT 1 FROM chat_raw_events AS raw
                WHERE raw.external_message_id = message.external_message_id
              ) AS raw_pending
       FROM chat_messages AS message
+      JOIN channels AS channel ON channel.storage_key = message.channel_key
       WHERE timestamp < $1
-      ORDER BY timestamp, channel_id
+      ORDER BY message.timestamp, message.channel_key
       LIMIT 1
     `, [cutoff, DAY_MS]);
     const row = result.rows[0];
@@ -745,10 +867,18 @@ export class ColdMessageArchiveService {
         "An eligible canonical message still has an unarchived raw event; cold archival paused",
       );
     }
-    return { channelId: row.channel_id, periodStart: Number(row.period_start) };
+    return {
+      channelId: row.channel_id,
+      channelProfileId: Number(row.channel_profile_id),
+      periodStart: Number(row.period_start),
+    };
   }
 
-  private async archiveGroup(channelId: string, periodStart: number) {
+  private async archiveGroup(
+    channelId: string,
+    periodStart: number,
+    channelProfileId: number,
+  ) {
     const periodEnd = periodStart + DAY_MS;
     const source = await this.database.query<ArchivedMessageDatabaseRow>(`
       SELECT
@@ -760,13 +890,14 @@ export class ColdMessageArchiveService {
         native_emotes, hidden_image_urls, deleted_at, sender_profile_id
       FROM chat_messages_expanded
       WHERE channel_id = $1 AND timestamp >= $2 AND timestamp < $3
+        AND channel_profile_id = $5
         AND NOT EXISTS (
           SELECT 1 FROM chat_raw_events AS raw
           WHERE raw.external_message_id = chat_messages_expanded.external_message_id
         )
       ORDER BY timestamp, id
       LIMIT $4
-    `, [channelId, periodStart, periodEnd, MAX_CHUNK_MESSAGES]);
+    `, [channelId, periodStart, periodEnd, MAX_CHUNK_MESSAGES, channelProfileId]);
     if (source.rows.length === 0) {
       throw new Error("Cold archive group disappeared before it could be read");
     }
@@ -784,11 +915,13 @@ export class ColdMessageArchiveService {
       const chunkId = randomUUID();
       await client.query(`
         INSERT INTO chat_message_cold_chunks (
-          id, channel_id, period_start, period_end, first_timestamp,
+          id, channel_key, period_start, period_end, first_timestamp,
           last_timestamp, message_count, codec, uncompressed_bytes,
           compressed_bytes, sha256, payload, created_at, compact_indexed,
           active_message_count, image_message_count
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,false,NULL,NULL)
+        ) SELECT $1, storage_key, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+                 false,NULL,NULL
+          FROM channels WHERE id = $2
       `, [
         chunkId,
         channelId,
@@ -814,7 +947,7 @@ export class ColdMessageArchiveService {
         );
       }
       await client.query("COMMIT");
-      this.decodedChunks.set(chunkId, records);
+      this.cacheChunk(chunkId, records);
       return records.length;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
@@ -832,9 +965,8 @@ export class ColdMessageArchiveService {
     const externalMessageIds = records.map((record) => record.external_message_id);
     await client.query("SELECT pg_advisory_xact_lock($1)", [1_987_042_020]);
     const duplicate = await client.query<{ chunk_id: string }>(`
-      SELECT chunk_id
-      FROM chat_message_cold_chunk_keys
-      WHERE chunk_id <> $1 AND external_message_ids && $2::uuid[]
+      SELECT chunk_id FROM find_cold_message_chunks($2::uuid[])
+      WHERE chunk_id <> $1
       LIMIT 1
     `, [chunkId, externalMessageIds]);
     if (duplicate.rowCount) {
@@ -851,12 +983,28 @@ export class ColdMessageArchiveService {
 
     const stats = buildSenderStats(records);
     await client.query(
+      "DELETE FROM chat_message_cold_sender_stats_legacy WHERE chunk_id = $1",
+      [chunkId],
+    );
+    await client.query(
       "DELETE FROM chat_message_cold_sender_stats WHERE chunk_id = $1",
       [chunkId],
     );
-    if (stats.length > 0) {
+    if (stats.length > 0 && stats.every((stat) => stat.senderProfileId !== null)) {
       await client.query(`
         INSERT INTO chat_message_cold_sender_stats (
+          chunk_id, sender_profile_id, message_count, last_timestamp
+        )
+        SELECT $1, * FROM unnest($2::integer[], $3::integer[], $4::bigint[])
+      `, [
+        chunkId,
+        stats.map((stat) => stat.senderProfileId),
+        stats.map((stat) => stat.messageCount),
+        stats.map((stat) => stat.lastTimestamp),
+      ]);
+    } else if (stats.length > 0) {
+      await client.query(`
+        INSERT INTO chat_message_cold_sender_stats_legacy (
           chunk_id, sender_profile_id, sender_username, sender_display_name,
           message_count, last_timestamp
         )
@@ -873,6 +1021,24 @@ export class ColdMessageArchiveService {
         stats.map((stat) => stat.lastTimestamp),
       ]);
     }
+    await client.query("DELETE FROM chat_message_cold_images WHERE chunk_id = $1", [chunkId]);
+    const imageRecords = records.filter(
+      (record) => record.deleted_at === null && record.has_images,
+    );
+    if (imageRecords.length > 0) {
+      await client.query(`
+        INSERT INTO chat_message_cold_images (id, chunk_id, channel_key, timestamp, record)
+        SELECT item.id, $1, channel.storage_key, item.timestamp, item.record
+        FROM unnest($2::text[], $3::text[], $4::bigint[], $5::jsonb[]) AS item(id, channel_id, timestamp, record)
+        JOIN channels AS channel ON channel.id = item.channel_id
+      `, [
+        chunkId,
+        imageRecords.map((record) => record.id),
+        imageRecords.map((record) => record.channel_id),
+        imageRecords.map((record) => record.timestamp),
+        imageRecords.map((record) => JSON.stringify(record)),
+      ]);
+    }
     const activeMessageCount = records.filter((record) => record.deleted_at === null).length;
     const imageMessageCount = records.filter(
       (record) => record.deleted_at === null && record.has_images,
@@ -881,7 +1047,8 @@ export class ColdMessageArchiveService {
       UPDATE chat_message_cold_chunks
       SET compact_indexed = true,
           active_message_count = $2,
-          image_message_count = $3
+          image_message_count = $3,
+          image_projection_indexed = true
       WHERE id = $1
     `, [chunkId, activeMessageCount, imageMessageCount]);
     if (updated.rowCount !== 1) throw new Error(`Cold chunk ${chunkId} disappeared`);
@@ -893,8 +1060,11 @@ export class ColdMessageArchiveService {
         cardinality(keys.external_message_ids)::bigint AS external_count,
         COALESCE(sum(stats.message_count), 0)::bigint AS sender_count
       FROM chat_message_cold_chunk_keys AS keys
-      LEFT JOIN chat_message_cold_sender_stats AS stats
-        ON stats.chunk_id = keys.chunk_id
+      LEFT JOIN (
+        SELECT chunk_id, message_count FROM chat_message_cold_sender_stats_legacy
+        UNION ALL
+        SELECT chunk_id, message_count FROM chat_message_cold_sender_stats
+      ) AS stats ON stats.chunk_id = keys.chunk_id
       WHERE keys.chunk_id = $1
       GROUP BY keys.external_message_ids
     `, [chunkId]);
@@ -942,6 +1112,10 @@ export class ColdMessageArchiveService {
     }>(`
       SELECT sender_profile_id, sender_username, sender_display_name,
              message_count, last_timestamp
+      FROM chat_message_cold_sender_stats_legacy
+      WHERE chunk_id = $1
+      UNION ALL
+      SELECT sender_profile_id, NULL, NULL, message_count, last_timestamp
       FROM chat_message_cold_sender_stats
       WHERE chunk_id = $1
     `, [chunk.id]);
@@ -955,6 +1129,19 @@ export class ColdMessageArchiveService {
     })).sort();
     if (JSON.stringify(actualStats) !== JSON.stringify(expectedStats)) {
       return "Compact cold sender statistics do not match its archive";
+    }
+    const projected = await this.database.query<{ id: string; record: ArchivedMessageRow }>(`
+      SELECT id, record FROM chat_message_cold_images WHERE chunk_id = $1 ORDER BY id
+    `, [chunk.id]);
+    const expectedProjection = active.filter((record) => record.has_images)
+      .sort((left, right) => left.id.localeCompare(right.id));
+    if (
+      projected.rows.length !== expectedProjection.length ||
+      projected.rows.some((row, index) =>
+        row.id !== expectedProjection[index]?.id ||
+        stableJson(row.record) !== stableJson(expectedProjection[index]))
+    ) {
+      return "Sparse cold image projection does not match its archive";
     }
     const legacy = await this.database.query(`
       SELECT 1 FROM chat_message_cold_catalog WHERE chunk_id = $1 LIMIT 1
@@ -979,14 +1166,21 @@ export class ColdMessageArchiveService {
     const loaded = new Map<string, ArchivedMessageRow[]>();
     const missing = chunkIds.filter((id) => {
       const cached = this.decodedChunks.get(id);
-      if (cached) loaded.set(id, cached);
+      if (cached) {
+        this.cacheMetrics.hits += 1;
+        this.decodedChunks.delete(id);
+        this.decodedChunks.set(id, cached);
+        loaded.set(id, cached);
+      } else {
+        this.cacheMetrics.misses += 1;
+      }
       return !cached;
     });
     if (missing.length > 0) {
       const result = await this.database.query<ColdChunkRow>(`
         SELECT id, message_count, uncompressed_bytes, compressed_bytes, sha256, payload
         FROM chat_message_cold_chunks
-        WHERE id = ANY($1::text[])
+        WHERE id = ANY($1::uuid[])
       `, [missing]);
       if (result.rows.length !== missing.length) {
         throw new Error("One or more cold archive chunks are missing");
@@ -1075,10 +1269,11 @@ export class ColdMessageArchiveService {
         });
         await client.query(`
           UPDATE chat_message_cold_chunks
-          SET uncompressed_bytes=$2, compressed_bytes=$3, sha256=$4, payload=$5
+          SET codec=$2, uncompressed_bytes=$3, compressed_bytes=$4, sha256=$5, payload=$6
           WHERE id=$1
         `, [
           chunkId,
+          CODEC,
           encoded.uncompressedBytes,
           encoded.compressedBytes,
           encoded.sha256,
@@ -1108,10 +1303,23 @@ export class ColdMessageArchiveService {
   }
 
   private cacheChunk(chunkId: string, records: ArchivedMessageRow[]) {
+    const previousBytes = this.decodedChunkBytes.get(chunkId) ?? 0;
     this.decodedChunks.delete(chunkId);
+    this.decodedChunkBytes.delete(chunkId);
+    this.cachedBytes -= previousBytes;
+    const bytes = Buffer.byteLength(JSON.stringify(records), "utf8");
     this.decodedChunks.set(chunkId, records);
-    while (this.decodedChunks.size > 32) {
-      this.decodedChunks.delete(this.decodedChunks.keys().next().value!);
+    this.decodedChunkBytes.set(chunkId, bytes);
+    this.cachedBytes += bytes;
+    while (
+      this.decodedChunks.size > this.maxCacheChunks ||
+      (this.cachedBytes > this.maxCacheBytes && this.decodedChunks.size > 1)
+    ) {
+      const oldest = this.decodedChunks.keys().next().value!;
+      this.decodedChunks.delete(oldest);
+      this.cachedBytes -= this.decodedChunkBytes.get(oldest) ?? 0;
+      this.decodedChunkBytes.delete(oldest);
+      this.cacheMetrics.evictions += 1;
     }
   }
 }
@@ -1264,10 +1472,7 @@ function createProgressReporter(
 
 export async function encodeColdMessageChunk(records: ArchivedMessageRow[]) {
   if (records.length === 0) throw new Error("Cannot encode an empty cold-message chunk");
-  const uncompressed = Buffer.from(
-    records.map((record) => JSON.stringify(record)).join("\n"),
-    "utf8",
-  );
+  const uncompressed = Buffer.from(JSON.stringify(toV3Chunk(records)), "utf8");
   const payload = await compress(uncompressed, {
     params: {
       [zlibConstants.BROTLI_PARAM_QUALITY]: ARCHIVE_BROTLI_QUALITY,
@@ -1295,9 +1500,11 @@ export async function verifyColdMessageChunk(
     throw new Error("Cold-message archive checksum does not match its manifest");
   }
   const text = uncompressed.toString("utf8");
-  const records = text.length === 0
-    ? []
-    : text.split("\n").map((line) => JSON.parse(line) as ArchivedMessageRow);
+  const records = text.startsWith("[")
+    ? fromV3Chunk(JSON.parse(text) as V3Chunk)
+    : text.length === 0
+      ? []
+      : text.split("\n").map((line) => JSON.parse(line) as ArchivedMessageRow);
   if (records.length !== expected.messageCount) {
     throw new Error("Cold-message archive record count does not match its manifest");
   }
@@ -1332,4 +1539,154 @@ function startOfUtcDay(timestamp: number) {
 
 function asError(error: unknown) {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+type V3Profile = [string | number | null, string, string, string, string | null];
+type V3Row = [
+  string, string, number, string, string[] | null, number | null, number,
+  number, number, number, NativeEmote[] | null, string[] | null,
+  number | null, number, Record<string, unknown> | null,
+];
+type V3Chunk = [
+  3,
+  [string, string, string, string],
+  V3Profile[],
+  ArchivedMessageRow["badges"][],
+  string[],
+  number,
+  V3Row[],
+];
+
+function toV3Chunk(records: ArchivedMessageRow[]): V3Chunk {
+  const first = records[0];
+  const channel: V3Chunk[1] = [
+    first.channel_id,
+    first.platform,
+    first.external_channel_id,
+    first.channel_name,
+  ];
+  const profiles: V3Profile[] = [];
+  const profileIndexes = new Map<string, number>();
+  const badges: ArchivedMessageRow["badges"][] = [];
+  const badgeIndexes = new Map<string, number>();
+  const messageTypes: string[] = [];
+  const messageTypeIndexes = new Map<string, number>();
+  const baseTimestamp = first.timestamp;
+  const indexOf = <T>(values: T[], indexes: Map<string, number>, value: T) => {
+    const key = JSON.stringify(value);
+    const existing = indexes.get(key);
+    if (existing !== undefined) return existing;
+    const index = values.length;
+    values.push(value);
+    indexes.set(key, index);
+    return index;
+  };
+  const rows = records.map((record): V3Row => {
+    if (
+      record.channel_id !== channel[0] || record.platform !== channel[1] ||
+      record.external_channel_id !== channel[2] || record.channel_name !== channel[3]
+    ) throw new Error("Cold-message chunks cannot span channels or channel profiles");
+    const profile: V3Profile = [
+      record.sender_profile_id ?? null,
+      record.sender_id,
+      record.sender_username,
+      record.sender_display_name,
+      record.user_color,
+    ];
+    const roleFlags =
+      (record.is_broadcaster ? 1 : 0) |
+      (record.is_moderator ? 2 : 0) |
+      (record.is_subscriber ? 4 : 0) |
+      (record.is_vip ? 8 : 0);
+    let presence = 0;
+    const extras: Record<string, unknown> = {};
+    for (const [bit, key] of [
+      [1, "event_notification_id"],
+      [2, "gallery_channel_id"],
+      [4, "metadata"],
+      [8, "created_at"],
+    ] as const) {
+      if (Object.hasOwn(record, key)) {
+        presence |= bit;
+        extras[key] = record[key];
+      }
+    }
+    if (Object.hasOwn(record, "native_emotes")) presence |= 16;
+    if (Object.hasOwn(record, "sender_profile_id")) presence |= 32;
+    return [
+      record.id,
+      record.external_message_id,
+      indexOf(profiles, profileIndexes, profile),
+      record.message_text,
+      record.image_urls,
+      record.image_index_version,
+      record.timestamp - baseTimestamp,
+      indexOf(badges, badgeIndexes, record.badges),
+      roleFlags,
+      indexOf(messageTypes, messageTypeIndexes, record.message_type),
+      record.native_emotes ?? null,
+      record.hidden_image_urls.length > 0 ? record.hidden_image_urls : null,
+      record.deleted_at === null ? null : record.deleted_at - baseTimestamp,
+      presence,
+      Object.keys(extras).length > 0 ? extras : null,
+    ];
+  });
+  return [3, channel, profiles, badges, messageTypes, baseTimestamp, rows];
+}
+
+function fromV3Chunk(chunk: V3Chunk): ArchivedMessageRow[] {
+  if (!Array.isArray(chunk) || chunk[0] !== 3) {
+    throw new Error("Unsupported positional cold-message codec");
+  }
+  const [, channel, profiles, badges, messageTypes, baseTimestamp, rows] = chunk;
+  return rows.map((row) => {
+    const profile = profiles[row[2]];
+    if (!profile || !badges[row[7]] || messageTypes[row[9]] === undefined) {
+      throw new Error("Cold-message dictionary index is invalid");
+    }
+    const record: ArchivedMessageRow = {
+      id: row[0],
+      channel_id: channel[0],
+      platform: channel[1],
+      external_message_id: row[1],
+      external_channel_id: channel[2],
+      channel_name: channel[3],
+      sender_id: profile[1],
+      sender_username: profile[2],
+      sender_display_name: profile[3],
+      message_text: row[3],
+      has_images: (row[4]?.length ?? 0) > 0,
+      image_urls: row[4],
+      image_index_version: row[5],
+      timestamp: baseTimestamp + row[6],
+      badges: badges[row[7]],
+      user_color: profile[4],
+      is_broadcaster: (row[8] & 1) !== 0,
+      is_moderator: (row[8] & 2) !== 0,
+      is_subscriber: (row[8] & 4) !== 0,
+      is_vip: (row[8] & 8) !== 0,
+      message_type: messageTypes[row[9]],
+      hidden_image_urls: row[11] ?? [],
+      deleted_at: row[12] === null ? null : baseTimestamp + row[12],
+    };
+    if (row[13] & 16) record.native_emotes = row[10];
+    if (row[13] & 32) record.sender_profile_id = profile[0]!;
+    if (row[14]) Object.assign(record, row[14]);
+    return record;
+  });
+}
+
+function positiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object).sort().map((key) =>
+      `${JSON.stringify(key)}:${stableJson(object[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }

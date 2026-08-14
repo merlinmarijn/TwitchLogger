@@ -20,8 +20,10 @@ type StartableJobKind =
   | "image_reindex"
   | "view_reindex"
   | "integrity_scan"
-  | "database_measurement";
-type JobKind = StartableJobKind | "archive_reencode";
+  | "database_measurement"
+  | "archive_reencode"
+  | "index_reindex";
+type JobKind = StartableJobKind;
 type JobStatus = "queued" | "running" | "cancelling" | "cancelled" | "completed" | "failed";
 const ADMIN_RAIL_SECTIONS = ["overview", "submissions", "operations", "database"] as const;
 type AdminRailSection = typeof ADMIN_RAIL_SECTIONS[number];
@@ -134,6 +136,20 @@ const operations: Array<{
     title: "Measure database",
     description: "Count rows and measure PostgreSQL relations to refresh the stored capacity report.",
     impact: "Read-only",
+  },
+  {
+    kind: "archive_reencode",
+    number: "05",
+    title: "Re-encode cold archive",
+    description: "Checksum-verify old chunks and convert them to the compact positional codec and sparse image projection.",
+    impact: "Writes verified cold chunks",
+  },
+  {
+    kind: "index_reindex",
+    number: "06",
+    title: "Reclaim hot indexes",
+    description: "Measure hot time-ordered indexes and concurrently rebuild only indexes over both bloat thresholds.",
+    impact: "Requires configured disk headroom",
   },
 ];
 

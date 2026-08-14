@@ -515,22 +515,34 @@ function MetricsStrip({ data }: { data?: Dashboard }) {
   const cacheTotal = (metrics?.cacheHits ?? 0) + (metrics?.cacheMisses ?? 0);
   const history = metrics?.history ?? [];
   const items = [
-    { label: "Function calls", value: compact(calls), note: "Admin + worker calls", tone: "blue", series: history.map((point) => point.functionCalls), zeroBased: true },
-    { label: "Errors", value: compact(metrics?.errorCount ?? 0), note: calls ? `${(((metrics?.errorCount ?? 0) / calls) * 100).toFixed(2)}% error rate` : "No measured calls", tone: (metrics?.errorCount ?? 0) > 0 ? "red" : "green", series: history.map((point) => point.errorCount), zeroBased: true },
-    { label: "Avg. execution", value: calls ? `${Math.round((metrics?.totalExecutionMs ?? 0) / calls)} ms` : "—", note: "Worker + job batches", tone: "orange", series: history.map((point) => point.averageExecutionMs), zeroBased: false },
-    { label: "Cache hit rate", value: cacheTotal ? `${Math.round(((metrics?.cacheHits ?? 0) / cacheTotal) * 100)}%` : "—", note: cacheTotal ? `${compact(cacheTotal)} decisions` : "Awaiting cache traffic", tone: "purple", series: history.map((point) => point.cacheHitRate), zeroBased: false },
+    { label: "Function calls", value: compact(calls), note: "Admin + worker calls", tone: "blue", series: history.map((point) => ({ timestamp: point.timestamp, value: point.functionCalls })), zeroBased: true, emptyLabel: "No calls", formatValue: (value: number) => `${compact(Math.round(value))} calls` },
+    { label: "Errors", value: compact(metrics?.errorCount ?? 0), note: calls ? `${(((metrics?.errorCount ?? 0) / calls) * 100).toFixed(2)}% error rate` : "No measured calls", tone: (metrics?.errorCount ?? 0) > 0 ? "red" : "green", series: history.map((point) => ({ timestamp: point.timestamp, value: point.errorCount })), zeroBased: true, emptyLabel: "No errors", formatValue: (value: number) => `${compact(Math.round(value))} errors` },
+    { label: "Avg. execution", value: calls ? `${Math.round((metrics?.totalExecutionMs ?? 0) / calls)} ms` : "—", note: "Worker + job batches", tone: "orange", series: history.map((point) => ({ timestamp: point.timestamp, value: point.averageExecutionMs })), zeroBased: false, emptyLabel: "No requests", formatValue: (value: number) => `${value < 10 ? value.toFixed(1) : Math.round(value)} ms` },
+    { label: "Cache hit rate", value: cacheTotal ? `${Math.round(((metrics?.cacheHits ?? 0) / cacheTotal) * 100)}%` : "—", note: cacheTotal ? `${compact(cacheTotal)} decisions` : "Awaiting cache traffic", tone: "purple", series: history.map((point) => ({ timestamp: point.timestamp, value: point.cacheHitRate })), zeroBased: false, emptyLabel: "No cache decisions", formatValue: (value: number) => `${Math.round(value)}% hit rate` },
   ];
-  return <div className="metrics-strip">{items.map((item) => <article className={`metric-panel ${item.tone}`} key={item.label}><header><span>{item.label}</span><div><small>60m</small><i /></div></header><strong>{item.value}</strong><small>{item.note}</small><MetricSparkline values={item.series} zeroBased={item.zeroBased} /></article>)}</div>;
+  return <div className="metrics-strip">{items.map((item) => <article className={`metric-panel ${item.tone}`} key={item.label}><header><span>{item.label}</span><div><small>60m</small><i /></div></header><strong>{item.value}</strong><small>{item.note}</small><MetricSparkline emptyLabel={item.emptyLabel} formatValue={item.formatValue} points={item.series} zeroBased={item.zeroBased} /></article>)}</div>;
 }
 
-function MetricSparkline({ values, zeroBased }: { values: Array<number | null>; zeroBased: boolean }) {
+function MetricSparkline({
+  points: series,
+  zeroBased,
+  emptyLabel,
+  formatValue,
+}: {
+  points: Array<{ timestamp: number; value: number | null }>;
+  zeroBased: boolean;
+  emptyLabel: string;
+  formatValue: (value: number) => string;
+}) {
+  const [hoverIndex, setHoverIndex] = useState<number>();
   const width = 100;
   const height = 42;
+  const values = series.map((point) => point.value);
   const finiteValues = values.filter((value): value is number => value !== null && Number.isFinite(value));
-  if (finiteValues.length === 0) return <div aria-hidden="true" className="metric-sparkline empty" />;
+  if (values.length === 0) return <div className="metric-sparkline empty"><span>No 60m history yet</span></div>;
 
-  let minimum = zeroBased ? 0 : Math.min(...finiteValues);
-  let maximum = Math.max(...finiteValues);
+  let minimum = zeroBased ? 0 : finiteValues.length ? Math.min(...finiteValues) : 0;
+  let maximum = finiteValues.length ? Math.max(...finiteValues) : 1;
   if (minimum === maximum) {
     const padding = Math.max(1, Math.abs(maximum) * .1);
     if (!zeroBased) minimum -= padding;
@@ -566,13 +578,38 @@ function MetricSparkline({ values, zeroBased }: { values: Array<number | null>; 
     const line = segment.map((point) => `L${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
     return `M${first.x.toFixed(2)} ${height} ${line} L${last.x.toFixed(2)} ${height} Z`;
   }).join(" ");
+  const isolatedPoints = points.filter((point, index) => point && !points[index - 1] && !points[index + 1]);
+  const hoveredSeriesPoint = hoverIndex === undefined ? undefined : series[hoverIndex];
+  const hoveredPoint = hoverIndex === undefined ? undefined : points[hoverIndex];
+  const hoverX = hoverIndex === undefined ? 0 : hoverIndex / Math.max(1, series.length - 1) * width;
+  const tooltipX = Math.max(18, Math.min(82, hoverX));
 
   return (
-    <svg aria-hidden="true" className="metric-sparkline" preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`}>
-      <path className="sparkline-grid" d="M0 14H100M0 28H100" vectorEffect="non-scaling-stroke" />
-      <path className="sparkline-area" d={areaPath} />
-      <path className="sparkline-line" d={linePath} vectorEffect="non-scaling-stroke" />
-    </svg>
+    <div
+      className={`metric-sparkline ${finiteValues.length ? "" : "empty"}`}
+      onPointerLeave={() => setHoverIndex(undefined)}
+      onPointerMove={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+        setHoverIndex(Math.round(ratio * (series.length - 1)));
+      }}
+    >
+      <svg aria-hidden="true" preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`}>
+        <path className="sparkline-grid" d="M0 14H100M0 28H100" vectorEffect="non-scaling-stroke" />
+        <path className="sparkline-area" d={areaPath} />
+        <path className="sparkline-line" d={linePath} vectorEffect="non-scaling-stroke" />
+        {isolatedPoints.map((point) => <circle className="sparkline-isolated" cx={point!.x} cy={point!.y} key={`${point!.x}:${point!.y}`} r="1.15" vectorEffect="non-scaling-stroke" />)}
+        {hoverIndex !== undefined ? <line className="sparkline-crosshair" x1={hoverX} x2={hoverX} y1="0" y2={height} vectorEffect="non-scaling-stroke" /> : null}
+        {hoveredPoint ? <circle className="sparkline-hover-point" cx={hoveredPoint.x} cy={hoveredPoint.y} r="1.55" vectorEffect="non-scaling-stroke" /> : null}
+      </svg>
+      {finiteValues.length === 0 ? <span className="sparkline-empty-label">{emptyLabel} · last 60m</span> : null}
+      {hoveredSeriesPoint ? (
+        <div className="sparkline-tooltip" style={{ left: `${tooltipX}%` }}>
+          <strong>{hoveredSeriesPoint.value === null ? emptyLabel : formatValue(hoveredSeriesPoint.value)}</strong>
+          <time>{new Date(hoveredSeriesPoint.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

@@ -185,6 +185,20 @@ export class PostgresStore implements ChatRepository {
         this.logger.debug({ messageId: message.messageId }, "Ignored archived duplicate chat message");
         return;
       }
+      let messageTypeId = (await client.query<{ id: number }>(`
+        SELECT id
+        FROM chat_message_types
+        WHERE name = $1
+      `, [message.messageType])).rows[0]?.id;
+      if (messageTypeId === undefined) {
+        const messageType = await client.query<{ id: number }>(`
+          INSERT INTO chat_message_types (name)
+          VALUES ($1)
+          ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+          RETURNING id
+        `, [message.messageType]);
+        messageTypeId = messageType.rows[0].id;
+      }
       const roleFlags =
         (message.isBroadcaster ? 1 : 0) |
         (message.isModerator ? 2 : 0) |
@@ -218,10 +232,7 @@ export class PostgresStore implements ChatRepository {
           ON CONFLICT (badges) DO UPDATE SET badges = EXCLUDED.badges
           RETURNING id
         ), message_kind AS (
-          INSERT INTO chat_message_types (name)
-          VALUES ($12)
-          ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-          RETURNING id
+          SELECT $12::integer AS id
         )
         INSERT INTO chat_messages (
           id, channel_id, external_message_id, sender_profile_id,
@@ -239,7 +250,7 @@ export class PostgresStore implements ChatRepository {
         randomUUID(), channel.storageId, message.messageId, message.userId,
         message.username, message.displayName, message.userColor ?? null, timestamp,
         message.channelId, message.channelName, JSON.stringify(message.badges),
-        message.messageType, roleFlags, message.messageText, imageUrls.length > 0,
+        messageTypeId, roleFlags, message.messageText, imageUrls.length > 0,
         imageUrls.length > 0 ? JSON.stringify(imageUrls) : null, IMAGE_INDEX_VERSION,
         message.nativeEmotes.length > 0 ? JSON.stringify(message.nativeEmotes) : null,
       ]);

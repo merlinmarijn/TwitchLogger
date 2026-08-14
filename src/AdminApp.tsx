@@ -434,8 +434,6 @@ function DashboardScreen({
   const scrollToSection = (sectionId: string) => {
     const section = document.getElementById(sectionId);
     if (!section) return;
-    const railSection = ADMIN_RAIL_SECTIONS.find((candidate) => candidate === sectionId);
-    if (railSection) setActiveSection(railSection);
     section.scrollIntoView({
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
       block: "start",

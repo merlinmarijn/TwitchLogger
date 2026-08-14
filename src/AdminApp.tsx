@@ -51,6 +51,13 @@ type Dashboard = {
     cacheHits: number;
     cacheMisses: number;
     updatedAt: number;
+    history: Array<{
+      timestamp: number;
+      functionCalls: number;
+      errorCount: number;
+      averageExecutionMs: number | null;
+      cacheHitRate: number | null;
+    }>;
   };
   databaseStats?: {
     generatedAt: number;
@@ -506,13 +513,67 @@ function MetricsStrip({ data }: { data?: Dashboard }) {
   const metrics = data?.metrics;
   const calls = metrics?.functionCalls ?? 0;
   const cacheTotal = (metrics?.cacheHits ?? 0) + (metrics?.cacheMisses ?? 0);
+  const history = metrics?.history ?? [];
   const items = [
-    { label: "Function calls", value: compact(calls), note: "Admin + worker calls", tone: "blue" },
-    { label: "Errors", value: compact(metrics?.errorCount ?? 0), note: calls ? `${(((metrics?.errorCount ?? 0) / calls) * 100).toFixed(2)}% error rate` : "No measured calls", tone: (metrics?.errorCount ?? 0) > 0 ? "red" : "green" },
-    { label: "Avg. execution", value: calls ? `${Math.round((metrics?.totalExecutionMs ?? 0) / calls)} ms` : "—", note: "Worker + job batches", tone: "orange" },
-    { label: "Cache hit rate", value: cacheTotal ? `${Math.round(((metrics?.cacheHits ?? 0) / cacheTotal) * 100)}%` : "—", note: cacheTotal ? `${compact(cacheTotal)} decisions` : "Awaiting cache traffic", tone: "purple" },
+    { label: "Function calls", value: compact(calls), note: "Admin + worker calls", tone: "blue", series: history.map((point) => point.functionCalls), zeroBased: true },
+    { label: "Errors", value: compact(metrics?.errorCount ?? 0), note: calls ? `${(((metrics?.errorCount ?? 0) / calls) * 100).toFixed(2)}% error rate` : "No measured calls", tone: (metrics?.errorCount ?? 0) > 0 ? "red" : "green", series: history.map((point) => point.errorCount), zeroBased: true },
+    { label: "Avg. execution", value: calls ? `${Math.round((metrics?.totalExecutionMs ?? 0) / calls)} ms` : "—", note: "Worker + job batches", tone: "orange", series: history.map((point) => point.averageExecutionMs), zeroBased: false },
+    { label: "Cache hit rate", value: cacheTotal ? `${Math.round(((metrics?.cacheHits ?? 0) / cacheTotal) * 100)}%` : "—", note: cacheTotal ? `${compact(cacheTotal)} decisions` : "Awaiting cache traffic", tone: "purple", series: history.map((point) => point.cacheHitRate), zeroBased: false },
   ];
-  return <div className="metrics-strip">{items.map((item) => <article className={`metric-panel ${item.tone}`} key={item.label}><header><span>{item.label}</span><i /></header><strong>{item.value}</strong><small>{item.note}</small><div className="metric-baseline" /></article>)}</div>;
+  return <div className="metrics-strip">{items.map((item) => <article className={`metric-panel ${item.tone}`} key={item.label}><header><span>{item.label}</span><div><small>60m</small><i /></div></header><strong>{item.value}</strong><small>{item.note}</small><MetricSparkline values={item.series} zeroBased={item.zeroBased} /></article>)}</div>;
+}
+
+function MetricSparkline({ values, zeroBased }: { values: Array<number | null>; zeroBased: boolean }) {
+  const width = 100;
+  const height = 42;
+  const finiteValues = values.filter((value): value is number => value !== null && Number.isFinite(value));
+  if (finiteValues.length === 0) return <div aria-hidden="true" className="metric-sparkline empty" />;
+
+  let minimum = zeroBased ? 0 : Math.min(...finiteValues);
+  let maximum = Math.max(...finiteValues);
+  if (minimum === maximum) {
+    const padding = Math.max(1, Math.abs(maximum) * .1);
+    if (!zeroBased) minimum -= padding;
+    maximum += padding;
+  } else if (!zeroBased) {
+    const padding = (maximum - minimum) * .12;
+    minimum -= padding;
+    maximum += padding;
+  }
+  const range = Math.max(1, maximum - minimum);
+  const points = values.map((value, index) => value === null || !Number.isFinite(value)
+    ? null
+    : {
+        x: values.length === 1 ? width : index / (values.length - 1) * width,
+        y: height - 1 - ((value - minimum) / range) * (height - 4),
+      });
+  const segments: Array<Array<{ x: number; y: number }>> = [];
+  let currentSegment: Array<{ x: number; y: number }> = [];
+  for (const point of points) {
+    if (point) currentSegment.push(point);
+    else if (currentSegment.length) {
+      segments.push(currentSegment);
+      currentSegment = [];
+    }
+  }
+  if (currentSegment.length) segments.push(currentSegment);
+  const linePath = segments.map((segment) => segment.map((point, index) =>
+    `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`
+  ).join(" ")).join(" ");
+  const areaPath = segments.filter((segment) => segment.length > 1).map((segment) => {
+    const first = segment[0]!;
+    const last = segment.at(-1)!;
+    const line = segment.map((point) => `L${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+    return `M${first.x.toFixed(2)} ${height} ${line} L${last.x.toFixed(2)} ${height} Z`;
+  }).join(" ");
+
+  return (
+    <svg aria-hidden="true" className="metric-sparkline" preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`}>
+      <path className="sparkline-grid" d="M0 14H100M0 28H100" vectorEffect="non-scaling-stroke" />
+      <path className="sparkline-area" d={areaPath} />
+      <path className="sparkline-line" d={linePath} vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
 }
 
 function SystemsOverview({ data }: { data?: Dashboard }) {

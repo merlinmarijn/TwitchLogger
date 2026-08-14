@@ -33,6 +33,9 @@ const SETTINGS_KEY = "super-admin";
 const METRICS_KEY = "global";
 const STATS_KEY = "latest";
 const JOB_BATCH_SIZE = 32;
+const METRIC_BUCKET_MS = 60_000;
+const METRIC_HISTORY_BUCKETS = 60;
+const METRIC_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
 type AuthState =
   | { configured: false; totpEnabled: false; authRevision: 0 }
@@ -264,13 +267,37 @@ export class AdminService {
 
   async dashboard(sessionToken?: string) {
     const state = await this.requireSession(sessionToken);
-    const [jobs, metrics, stats, channels, latestMessage, auditLog] = await Promise.all([
+    const generatedAt = Date.now();
+    const latestMetricBucket = Math.floor(generatedAt / METRIC_BUCKET_MS) * METRIC_BUCKET_MS;
+    const firstMetricBucket = latestMetricBucket - (METRIC_HISTORY_BUCKETS - 1) * METRIC_BUCKET_MS;
+    const [jobs, metrics, metricHistory, stats, channels, latestMessage, auditLog] = await Promise.all([
       this.database.query<AdminJobRow>(`
         SELECT * FROM admin_jobs ORDER BY created_at DESC LIMIT 30
       `),
       this.database.query<AdminMetricRow>(`
         SELECT * FROM admin_metrics WHERE key = $1
       `, [METRICS_KEY]),
+      this.database.query<AdminMetricHistoryRow>(`
+        WITH buckets AS (
+          SELECT generate_series($1::bigint, $2::bigint, $3::bigint) AS bucket_start
+        )
+        SELECT
+          buckets.bucket_start,
+          coalesce(samples.function_calls, 0)::bigint AS function_calls,
+          coalesce(samples.error_count, 0)::bigint AS error_count,
+          CASE WHEN samples.function_calls > 0
+            THEN samples.total_execution_ms / samples.function_calls
+            ELSE NULL
+          END AS average_execution_ms,
+          CASE WHEN coalesce(samples.cache_hits, 0) + coalesce(samples.cache_misses, 0) > 0
+            THEN samples.cache_hits::double precision /
+              (samples.cache_hits + samples.cache_misses) * 100
+            ELSE NULL
+          END AS cache_hit_rate
+        FROM buckets
+        LEFT JOIN admin_metric_samples AS samples USING (bucket_start)
+        ORDER BY buckets.bucket_start
+      `, [firstMetricBucket, latestMetricBucket, METRIC_BUCKET_MS]),
       this.database.query<AdminStatsRow>(`
         SELECT * FROM admin_database_stats WHERE key = $1
       `, [STATS_KEY]),
@@ -297,17 +324,28 @@ export class AdminService {
     const databaseStats = stats.rows[0];
     const channel = channels.rows[0];
     return {
-      generatedAt: Date.now(),
+      generatedAt,
       auth: { totpEnabled: state.totpEnabled, authRevision: state.authRevision },
       jobs: jobs.rows.map(toAdminJob),
-      metrics: metric ? {
+      metrics: {
+        ...(metric ? {
         functionCalls: Number(metric.function_calls),
         errorCount: Number(metric.error_count),
         totalExecutionMs: Number(metric.total_execution_ms),
         cacheHits: Number(metric.cache_hits),
         cacheMisses: Number(metric.cache_misses),
         updatedAt: Number(metric.updated_at),
-      } : emptyMetrics(),
+        } : emptyMetrics()),
+        history: metricHistory.rows.map((point) => ({
+          timestamp: Number(point.bucket_start),
+          functionCalls: Number(point.function_calls),
+          errorCount: Number(point.error_count),
+          averageExecutionMs: point.average_execution_ms === null
+            ? null
+            : Number(point.average_execution_ms),
+          cacheHitRate: point.cache_hit_rate === null ? null : Number(point.cache_hit_rate),
+        })),
+      },
       databaseStats: databaseStats ? {
         generatedAt: Number(databaseStats.generated_at),
         documentCount: Number(databaseStats.document_count),
@@ -516,20 +554,43 @@ export class AdminService {
   }
 
   async recordMetric(durationMs: number, failed: boolean, cache?: "hit" | "miss") {
+    const now = Date.now();
+    const bucketStart = Math.floor(now / METRIC_BUCKET_MS) * METRIC_BUCKET_MS;
     await this.database.query(`
-      INSERT INTO admin_metrics (
-        id, key, function_calls, error_count, total_execution_ms,
-        cache_hits, cache_misses, updated_at
-      ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7)
-      ON CONFLICT (key) DO UPDATE SET
-        function_calls = admin_metrics.function_calls + 1,
-        error_count = admin_metrics.error_count + EXCLUDED.error_count,
-        total_execution_ms = admin_metrics.total_execution_ms + EXCLUDED.total_execution_ms,
-        cache_hits = admin_metrics.cache_hits + EXCLUDED.cache_hits,
-        cache_misses = admin_metrics.cache_misses + EXCLUDED.cache_misses,
-        updated_at = EXCLUDED.updated_at
+      WITH lifetime AS (
+        INSERT INTO admin_metrics (
+          id, key, function_calls, error_count, total_execution_ms,
+          cache_hits, cache_misses, updated_at
+        ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7)
+        ON CONFLICT (key) DO UPDATE SET
+          function_calls = admin_metrics.function_calls + 1,
+          error_count = admin_metrics.error_count + EXCLUDED.error_count,
+          total_execution_ms = admin_metrics.total_execution_ms + EXCLUDED.total_execution_ms,
+          cache_hits = admin_metrics.cache_hits + EXCLUDED.cache_hits,
+          cache_misses = admin_metrics.cache_misses + EXCLUDED.cache_misses,
+          updated_at = EXCLUDED.updated_at
+        RETURNING 1
+      ), sample AS (
+        INSERT INTO admin_metric_samples (
+          bucket_start, function_calls, error_count, total_execution_ms,
+          cache_hits, cache_misses
+        ) VALUES ($8, 1, $3, $4, $5, $6)
+        ON CONFLICT (bucket_start) DO UPDATE SET
+          function_calls = admin_metric_samples.function_calls + 1,
+          error_count = admin_metric_samples.error_count + EXCLUDED.error_count,
+          total_execution_ms = admin_metric_samples.total_execution_ms + EXCLUDED.total_execution_ms,
+          cache_hits = admin_metric_samples.cache_hits + EXCLUDED.cache_hits,
+          cache_misses = admin_metric_samples.cache_misses + EXCLUDED.cache_misses
+        RETURNING 1
+      ), cleanup AS (
+        DELETE FROM admin_metric_samples
+        WHERE $8 % $9 = 0 AND bucket_start < $10
+        RETURNING 1
+      )
+      SELECT 1 FROM lifetime, sample
     `, [randomUUID(), METRICS_KEY, failed ? 1 : 0, Math.max(0, durationMs),
-      cache === "hit" ? 1 : 0, cache === "miss" ? 1 : 0, Date.now()]);
+      cache === "hit" ? 1 : 0, cache === "miss" ? 1 : 0, now, bucketStart,
+      60 * METRIC_BUCKET_MS, now - METRIC_RETENTION_MS]);
   }
 
   private async authState(): Promise<AuthState> {
@@ -922,6 +983,14 @@ interface AdminMetricRow {
   cache_hits: string;
   cache_misses: string;
   updated_at: string;
+}
+
+interface AdminMetricHistoryRow {
+  bucket_start: string;
+  function_calls: string;
+  error_count: string;
+  average_execution_ms: number | null;
+  cache_hit_rate: number | null;
 }
 
 interface AdminStatsRow {

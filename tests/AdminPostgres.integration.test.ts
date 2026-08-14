@@ -58,11 +58,26 @@ describe.skipIf(!databaseUrl)("PostgreSQL admin control room", () => {
 
     const dashboard = await admin.dashboard(session) as {
       databaseStats?: { tables: Array<{ name: string }> };
-      metrics: { functionCalls: number; cacheHits: number };
+      metrics: {
+        functionCalls: number;
+        cacheHits: number;
+        history: Array<{
+          timestamp: number;
+          functionCalls: number;
+          averageExecutionMs: number | null;
+          cacheHitRate: number | null;
+        }>;
+      };
     };
     expect(dashboard.databaseStats?.tables.map((table) => table.name)).toContain("chat_messages");
     expect(dashboard.metrics.functionCalls).toBeGreaterThan(0);
     expect(dashboard.metrics.cacheHits).toBeGreaterThan(0);
+    expect(dashboard.metrics.history).toHaveLength(60);
+    expect(dashboard.metrics.history.at(-1)).toMatchObject({
+      functionCalls: expect.any(Number),
+      averageExecutionMs: expect.any(Number),
+      cacheHitRate: expect.any(Number),
+    });
 
     const feedback = new FeedbackService(database, 15, "integration-feedback-secret");
     const description = `Integration issue ${Date.now()}`;

@@ -150,15 +150,23 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .metric-panel, .admin-panel { position: relative; overflow: hidden; border: 1px solid var(--admin-border); border-radius: 2px; background: var(--admin-panel); box-shadow: 0 1px 2px rgb(0 0 0 / 18%); }
 .metric-panel { min-height: 128px; display: grid; align-content: start; gap: 6px; padding: 13px 14px; }
 .metric-panel header { display: flex; align-items: center; justify-content: space-between; color: #c6c9d1; font-size: 11px; font-weight: 500; }
+.metric-panel header > div { display: flex; align-items: center; gap: 8px; }
+.metric-panel header > div small { font-size: 8px; font-weight: 500; letter-spacing: .05em; text-transform: uppercase; }
 .metric-panel header i { width: 7px; height: 7px; border-radius: 50%; background: var(--metric-color, var(--admin-blue)); box-shadow: 0 0 10px var(--metric-color, var(--admin-blue)); }
+.metric-panel header, .metric-panel > strong, .metric-panel > small { position: relative; z-index: 2; }
 .metric-panel strong { margin-top: 4px; color: var(--metric-color, var(--admin-blue)); font-size: clamp(25px, 3vw, 35px); font-weight: 400; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
 .metric-panel small { color: var(--admin-faint); font-size: 9px; }
+.metric-panel > small { text-shadow: 0 0 5px var(--admin-panel), 0 0 9px var(--admin-panel); }
 .metric-panel.blue { --metric-color: var(--admin-blue); }
 .metric-panel.green { --metric-color: var(--admin-green); }
 .metric-panel.red { --metric-color: var(--admin-red); }
 .metric-panel.orange { --metric-color: var(--admin-orange); }
 .metric-panel.purple { --metric-color: var(--admin-purple); }
-.metric-baseline { position: absolute; inset: auto 0 0; height: 22px; opacity: .15; background: linear-gradient(to top, var(--metric-color), transparent); clip-path: polygon(0 90%, 9% 66%, 18% 78%, 27% 38%, 36% 58%, 45% 31%, 54% 56%, 63% 23%, 72% 49%, 81% 13%, 90% 34%, 100% 6%, 100% 100%, 0 100%); }
+.metric-sparkline { position: absolute; inset: auto 0 0; z-index: 1; width: 100%; height: 48px; overflow: visible; pointer-events: none; }
+.metric-sparkline.empty { opacity: 0; }
+.sparkline-grid { fill: none; stroke: rgb(146 151 165 / 9%); stroke-width: 1; }
+.sparkline-area { fill: var(--metric-color); opacity: .16; }
+.sparkline-line { fill: none; stroke: var(--metric-color); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.35; opacity: .82; }
 .systems-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(300px, .85fr); gap: 8px; margin-top: 8px; }
 .admin-panel > header { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--admin-border); padding: 8px 12px; }
 .admin-panel > header > div { display: grid; gap: 2px; }

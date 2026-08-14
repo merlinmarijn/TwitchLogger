@@ -23,6 +23,8 @@ type StartableJobKind =
   | "database_measurement";
 type JobKind = StartableJobKind | "archive_reencode";
 type JobStatus = "queued" | "running" | "cancelling" | "cancelled" | "completed" | "failed";
+const ADMIN_RAIL_SECTIONS = ["overview", "submissions", "operations", "database"] as const;
+type AdminRailSection = typeof ADMIN_RAIL_SECTIONS[number];
 
 type AdminJob = {
   _id: string;
@@ -371,8 +373,34 @@ function DashboardScreen({
   const [working, setWorking] = useState<string>();
   const [securityOpen, setSecurityOpen] = useState(false);
   const [jumpQuery, setJumpQuery] = useState("");
+  const [activeSection, setActiveSection] = useState<AdminRailSection>("overview");
   const activeJobs = data?.jobs.filter((job) => ["queued", "running", "cancelling"].includes(job.status)) ?? [];
   const maintenanceBusy = activeJobs.length > 0;
+
+  useEffect(() => {
+    let frame: number | undefined;
+    const updateActiveSection = () => {
+      frame = undefined;
+      let nextSection: AdminRailSection = ADMIN_RAIL_SECTIONS[0];
+      for (const sectionId of ADMIN_RAIL_SECTIONS) {
+        const section = document.getElementById(sectionId);
+        if (section && section.getBoundingClientRect().top <= 110) nextSection = sectionId;
+      }
+      setActiveSection(nextSection);
+    };
+    const scheduleUpdate = () => {
+      if (frame === undefined) frame = window.requestAnimationFrame(updateActiveSection);
+    };
+
+    scheduleUpdate();
+    window.addEventListener("scroll", scheduleUpdate, { passive: true });
+    window.addEventListener("resize", scheduleUpdate);
+    return () => {
+      window.removeEventListener("scroll", scheduleUpdate);
+      window.removeEventListener("resize", scheduleUpdate);
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, []);
 
   const run = async (kind: StartableJobKind) => {
     setWorking(kind);
@@ -406,6 +434,8 @@ function DashboardScreen({
   const scrollToSection = (sectionId: string) => {
     const section = document.getElementById(sectionId);
     if (!section) return;
+    const railSection = ADMIN_RAIL_SECTIONS.find((candidate) => candidate === sectionId);
+    if (railSection) setActiveSection(railSection);
     section.scrollIntoView({
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
       block: "start",
@@ -449,10 +479,10 @@ function DashboardScreen({
       <aside className="admin-rail">
         <div className="rail-heading"><span>Administration</span><small>Control plane</small></div>
         <nav aria-label="Admin sections">
-          <a className="active" href="#overview" onClick={(event) => { event.preventDefault(); scrollToSection("overview"); }}><OverviewIcon />Overview</a>
-          <a href="#submissions" onClick={(event) => { event.preventDefault(); scrollToSection("submissions"); }}><InboxIcon />Submissions</a>
-          <a href="#operations" onClick={(event) => { event.preventDefault(); scrollToSection("operations"); }}><PulseIcon />Operations{activeJobs.length ? <b>{activeJobs.length}</b> : null}</a>
-          <a href="#database" onClick={(event) => { event.preventDefault(); scrollToSection("database"); }}><DatabaseIcon />Database</a>
+          <a aria-current={activeSection === "overview" ? "location" : undefined} className={activeSection === "overview" ? "active" : undefined} href="#overview" onClick={(event) => { event.preventDefault(); scrollToSection("overview"); }}><OverviewIcon />Overview</a>
+          <a aria-current={activeSection === "submissions" ? "location" : undefined} className={activeSection === "submissions" ? "active" : undefined} href="#submissions" onClick={(event) => { event.preventDefault(); scrollToSection("submissions"); }}><InboxIcon />Submissions</a>
+          <a aria-current={activeSection === "operations" ? "location" : undefined} className={activeSection === "operations" ? "active" : undefined} href="#operations" onClick={(event) => { event.preventDefault(); scrollToSection("operations"); }}><PulseIcon />Operations{activeJobs.length ? <b>{activeJobs.length}</b> : null}</a>
+          <a aria-current={activeSection === "database" ? "location" : undefined} className={activeSection === "database" ? "active" : undefined} href="#database" onClick={(event) => { event.preventDefault(); scrollToSection("database"); }}><DatabaseIcon />Database</a>
           <button onClick={() => setSecurityOpen((value) => !value)}><LockIcon />Security</button>
         </nav>
         <div className="rail-status">

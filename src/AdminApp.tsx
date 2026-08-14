@@ -235,16 +235,17 @@ function SetupScreen({ unavailable, onComplete }: { unavailable?: string; onComp
     <main className="admin-auth-page">
       <AuthMasthead step="INITIAL SETUP" />
       <section className="auth-intro">
-        <p className="auth-index">CONTROL / 01</p>
-        <h1>Establish the<br /><em>control room.</em></h1>
+        <p className="auth-index">TWITCH LOGGER / ADMINISTRATION</p>
+        <h1>Bring the control plane online.</h1>
         <p className="auth-lede">
           Create the only super admin credential. It is slow-hashed by the worker and stored only in PostgreSQL.
         </p>
+        <AuthTelemetry />
         <div className="auth-assurance"><SignalIcon /><span>Credential material stays behind the worker security boundary.</span></div>
       </section>
       <form className="auth-sheet" onSubmit={submit}>
-        <div className="sheet-rule"><span>SUPER ADMIN</span><span>ONE ACCOUNT</span></div>
-        <h2>Unlock initial setup</h2>
+        <div className="sheet-rule"><span>SUPER ADMIN</span><span>SETUP 1 OF 1</span></div>
+        <h2>Create the administrator</h2>
         <p>Enter the worker's INGESTION_SECRET once, then choose a password of at least 12 characters.</p>
         {unavailable ? <InlineError>{unavailable}</InlineError> : null}
         <AuthField label="One-time setup key" hint="The INGESTION_SECRET configured on the worker">
@@ -306,14 +307,15 @@ function LoginScreen({ totpEnabled, onComplete }: { totpEnabled: boolean; onComp
     <main className="admin-auth-page login">
       <AuthMasthead step="AUTHORIZED ACCESS" />
       <section className="auth-intro">
-        <p className="auth-index">CONTROL / RETURN</p>
-        <h1>Good systems<br /><em>leave a trace.</em></h1>
-        <p className="auth-lede">Sign in to inspect the archive, launch maintenance work, and follow every operation to completion.</p>
+        <p className="auth-index">TWITCH LOGGER / ADMINISTRATION</p>
+        <h1>Observe the archive. Operate with confidence.</h1>
+        <p className="auth-lede">A single workspace for archive health, user reports, maintenance work, and security controls.</p>
+        <AuthTelemetry />
         <div className="auth-assurance"><LockIcon /><span>Sessions are signed, HttpOnly, and expire after twelve hours.</span></div>
       </section>
       <form className="auth-sheet" onSubmit={submit}>
-        <div className="sheet-rule"><span>ADMIN SIGN IN</span><span>SECURE CHANNEL</span></div>
-        <h2>Open the ledger</h2>
+        <div className="sheet-rule"><span>ADMIN SIGN IN</span><span>SECURE SESSION</span></div>
+        <h2>Sign in to Twitch Logger</h2>
         {totpEnabled ? (
           <div className="auth-mode" role="tablist" aria-label="Sign-in method">
             <button aria-selected={mode === "totp"} onClick={() => { setMode("totp"); setValue(""); }} role="tab" type="button">Authenticator</button>
@@ -361,6 +363,7 @@ function DashboardScreen({
 }) {
   const [working, setWorking] = useState<string>();
   const [securityOpen, setSecurityOpen] = useState(false);
+  const [jumpQuery, setJumpQuery] = useState("");
   const activeJobs = data?.jobs.filter((job) => ["queued", "running", "cancelling"].includes(job.status)) ?? [];
   const maintenanceBusy = activeJobs.length > 0;
 
@@ -393,12 +396,44 @@ function DashboardScreen({
     onSessionChanged();
   };
 
+  const jumpToSection = (queryInput = jumpQuery) => {
+    const query = queryInput.trim().toLowerCase();
+    const sections = [
+      { id: "overview", terms: "overview system health dashboard" },
+      { id: "submissions", terms: "submissions feedback inbox issues bug reports" },
+      { id: "operations", terms: "operations maintenance jobs reindex integrity" },
+      { id: "database", terms: "database storage postgres measurement" },
+      { id: "history", terms: "history completed runs jobs" },
+      { id: "audit", terms: "audit security events trail" },
+    ];
+    const match = sections.find((section) => section.terms.includes(query));
+    if (match) {
+      document.getElementById(match.id)?.scrollIntoView({ block: "start" });
+      window.history.pushState(null, "", `#${match.id}`);
+    } else onNotice(`No admin section matches “${queryInput}”.`);
+    setJumpQuery("");
+  };
+
   return (
     <div className="admin-shell">
+      <header className="admin-globalbar">
+        <a className="global-brand" href="/"><img alt="" className="admin-seal small" src="/brand/twitch-logger-icon-64.png" /><span>Twitch Logger</span></a>
+        <form className="admin-jump" onSubmit={(event) => { event.preventDefault(); jumpToSection(); }}>
+          <SearchIcon />
+          <input aria-label="Jump to admin section" list="admin-sections" onChange={(event) => setJumpQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); jumpToSection(event.currentTarget.value); } }} placeholder="Search or jump to…" value={jumpQuery} />
+          <datalist id="admin-sections"><option value="Overview" /><option value="Submissions" /><option value="Operations" /><option value="Database" /><option value="History" /><option value="Audit" /></datalist>
+          <kbd>/</kbd>
+          <button aria-label="Jump" className="admin-jump-go" type="submit"><ArrowIcon /></button>
+        </form>
+        <div className="global-actions">
+          <button aria-label="Open security settings" onClick={() => setSecurityOpen(true)} title="Security"><LockIcon /></button>
+          <span className="admin-avatar" title="Super admin">SA</span>
+        </div>
+      </header>
       <aside className="admin-rail">
-        <a className="rail-brand" href="/"><img alt="" className="admin-seal small" src="/brand/twitch-logger-icon-64.png" /><span>Twitch Logger<small>Control room</small></span></a>
+        <div className="rail-heading"><span>Administration</span><small>Control plane</small></div>
         <nav aria-label="Admin sections">
-          <a href="#overview"><OverviewIcon />Overview</a>
+          <a className="active" href="#overview"><OverviewIcon />Overview</a>
           <a href="#submissions"><InboxIcon />Submissions</a>
           <a href="#operations"><PulseIcon />Operations{activeJobs.length ? <b>{activeJobs.length}</b> : null}</a>
           <a href="#database"><DatabaseIcon />Database</a>
@@ -414,17 +449,17 @@ function DashboardScreen({
       <main className="admin-main">
         {notice ? <button className="admin-notice" onClick={onDismissNotice}>{notice}<span>Dismiss</span></button> : null}
         <header className="admin-topline">
-          <div><span>SUPER ADMIN</span><i /> <span>LIVE LEDGER</span></div>
-          <time>{new Date().toLocaleDateString([], { weekday: "short", month: "short", day: "2-digit", year: "numeric" }).toUpperCase()}</time>
+          <div className="admin-breadcrumb"><a href="/">Home</a><span>/</span><span>Administration</span><span>/</span><strong>Overview</strong></div>
+          <div className="topline-actions"><button onClick={() => void onRefresh()}><RefreshIcon />Refresh</button><time>{new Date().toLocaleDateString([], { month: "short", day: "2-digit", year: "numeric" })}</time></div>
         </header>
 
         <section className="overview-section" id="overview">
-          <div className="section-kicker"><span>01</span> SYSTEM OVERVIEW</div>
           <div className="overview-heading">
-            <div><h1>The archive,<br /><em>under command.</em></h1><p>Live health and operational history, without leaving the application.</p></div>
+            <div><div className="section-kicker"><span>01</span> SYSTEM OVERVIEW</div><h1>Operations overview</h1><p>Live archive health, worker activity, and administrative workload.</p></div>
             <Freshness data={data} />
           </div>
           <MetricsStrip data={data} />
+          <SystemsOverview data={data} />
         </section>
 
         <ActiveJobLedger activeJobs={activeJobs} onCancel={cancel} working={working} />
@@ -472,12 +507,37 @@ function MetricsStrip({ data }: { data?: Dashboard }) {
   const calls = metrics?.functionCalls ?? 0;
   const cacheTotal = (metrics?.cacheHits ?? 0) + (metrics?.cacheMisses ?? 0);
   const items = [
-    { label: "Function calls", value: compact(calls), note: "Measured admin + worker calls" },
-    { label: "Errors", value: compact(metrics?.errorCount ?? 0), note: calls ? `${(((metrics?.errorCount ?? 0) / calls) * 100).toFixed(2)}% of measured calls` : "No measured calls" },
-    { label: "Avg. execution", value: calls ? `${Math.round((metrics?.totalExecutionMs ?? 0) / calls)} ms` : "—", note: "Worker and job batches" },
-    { label: "Cache rate", value: cacheTotal ? `${Math.round(((metrics?.cacheHits ?? 0) / cacheTotal) * 100)}%` : "—", note: cacheTotal ? `${compact(cacheTotal)} cache decisions` : "Awaiting cache traffic" },
+    { label: "Function calls", value: compact(calls), note: "Admin + worker calls", tone: "blue" },
+    { label: "Errors", value: compact(metrics?.errorCount ?? 0), note: calls ? `${(((metrics?.errorCount ?? 0) / calls) * 100).toFixed(2)}% error rate` : "No measured calls", tone: (metrics?.errorCount ?? 0) > 0 ? "red" : "green" },
+    { label: "Avg. execution", value: calls ? `${Math.round((metrics?.totalExecutionMs ?? 0) / calls)} ms` : "—", note: "Worker + job batches", tone: "orange" },
+    { label: "Cache hit rate", value: cacheTotal ? `${Math.round(((metrics?.cacheHits ?? 0) / cacheTotal) * 100)}%` : "—", note: cacheTotal ? `${compact(cacheTotal)} decisions` : "Awaiting cache traffic", tone: "purple" },
   ];
-  return <div className="metrics-strip">{items.map((item) => <div key={item.label}><span>{item.label}</span><strong>{item.value}</strong><small>{item.note}</small></div>)}</div>;
+  return <div className="metrics-strip">{items.map((item) => <article className={`metric-panel ${item.tone}`} key={item.label}><header><span>{item.label}</span><i /></header><strong>{item.value}</strong><small>{item.note}</small><div className="metric-baseline" /></article>)}</div>;
+}
+
+function SystemsOverview({ data }: { data?: Dashboard }) {
+  const channels = data?.channels;
+  const connectedRate = channels?.total ? Math.round((channels.connected / channels.total) * 100) : 0;
+  const loggingRate = channels?.total ? Math.round((channels.logging / channels.total) * 100) : 0;
+  return (
+    <div className="systems-grid">
+      <article className="admin-panel channel-panel">
+        <header><div><span>Channel health</span><small>Worker subscription state</small></div><StatusStamp status={channels?.problems ? "failed" : "completed"} label={channels?.problems ? `${channels.problems} problem${channels.problems === 1 ? "" : "s"}` : "Nominal"} /></header>
+        <div className="channel-stats">
+          <div><strong>{compact(channels?.total ?? 0)}</strong><span>Configured</span></div>
+          <div><strong>{compact(channels?.logging ?? 0)}</strong><span>Logging</span></div>
+          <div><strong>{compact(channels?.connected ?? 0)}</strong><span>Connected</span></div>
+          <div><strong>{compact(channels?.problems ?? 0)}</strong><span>Problems</span></div>
+        </div>
+      </article>
+      <article className="admin-panel service-panel">
+        <header><div><span>Service readiness</span><small>Current connected capacity</small></div><Freshness data={data} /></header>
+        <div className="service-gauge"><div><span>Connected channels</span><strong>{connectedRate}%</strong></div><i><b style={{ transform: `scaleX(${connectedRate / 100})` }} /></i></div>
+        <div className="service-gauge logging"><div><span>Actively logging</span><strong>{loggingRate}%</strong></div><i><b style={{ transform: `scaleX(${loggingRate / 100})` }} /></i></div>
+        <small className="last-message">Latest archived message: {data?.latestMessageAt ? relativeTime(data.latestMessageAt) : "No messages recorded"}</small>
+      </article>
+    </div>
+  );
 }
 
 function ActiveJobLedger({ activeJobs, onCancel, working }: { activeJobs: AdminJob[]; onCancel: (id: string) => void; working?: string }) {
@@ -747,7 +807,7 @@ function DatabaseSection({
 function JobHistory({ jobs }: { jobs: AdminJob[] }) {
   const history = jobs.filter((job) => !["queued", "running", "cancelling"].includes(job.status)).slice(0, 8);
   return (
-    <section className="admin-section history-section">
+    <section className="admin-section history-section" id="history">
       <div className="section-heading"><div><div className="section-kicker"><span>05</span> RUN HISTORY</div><h2>Completed work</h2></div></div>
       {history.length ? <div className="history-table">
         <div className="history-head"><span>Operation</span><span>Result</span><span>Processed</span><span>Finished</span></div>
@@ -759,7 +819,7 @@ function JobHistory({ jobs }: { jobs: AdminJob[] }) {
 
 function AuditTrail({ entries }: { entries: Dashboard["auditLog"] }) {
   return (
-    <section className="admin-section audit-section">
+    <section className="admin-section audit-section" id="audit">
       <div className="section-heading"><div><div className="section-kicker"><span>06</span> AUDIT TRAIL</div><h2>Every privileged action</h2></div></div>
       <div className="audit-list">{entries.length ? entries.map((entry) => <div key={entry._id}><i /><time>{new Date(entry.createdAt).toLocaleString()}</time><strong>{entry.detail}</strong><span>{entry.actor}</span></div>) : <p className="quiet-empty">No privileged actions recorded.</p>}</div>
     </section>
@@ -828,7 +888,17 @@ function SecurityDrawer({ totpEnabled, onClose, onChanged }: { totpEnabled: bool
 }
 
 function AuthMasthead({ step }: { step: string }) {
-  return <header className="auth-masthead"><a href="/"><img alt="" className="admin-seal" src="/brand/twitch-logger-icon-64.png" /><span>Twitch Logger<small>Operations</small></span></a><span>{step}</span></header>;
+  return <header className="auth-masthead"><a href="/"><img alt="" className="admin-seal" src="/brand/twitch-logger-icon-64.png" /><span>Twitch Logger<small>Admin console</small></span></a><span><i />{step}</span></header>;
+}
+
+function AuthTelemetry() {
+  return (
+    <div className="auth-telemetry" aria-hidden="true">
+      <div className="telemetry-head"><span>CONTROL PLANE</span><small>READY</small></div>
+      <svg viewBox="0 0 560 120" preserveAspectRatio="none"><path className="grid-line" d="M0 20H560M0 60H560M0 100H560M70 0V120M140 0V120M210 0V120M280 0V120M350 0V120M420 0V120M490 0V120" /><path className="signal-line" d="M0 88L28 84L56 87L84 72L112 78L140 67L168 69L196 41L224 61L252 56L280 64L308 48L336 53L364 32L392 47L420 42L448 50L476 23L504 38L532 34L560 29" /><path className="signal-fill" d="M0 88L28 84L56 87L84 72L112 78L140 67L168 69L196 41L224 61L252 56L280 64L308 48L336 53L364 32L392 47L420 42L448 50L476 23L504 38L532 34L560 29V120H0Z" /></svg>
+      <div className="telemetry-foot"><span><i />Worker boundary</span><span><i />Encrypted session</span><span><i />Audit enabled</span></div>
+    </div>
+  );
 }
 
 function AuthField({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
@@ -868,3 +938,4 @@ function PulseIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><path 
 function DatabaseIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" /></svg>; }
 function InboxIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h16v14H4V5Zm0 9h4l2 2h4l2-2h4" /></svg>; }
 function SearchIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 5 5" /></svg>; }
+function RefreshIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.1 8.2A7 7 0 0 1 18.8 7M17.9 15.8A7 7 0 0 1 5.2 17" /></svg>; }

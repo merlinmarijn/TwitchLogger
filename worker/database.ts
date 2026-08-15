@@ -7,6 +7,8 @@ const migrationsDirectory = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../db/migrations",
 );
+const MAX_MIGRATION_ATTEMPTS = 5;
+const RETRYABLE_MIGRATION_CODES = new Set(["40P01", "55P03"]);
 
 export class PostgresDatabase {
   readonly pool: Pool;
@@ -44,20 +46,42 @@ export class PostgresDatabase {
   }
 }
 
-async function applyMigration(client: PoolClient, version: string) {
+export async function applyMigration(
+  client: PoolClient,
+  version: string,
+  retryDelay: (milliseconds: number) => Promise<void> = waitForRetry,
+) {
   const applied = await client.query(
     "SELECT 1 FROM schema_migrations WHERE version = $1",
     [version],
   );
   if (applied.rowCount) return;
   const sql = await readFile(resolve(migrationsDirectory, version), "utf8");
-  await client.query("BEGIN");
-  try {
-    await client.query(sql);
-    await client.query("INSERT INTO schema_migrations (version) VALUES ($1)", [version]);
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
+  for (let attempt = 1; attempt <= MAX_MIGRATION_ATTEMPTS; attempt += 1) {
+    await client.query("BEGIN");
+    try {
+      await client.query("SET LOCAL lock_timeout = '30s'");
+      await client.query(sql);
+      await client.query("INSERT INTO schema_migrations (version) VALUES ($1)", [version]);
+      await client.query("COMMIT");
+      return;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      if (!isRetryableMigrationError(error) || attempt === MAX_MIGRATION_ATTEMPTS) {
+        throw error;
+      }
+      await retryDelay(250 * (2 ** (attempt - 1)));
+    }
   }
+}
+
+function isRetryableMigrationError(error: unknown) {
+  return Boolean(
+    error && typeof error === "object" && "code" in error &&
+    RETRYABLE_MIGRATION_CODES.has(String(error.code)),
+  );
+}
+
+function waitForRetry(milliseconds: number) {
+  return new Promise<void>((resolveRetry) => setTimeout(resolveRetry, milliseconds));
 }

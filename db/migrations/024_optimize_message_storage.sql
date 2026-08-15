@@ -1,5 +1,25 @@
 -- Compact the hot message relation and the relational cold metadata. Public
 -- channel IDs and internal legacy message IDs intentionally remain strings.
+-- Acquire every relation before inspecting or rewriting data. In a rolling
+-- deploy, the previous worker can otherwise hold chat_messages and request
+-- channels while this migration holds channels and requests chat_messages.
+-- The view lock also prevents a new page query from holding the view while it
+-- waits on one of the already locked base tables.
+LOCK TABLE
+  chat_messages_expanded,
+  chat_message_cold_chunks,
+  chat_message_cold_catalog,
+  chat_message_cold_chunk_keys,
+  chat_message_cold_sender_stats,
+  chat_messages,
+  chat_raw_events,
+  channels,
+  chat_senders,
+  chat_sender_profiles,
+  chat_channel_profiles,
+  chat_badge_sets
+IN ACCESS EXCLUSIVE MODE;
+
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM chat_messages WHERE external_message_id !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') OR

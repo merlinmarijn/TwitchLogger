@@ -3,6 +3,18 @@ import type { MessageFilter } from "../shared/messageFilters";
 import { compileMessageSelectionSql } from "../worker/messageSearchSql";
 
 describe("PostgreSQL message selection", () => {
+  it("uses the shared post-filter for YouTube rules in show and hide filters", () => {
+    for (const action of ["show", "hide"] as const) {
+      const result = compileMessageSelectionSql("", [makeFilter({
+        action,
+        rules: [{ id: "youtube", field: "youtube", operator: "has", value: "youtube" }],
+      })]);
+      expect(result.requiresPostFilter).toBe(true);
+      expect(result.sql).toEqual([]);
+      expect(result.selectionActive).toBe(true);
+    }
+  });
+
   it("compiles literal substring search for the trigram index", () => {
     const result = compileMessageSelectionSql("  Alice%_  ", [], 2);
 

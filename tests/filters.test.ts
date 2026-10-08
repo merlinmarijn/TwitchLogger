@@ -24,6 +24,20 @@ const messages = [
 ];
 
 describe("message filters", () => {
+  it("round-trips YouTube rules and matches both presence comparisons", () => {
+    const withVideos = makeFilter({
+      rules: [{ id: "youtube", field: "youtube", operator: "has", value: "youtube" }],
+    });
+    const saved = parseFilterState(JSON.stringify({ version: 1, filters: [withVideos], activeIds: [withVideos.id] }));
+    expect(saved.filters).toEqual([withVideos]);
+    const videoMessage = makeMessage({ messageText: "https://youtu.be/dQw4w9WgXcQ" });
+    for (const operator of ["has", "notHas"] as const) {
+      const filter = { ...withVideos, rules: [{ ...withVideos.rules[0], operator }] };
+      expect(matchesMessageFilter(videoMessage, filter)).toBe(operator === "has");
+      expect(matchesMessageFilter(messages[0], filter)).toBe(operator === "notHas");
+    }
+  });
+
   it("treats a filter without conditions as matching every message", () => {
     const filter = makeFilter({ rules: [] });
     expect(messages.every((message) => matchesMessageFilter(message, filter))).toBe(true);

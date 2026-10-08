@@ -9,6 +9,7 @@ export function createFilterRule(
     messageType: "text",
     image: "image",
     link: "link",
+    youtube: "youtube",
   };
   return {
     id,

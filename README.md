@@ -8,6 +8,7 @@ The dashboard provides:
 - native Twitch emotes, BTTV, FrankerFaceZ, 7TV, and Twitch badges;
 - reusable browser-local filters and shared PostgreSQL chat, gallery, and game-score tabs;
 - image galleries for direct links, automatically detected extensionless images, and supported artwork pages;
+- optional YouTube video embeds in chat (enable in Settings), with YouTube presence rules in filters and chat tabs;
 - parsed RNGdle and FoodGuessr score cards with daily, weekly, monthly, and all-time rankings;
 - an authenticated `/admin` control room for configuration and log moderation;
 - admin-only single and bulk removal of messages and images.

@@ -17,6 +17,7 @@ const fieldLabels: Record<FilterField, string> = {
   messageType: "Message type",
   image: "Image link",
   link: "Any link",
+  youtube: "YouTube video",
 };
 
 const operatorLabels: Record<FilterOperator, string> = {
@@ -175,13 +176,14 @@ function RuleValueInput({
       </label>
     );
   }
-  if (rule.field === "image" || rule.field === "link") {
+  if (rule.field === "image" || rule.field === "link" || rule.field === "youtube") {
     return (
       <label>
         <span>Link type</span>
         <select disabled value={rule.field}>
           <option value={rule.field}>
-            {rule.field === "image" ? "Supported image link" : "Any HTTP or HTTPS link"}
+            {rule.field === "image" ? "Supported image link"
+              : rule.field === "youtube" ? "YouTube video link" : "Any HTTP or HTTPS link"}
           </option>
         </select>
       </label>

@@ -11,8 +11,15 @@ describe("user settings", () => {
   });
 
   it("round-trips the inline image preference", () => {
-    const saved = serializeUserSettings({ inlineImagesInAllChat: true });
-    expect(parseUserSettings(saved)).toEqual({ inlineImagesInAllChat: true });
+    const settings = { inlineImagesInAllChat: true, inlineYouTubeVideos: true };
+    expect(parseUserSettings(serializeUserSettings(settings))).toEqual(settings);
+  });
+
+  it("keeps YouTube embeds off for existing settings and non-boolean values", () => {
+    expect(parseUserSettings('{"inlineImagesInAllChat":true}')).toEqual({
+      inlineImagesInAllChat: true, inlineYouTubeVideos: false,
+    });
+    expect(parseUserSettings('{"inlineYouTubeVideos":"yes"}')).toEqual(DEFAULT_USER_SETTINGS);
   });
 
   it("falls back safely for malformed or unknown values", () => {

@@ -37,6 +37,7 @@ import {
   type ThirdPartyEmote,
 } from "./emotes";
 import { buildGalleryImages, type GalleryImage } from "./imageGallery";
+import { extractYouTubeVideoIds } from "../shared/youtubeUrls";
 import {
   FILTER_STORAGE_KEY,
   highlightedMessageIds,
@@ -704,6 +705,7 @@ export default function App() {
                 renderInlineImages={
                   activeChatTab === undefined && userSettings.inlineImagesInAllChat
                 }
+                renderYouTubeVideos={userSettings.inlineYouTubeVideos}
                 serverFiltering={serverFiltering}
                 status={recentQuery.status}
               />
@@ -1114,6 +1116,7 @@ function MessageFeed({
   historyEnabled,
   loadMore,
   renderInlineImages,
+  renderYouTubeVideos,
   serverFiltering,
   status,
 }: {
@@ -1131,6 +1134,7 @@ function MessageFeed({
   historyEnabled: boolean;
   loadMore: (numItems: number) => void;
   renderInlineImages: boolean;
+  renderYouTubeVideos: boolean;
   serverFiltering: boolean;
   status: PaginationStatus;
 }) {
@@ -1280,6 +1284,7 @@ function MessageFeed({
               key={message._id}
               message={message}
               renderInlineImages={renderInlineImages}
+              renderYouTubeVideos={renderYouTubeVideos}
               selectable={selectionMode}
               selected={selectedIds.has(message._id)}
               onSelect={() => toggleSelected(message._id)}
@@ -1761,6 +1766,7 @@ function MessageRow({
   onDelete,
   onHideImages,
   renderInlineImages,
+  renderYouTubeVideos,
 }: {
   message: ChatMessage;
   emotes?: ReadonlyMap<string, ThirdPartyEmote>;
@@ -1773,6 +1779,7 @@ function MessageRow({
   onDelete: () => void;
   onHideImages: () => void;
   renderInlineImages: boolean;
+  renderYouTubeVideos: boolean;
 }) {
   const messageParts = buildMessageParts(
     message.messageText,
@@ -1783,6 +1790,10 @@ function MessageRow({
   const inlineImages = useMemo(
     () => renderInlineImages ? buildGalleryImages([message], workerUrl) : [],
     [message, renderInlineImages],
+  );
+  const videoIds = useMemo(
+    () => renderYouTubeVideos ? extractYouTubeVideoIds(message.messageText) : [],
+    [message.messageText, renderYouTubeVideos],
   );
   return (
     <article className={`message-row ${highlighted ? "filter-highlighted" : ""} ${selectable ? "moderation-selectable" : ""} ${selected ? "moderation-selected" : ""}`}>
@@ -1851,6 +1862,21 @@ function MessageRow({
           )}
         </div>
         <p>{renderMessageParts(messageParts)}</p>
+        {videoIds.length > 0 && (
+          <div className="message-youtube-videos">
+            {videoIds.map((id) => (
+              <iframe
+                allow="encrypted-media; picture-in-picture; fullscreen"
+                allowFullScreen
+                key={id}
+                loading="lazy"
+                referrerPolicy="strict-origin-when-cross-origin"
+                src={`https://www.youtube-nocookie.com/embed/${id}`}
+                title={`YouTube video ${id} shared by ${message.senderDisplayName}`}
+              />
+            ))}
+          </div>
+        )}
         {inlineImages.length > 0 && (
           <div className="message-inline-images">
             {inlineImages.map((image) => (
@@ -2532,8 +2558,22 @@ function SettingsDialog({
             type="checkbox"
           />
         </label>
+        <label className="settings-option">
+          <span>
+            <strong>Embed YouTube videos in chat</strong>
+            <small>Automatically show video players for YouTube links in All chat and filtered chat tabs. Videos play when you press play.</small>
+          </span>
+          <input
+            checked={settings.inlineYouTubeVideos}
+            onChange={(event) => onChange({
+              ...settings,
+              inlineYouTubeVideos: event.target.checked,
+            })}
+            type="checkbox"
+          />
+        </label>
         <div className="settings-privacy-note">
-          When enabled, image hosts can receive your browser's request as previews load.
+          When enabled, image hosts and YouTube can receive your browser's request as previews load.
         </div>
         <div className="dialog-actions">
           <button className="button primary" onClick={onClose} type="button">Done</button>

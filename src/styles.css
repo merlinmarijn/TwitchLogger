@@ -190,6 +190,8 @@ h2 { font-size: 18px; }
 .chat-badge { width: 18px; height: 18px; object-fit: contain; }
 .message-content p { margin-top: 3px; color: #dedee3; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .message-inline-images { max-width: 680px; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 7px; margin-top: 8px; }
+.message-youtube-videos { display: grid; gap: 8px; max-width: 520px; margin-top: 8px; }
+.message-youtube-videos iframe { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 7px; background: #141416; }
 .message-inline-image { max-width: min(100%, 520px); display: flex; align-items: center; justify-content: center; border: 1px solid #34343a; border-radius: 7px; background: #141416; }
 .message-inline-image:hover { border-color: #68499b; }
 .message-inline-image img { width: auto; height: auto; max-width: 100%; display: block; object-fit: contain; object-position: center; }

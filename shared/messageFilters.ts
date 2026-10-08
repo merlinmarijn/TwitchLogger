@@ -1,4 +1,5 @@
 import { containsLink, extractImageUrls } from "./imageUrls";
+import { extractYouTubeVideoIds } from "./youtubeUrls";
 
 export const FILTER_FIELDS = [
   "message",
@@ -9,6 +10,7 @@ export const FILTER_FIELDS = [
   "messageType",
   "image",
   "link",
+  "youtube",
 ] as const;
 export const FILTER_OPERATORS = [
   "contains",
@@ -70,7 +72,7 @@ export interface FilterResult<T extends FilterableMessage> {
 
 export function operatorsForField(field: FilterField): FilterOperator[] {
   if (field === "role") return ["equals", "notEquals"];
-  if (field === "badge" || field === "image" || field === "link") {
+  if (field === "badge" || field === "image" || field === "link" || field === "youtube") {
     return ["has", "notHas"];
   }
   return [
@@ -165,6 +167,10 @@ function matchesRule(message: FilterableMessage, rule: FilterRule) {
   if (rule.field === "link") {
     const hasLink = containsLink(message.messageText);
     return rule.operator === "notHas" ? !hasLink : hasLink;
+  }
+  if (rule.field === "youtube") {
+    const hasVideo = extractYouTubeVideoIds(message.messageText).length > 0;
+    return rule.operator === "notHas" ? !hasVideo : hasVideo;
   }
   if (rule.field === "sender" &&
       (rule.operator === "equals" || rule.operator === "notEquals")) {

@@ -569,7 +569,7 @@ export default function App() {
               Share view
             </button>
             {auth?.authenticated ? (
-              <span className="auth-chip connected">Connected as {auth.login}</span>
+              <span className="auth-chip connected">Connected</span>
             ) : auth?.configured === false ? (
               <span className="auth-chip setup" title={auth.reason}>
                 Twitch setup required

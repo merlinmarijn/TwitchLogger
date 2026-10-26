@@ -134,6 +134,32 @@ describe("setup-mode HTTP server", () => {
     expect(body.retryAfterSeconds).toBe(240);
   });
 
+  it("binds database services when the database connects after startup", async () => {
+    const configuration = {
+      ...loadConfiguration({ TWITCH_FRONTEND_URL: "http://localhost:5173" }),
+      port: 0,
+    };
+    const runtime: { database?: PostgresDatabase } = {};
+    const server = await createHttpServer(configuration, runtime, createLogger("silent"), {
+      createShareService: () => ({
+        availability: async () => ({ available: true }),
+        create: async () => { throw new Error("unused"); },
+        resolve: async () => { throw new Error("unused"); },
+      }) as never,
+    });
+    servers.push(server);
+    const port = (server.address() as AddressInfo).port;
+    const check = () => fetch(`http://127.0.0.1:${port}/api/shares/availability`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://localhost:5173" },
+      body: JSON.stringify({ alias: "test" }),
+    });
+
+    expect((await check()).status).toBe(503);
+    runtime.database = {} as PostgresDatabase;
+    expect((await check()).status).toBe(200);
+  });
+
   it("accepts the configured frontend origin when its URL has a trailing slash", async () => {
     const configuration = {
       ...loadConfiguration({ TWITCH_FRONTEND_URL: "http://localhost:5173/" }),

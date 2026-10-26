@@ -36,25 +36,34 @@ if (configuration.issues.length > 0) {
   );
 }
 
-if (configuration.databaseUrl) {
+const DATABASE_RETRY_MS = 10_000;
+const server = await createHttpServer(configuration, runtime, logger);
+
+async function connectDatabase(databaseUrl: string) {
   try {
-    database = new PostgresDatabase(configuration.databaseUrl);
+    database = new PostgresDatabase(databaseUrl);
     await database.migrate();
     coldArchive = new ColdMessageArchiveService(database, logger);
-    const repository = new PostgresStore(database, logger, coldArchive);
+    runtime.store = new PostgresStore(database, logger, coldArchive);
     runtime.database = database;
-    runtime.store = repository;
+    runtime.integrationError = undefined;
+    return true;
   } catch (error) {
-    runtime.integrationError = "PostgreSQL failed to initialize; inspect server logs";
+    runtime.integrationError = "PostgreSQL failed to initialize; retrying automatically";
     runtime.store = undefined;
     runtime.database = undefined;
     await database?.close().catch(() => undefined);
     database = undefined;
-    logger.error({ err: error }, "PostgreSQL initialization failed; server remains online");
+    logger.error(
+      { err: error, retryInMs: DATABASE_RETRY_MS },
+      "PostgreSQL initialization failed; server remains online and will retry",
+    );
+    return false;
   }
 }
 
-if (database && runtime.store) {
+async function startIngestion() {
+  if (!database || !runtime.store) return;
   try {
     rawArchive = new RawEventArchiveService(database, logger);
     const rawResult = await rawArchive.runOnce();
@@ -69,11 +78,8 @@ if (database && runtime.store) {
       "Raw Twitch event archival failed verification; ingestion is paused to protect source data";
     logger.error({ err: error }, "Raw-event archive initialization failed");
   }
-}
 
-const server = await createHttpServer(configuration, runtime, logger);
-
-if (configuration.options && runtime.store && archiveReady) {
+  if (!configuration.options || !archiveReady) return;
   const options = configuration.options;
   try {
     const tokenStore = new EncryptedTokenStore(
@@ -105,6 +111,16 @@ if (configuration.options && runtime.store && archiveReady) {
     chat?.stop();
     logger.error({ err: error }, "Twitch integration initialization failed; database remains online");
   }
+}
+
+if (configuration.databaseUrl) {
+  const databaseUrl = configuration.databaseUrl;
+  void (async () => {
+    while (!abortController.signal.aborted && !(await connectDatabase(databaseUrl))) {
+      await new Promise((resolve) => setTimeout(resolve, DATABASE_RETRY_MS).unref());
+    }
+    if (!abortController.signal.aborted) await startIngestion();
+  })();
 }
 
 async function shutdown(signal: string) {

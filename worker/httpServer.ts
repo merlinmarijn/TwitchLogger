@@ -74,27 +74,34 @@ export function createHttpServer(
     frontendOrigin,
     normalizeOrigin(configuration.publicWorkerUrl),
   ].filter((origin): origin is string => Boolean(origin)));
-  const admin = configuration.adminOptions && runtime.database
-    ? (dependencies.createAdminService ?? ((database, setupSecret, encryptionKey) =>
-        new AdminService(database, setupSecret, encryptionKey)))(
-        runtime.database,
-        configuration.adminOptions.setupSecret,
-        configuration.adminOptions.encryptionKey,
-      )
-    : undefined;
-  const feedback = configuration.feedbackOptions && runtime.database
-    ? (dependencies.createFeedbackService ?? ((database, rateLimitMinutes, ipHashSecret) =>
-        new FeedbackService(database, rateLimitMinutes, ipHashSecret)))(
-        runtime.database,
-        configuration.feedbackOptions.rateLimitMinutes,
-        configuration.feedbackOptions.ipHashSecret,
-      )
-    : undefined;
-  const shares = runtime.database
-    ? (dependencies.createShareService ?? ((database) => new ShareService(database)))(
-        runtime.database,
-      )
-    : undefined;
+  let admin: AdminService | undefined;
+  let feedback: Pick<FeedbackService, "submit" | "status"> | undefined;
+  let shares: Pick<ShareService, "availability" | "create" | "resolve"> | undefined;
+  // The database may come online after the server starts, so bind its services on first sight.
+  const bindDatabaseServices = () => {
+    const database = runtime.database;
+    if (!database || shares) return;
+    admin = configuration.adminOptions
+      ? (dependencies.createAdminService ?? ((database, setupSecret, encryptionKey) =>
+          new AdminService(database, setupSecret, encryptionKey)))(
+          database,
+          configuration.adminOptions.setupSecret,
+          configuration.adminOptions.encryptionKey,
+        )
+      : undefined;
+    feedback = configuration.feedbackOptions
+      ? (dependencies.createFeedbackService ?? ((database, rateLimitMinutes, ipHashSecret) =>
+          new FeedbackService(database, rateLimitMinutes, ipHashSecret)))(
+          database,
+          configuration.feedbackOptions.rateLimitMinutes,
+          configuration.feedbackOptions.ipHashSecret,
+        )
+      : undefined;
+    shares = (dependencies.createShareService ?? ((database) => new ShareService(database)))(
+      database,
+    );
+  };
+  bindDatabaseServices();
   const failedAdminAttempts = new Map<string, { count: number; resetsAt: number }>();
   app.disable("x-powered-by");
   app.use(cors({
@@ -103,18 +110,23 @@ export function createHttpServer(
     credentials: true,
   }));
   app.use(express.json({ limit: "256kb" }));
-  if (admin) {
-    app.use((request, response, next) => {
+  app.use((_request, _response, next) => {
+    bindDatabaseServices();
+    next();
+  });
+  app.use((request, response, next) => {
+    if (admin) {
+      const recorder = admin;
       const startedAt = performance.now();
       response.once("finish", () => {
         const cacheHeader = response.getHeader("X-Cache");
         const cache = cacheHeader === "HIT" ? "hit" : cacheHeader === "MISS" ? "miss" : undefined;
-        void admin.recordMetric(performance.now() - startedAt, response.statusCode >= 400, cache)
+        void recorder.recordMetric(performance.now() - startedAt, response.statusCode >= 400, cache)
           .catch((error) => logger.debug({ err: error }, "Could not persist request metric"));
       });
-      next();
-    });
-  }
+    }
+    next();
+  });
 
   app.use("/api/admin", (request, response, next) => {
     response.set("Cache-Control", "no-store");

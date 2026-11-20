@@ -964,6 +964,11 @@ export class AdminService {
       const reclaimableBytes = Math.max(0, bytes - healthyBytes);
       const reclaimableRatio = bytes > 0 ? reclaimableBytes / bytes : 0;
       const disk = await this.databaseDiskSpace();
+      if (disk.source === "unavailable") {
+        throw new Error(
+          "Cannot read free disk space on the database host. Set INDEX_REINDEX_FREE_BYTES to the free bytes of the PostgreSQL data volume and restart the worker.",
+        );
+      }
       const requiredFreeBytes = Math.ceil(bytes * 1.2);
       const thresholdMet = reclaimableBytes >= REINDEX_MIN_RECLAIMABLE_BYTES &&
         reclaimableRatio >= REINDEX_MIN_RECLAIMABLE_RATIO;

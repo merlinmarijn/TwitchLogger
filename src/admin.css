@@ -310,7 +310,16 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .database-total > strong { display: block; margin-top: 10px; color: var(--admin-orange); font-size: clamp(32px, 4vw, 48px); font-weight: 400; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
 .database-total p { margin-top: 12px; color: var(--admin-muted); font-size: 10px; }
 .database-total small { display: block; margin-top: 18px; color: var(--admin-faint); font-size: 8px; line-height: 1.5; }
+.table-groups { display: grid; align-content: start; gap: 18px; }
+.table-group-head { display: flex; justify-content: space-between; padding-bottom: 6px; margin-bottom: 10px; border-bottom: 1px solid var(--admin-border); font-size: 10px; }
+.table-group-head strong { font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.table-group-head span { color: var(--admin-muted); font-variant-numeric: tabular-nums; }
 .table-bars { display: grid; align-content: center; gap: 10px; }
+.table-bar em { display: inline-block; min-width: 30px; margin-right: 8px; border-radius: 2px; padding: 1px 4px; font: 600 8px ui-monospace, monospace; font-style: normal; text-align: center; text-transform: uppercase; }
+.table-bar[data-tier="hot"] em { background: rgb(255 122 26 / 16%); color: var(--admin-orange); }
+.table-bar[data-tier="cold"] em { background: rgb(87 148 242 / 16%); color: var(--admin-blue); }
+.table-bar[data-tier="hot"] b { background: var(--admin-orange); }
+.table-bar:not([data-tier]) b { background: var(--admin-faint); }
 .table-bar > div { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 5px; font-size: 9px; }
 .table-bar strong { font-weight: 500; }
 .table-bar span { color: var(--admin-faint); font-size: 8px; font-variant-numeric: tabular-nums; }

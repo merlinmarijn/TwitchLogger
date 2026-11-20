@@ -38,7 +38,7 @@ Configure:
 - `TRUST_PROXY_HOPS`: exact number of trusted reverse-proxy hops in front of the app (defaults to `0`). Set this correctly so feedback throttling uses the visitor IP without trusting spoofed forwarding headers.
 - `COLD_ARCHIVE_AFTER_DAYS`: days chat messages stay hot before moving to the cold archive (default: `90`). Lowering it archives the extra days on the next hourly runs; raising it does not restore cold messages.
 - `COLD_ARCHIVE_CACHE_MAX_CHUNKS` / `COLD_ARCHIVE_CACHE_MAX_BYTES`: decoded cold-block LRU bounds (defaults: `32` and `67108864`).
-- `INDEX_REINDEX_FREE_BYTES`: database-host free-space reading used only when the worker cannot inspect PostgreSQL's data filesystem directly. The admin reindex job skips rebuilds when neither check is available.
+- `INDEX_REINDEX_FREE_BYTES`: database-host free-space reading used only when the worker cannot inspect PostgreSQL's data filesystem directly. The admin reindex job fails when neither check is available; on a separate DB host or container, set it from `df -B1 --output=avail` on the PostgreSQL data volume.
 
 Submitted feedback and bug reports can be reviewed from the protected **Submissions** section at `/admin`. New submissions start open and can be closed, reopened, flagged, searched, and filtered there.
 

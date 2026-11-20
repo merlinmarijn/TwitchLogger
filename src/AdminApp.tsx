@@ -947,13 +947,31 @@ function DatabaseSection({
       {stats ? (
         <div className="database-layout">
           <div className="database-total"><span>DOCUMENT PAYLOAD</span><strong>{formatBytes(stats.documentBytes)}</strong><p>{compact(stats.documentCount)} documents measured {relativeTime(stats.generatedAt)}.</p><small>{stats.scope}</small></div>
-          <div className="table-bars">
-            {stats.tables.map((table) => (
-              <div className="table-bar" key={table.name}>
-                <div><strong>{humanize(table.name)}</strong><span>{compact(table.count)} docs · {formatBytes(table.bytes)}</span></div>
-                <i><b style={{ transform: `scaleX(${table.bytes / maxBytes})` }} /></i>
-              </div>
-            ))}
+          <div className="table-groups">
+            {tableGroups.map((group) => {
+              const tables = stats.tables.filter((table) => (tableInfo[table.name]?.group ?? "Other") === group);
+              if (!tables.length) return null;
+              const groupBytes = tables.reduce((sum, table) => sum + table.bytes, 0);
+              return (
+                <div className="table-group" key={group}>
+                  <div className="table-group-head"><strong>{group}</strong><span>{formatBytes(groupBytes)}</span></div>
+                  <div className="table-bars">
+                    {tables.map((table) => {
+                      const info = tableInfo[table.name];
+                      return (
+                        <div className="table-bar" data-tier={info?.tier} key={table.name}>
+                          <div>
+                            <strong>{info?.tier && <em>{info.tier}</em>}{info?.label ?? humanize(table.name)}</strong>
+                            <span>{compact(table.count)} {info?.unit ?? "rows"} · {formatBytes(table.bytes)}</span>
+                          </div>
+                          <i><b style={{ transform: `scaleX(${table.bytes / maxBytes})` }} /></i>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : (
@@ -962,6 +980,31 @@ function DatabaseSection({
     </section>
   );
 }
+
+// Groups the measured tables so hot rows and their cold archive read as one dataset.
+const tableGroups = ["Chat messages", "Raw Twitch events", "Lookups", "Admin", "Other"] as const;
+const tableInfo: Record<string, { group: typeof tableGroups[number]; label: string; tier?: "hot" | "cold"; unit?: string }> = {
+  chat_messages: { group: "Chat messages", tier: "hot", label: "Messages", unit: "messages" },
+  chat_message_cold_chunks: { group: "Chat messages", tier: "cold", label: "Compressed message chunks", unit: "chunks" },
+  chat_message_cold_chunk_keys: { group: "Chat messages", tier: "cold", label: "Message ID lookup", unit: "chunks" },
+  chat_message_cold_catalog: { group: "Chat messages", tier: "cold", label: "Legacy catalog", unit: "messages" },
+  chat_message_cold_sender_stats: { group: "Chat messages", tier: "cold", label: "Sender stats" },
+  chat_message_cold_sender_stats_legacy: { group: "Chat messages", tier: "cold", label: "Legacy sender stats" },
+  chat_message_cold_images: { group: "Chat messages", tier: "cold", label: "Image messages", unit: "messages" },
+  chat_raw_events: { group: "Raw Twitch events", tier: "hot", label: "Staged events", unit: "events" },
+  chat_raw_event_chunks: { group: "Raw Twitch events", tier: "cold", label: "Compressed event chunks", unit: "chunks" },
+  platforms: { group: "Lookups", label: "Platforms" },
+  channels: { group: "Lookups", label: "Channels" },
+  chat_tabs: { group: "Lookups", label: "Chat tabs" },
+  chat_senders: { group: "Lookups", label: "Senders" },
+  chat_sender_profiles: { group: "Lookups", label: "Sender profiles" },
+  chat_channel_profiles: { group: "Lookups", label: "Channel profiles" },
+  chat_badge_sets: { group: "Lookups", label: "Badge sets" },
+  chat_message_types: { group: "Lookups", label: "Message types" },
+  admin_jobs: { group: "Admin", label: "Jobs" },
+  admin_audit_log: { group: "Admin", label: "Audit log" },
+  feedback_reports: { group: "Admin", label: "Feedback reports" },
+};
 
 function JobHistory({ jobs }: { jobs: AdminJob[] }) {
   const history = jobs.filter((job) => !["queued", "running", "cancelling"].includes(job.status)).slice(0, 8);

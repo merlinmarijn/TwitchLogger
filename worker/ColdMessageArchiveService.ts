@@ -27,7 +27,7 @@ import {
 const compress = promisify(brotliCompress);
 const decompress = promisify(brotliDecompress);
 const DAY_MS = 86_400_000;
-const RETENTION_DAYS = 90;
+const DEFAULT_HOT_RETENTION_DAYS = 90;
 const MAX_CHUNK_MESSAGES = 2_000;
 const MAX_ARCHIVE_CHUNKS_PER_RUN = 10;
 const MAX_LEGACY_MIGRATIONS_PER_RUN = 10;
@@ -164,6 +164,10 @@ export class ColdMessageArchiveService {
   private readonly maxCacheBytes = positiveInteger(
     process.env.COLD_ARCHIVE_CACHE_MAX_BYTES,
     DEFAULT_CACHE_BYTES,
+  );
+  private readonly hotRetentionDays = positiveInteger(
+    process.env.COLD_ARCHIVE_AFTER_DAYS,
+    DEFAULT_HOT_RETENTION_DAYS,
   );
 
   constructor(
@@ -454,7 +458,7 @@ export class ColdMessageArchiveService {
     if (!enabled) {
       return { enabled, chunksCreated: 0, chunksMigrated, messagesArchived: 0 };
     }
-    const cutoff = startOfUtcDay(Date.now() - RETENTION_DAYS * DAY_MS);
+    const cutoff = startOfUtcDay(Date.now() - this.hotRetentionDays * DAY_MS);
     let chunksCreated = 0;
     let messagesArchived = 0;
     for (let index = 0; index < MAX_ARCHIVE_CHUNKS_PER_RUN; index += 1) {

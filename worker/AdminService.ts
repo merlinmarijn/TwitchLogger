@@ -64,6 +64,7 @@ export type StartableAdminJobKind =
   | "integrity_scan"
   | "database_measurement"
   | "archive_reencode"
+  | "archive_drain"
   | "index_reindex";
 export type AdminJobKind = StartableAdminJobKind;
 
@@ -100,6 +101,11 @@ const jobDefinitions: Record<StartableAdminJobKind, { title: string; detail: str
     title: "Re-encode cold archive",
     detail: "Verifies and converts legacy cold chunks to the compact positional codec.",
     unit: "chunks",
+  },
+  archive_drain: {
+    title: "Archive to cold now",
+    detail: "Moves every message older than the hot retention period into the cold archive.",
+    unit: "messages",
   },
   index_reindex: {
     title: "Reclaim hot indexes",
@@ -546,6 +552,9 @@ export class AdminService {
       } else if (kind === "archive_reencode") {
         total = await new ColdMessageArchiveService(this.database).countReencodeCandidates();
         detail = `Re-encoding ${total} cold archive chunks`;
+      } else if (kind === "archive_drain") {
+        total = await new ColdMessageArchiveService(this.database).countArchiveCandidates();
+        detail = `Archiving ${total} hot messages`;
       } else if (kind === "index_reindex") {
         total = reindexCandidates.length;
       }
@@ -673,6 +682,7 @@ export class AdminService {
       else if (job.kind === "integrity_scan") await this.runIntegrityScan(id);
       else if (job.kind === "database_measurement") await this.runDatabaseMeasurement(id);
       else if (job.kind === "archive_reencode") await this.runArchiveReencode(id);
+      else if (job.kind === "archive_drain") await this.runArchiveDrain(id);
       else if (job.kind === "index_reindex") await this.runIndexReindex(id);
       if (await this.isCancelling(id)) await this.finishCancelled(id);
       else await this.completeJob(id);
@@ -908,6 +918,20 @@ export class AdminService {
     await this.database.query(`
       UPDATE admin_jobs SET current=$2, detail=$3, updated_at=$4 WHERE id=$1
     `, [id, processed, `${processed} cold chunks verified and re-encoded`, Date.now()]);
+  }
+
+  private async runArchiveDrain(id: string) {
+    const archived = await new ColdMessageArchiveService(this.database).drain({
+      isCancelled: () => this.isCancelling(id),
+      onProgress: async (current) => {
+        await this.database.query(`
+          UPDATE admin_jobs SET current=$2, updated_at=$3 WHERE id=$1
+        `, [id, current, Date.now()]);
+      },
+    });
+    await this.database.query(`
+      UPDATE admin_jobs SET detail=$2, updated_at=$3 WHERE id=$1
+    `, [id, `${archived} messages moved to the cold archive`, Date.now()]);
   }
 
   private async runIndexReindex(id: string) {

@@ -324,6 +324,7 @@ export function createHttpServer(
       "integrity_scan",
       "database_measurement",
       "archive_reencode",
+      "archive_drain",
       "index_reindex",
     ]);
     const kind = request.body?.kind as StartableAdminJobKind;

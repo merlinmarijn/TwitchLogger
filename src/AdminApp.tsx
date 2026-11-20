@@ -22,6 +22,7 @@ type StartableJobKind =
   | "integrity_scan"
   | "database_measurement"
   | "archive_reencode"
+  | "archive_drain"
   | "index_reindex";
 type JobKind = StartableJobKind;
 type JobStatus = "queued" | "running" | "cancelling" | "cancelled" | "completed" | "failed";
@@ -145,8 +146,15 @@ const operations: Array<{
     impact: "Writes verified cold chunks",
   },
   {
-    kind: "index_reindex",
+    kind: "archive_drain",
     number: "06",
+    title: "Archive to cold now",
+    description: "Move every message past the hot retention period (COLD_ARCHIVE_AFTER_DAYS) into the cold archive, repeating until none remain.",
+    impact: "Moves hot messages to cold",
+  },
+  {
+    kind: "index_reindex",
+    number: "07",
     title: "Reclaim hot indexes",
     description: "Measure hot time-ordered indexes and concurrently rebuild only indexes over both bloat thresholds.",
     impact: "Requires configured disk headroom",

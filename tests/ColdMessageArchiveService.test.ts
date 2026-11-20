@@ -106,3 +106,24 @@ describe("cold canonical message archives", () => {
     expect(service.getCacheMetrics()).toMatchObject({ chunks: 2, evictions: 1 });
   });
 });
+
+describe("ColdMessageArchiveService.drain", () => {
+  it("repeats runs until nothing is archived and reports running totals", async () => {
+    const service = new ColdMessageArchiveService({} as never);
+    const runs = [
+      { enabled: true, chunksCreated: 10, chunksMigrated: 0, messagesArchived: 500 },
+      { enabled: true, chunksCreated: 0, chunksMigrated: 0, messagesArchived: 0, busy: true },
+      { enabled: true, chunksCreated: 3, chunksMigrated: 0, messagesArchived: 120 },
+      { enabled: true, chunksCreated: 0, chunksMigrated: 0, messagesArchived: 0 },
+    ];
+    service.runOnce = async () => runs.shift()!;
+    const progress: number[] = [];
+    const total = await service.drain({
+      isCancelled: async () => false,
+      onProgress: async (count) => void progress.push(count),
+    });
+    expect(total).toBe(620);
+    expect(progress).toEqual([500, 620, 620]);
+    expect(runs).toHaveLength(0);
+  });
+});

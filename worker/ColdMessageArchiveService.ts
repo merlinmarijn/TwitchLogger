@@ -36,6 +36,8 @@ const ARCHIVE_INTERVAL_MS = 60 * 60 * 1_000;
 const CODEC = "brotli-positional-v3";
 const DEFAULT_CACHE_CHUNKS = 32;
 const DEFAULT_CACHE_BYTES = 64 * 1024 * 1024;
+// Session lock shared by the hourly worker run and the admin drain job.
+const ARCHIVE_RUN_LOCK = 1_987_042_021;
 
 export interface ArchivedMessageRow {
   id: string;
@@ -141,6 +143,8 @@ export interface ColdArchiveRunResult {
   chunksCreated: number;
   chunksMigrated: number;
   messagesArchived: number;
+  /** Another process holds the archive lock; nothing was attempted. */
+  busy?: boolean;
 }
 
 export interface ImageDeduplicationResult {
@@ -452,13 +456,64 @@ export class ColdMessageArchiveService {
     });
   }
 
+  /** Runs archive passes until nothing eligible remains. */
+  async drain(options: {
+    isCancelled: () => Promise<boolean>;
+    onProgress: (messagesArchived: number) => Promise<void>;
+  }) {
+    let messagesArchived = 0;
+    while (!(await options.isCancelled())) {
+      const result = await this.runOnce();
+      if (result.busy) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        continue;
+      }
+      messagesArchived += result.messagesArchived;
+      await options.onProgress(messagesArchived);
+      if (result.chunksCreated === 0 && result.chunksMigrated === 0) break;
+    }
+    return messagesArchived;
+  }
+
+  async countArchiveCandidates() {
+    const result = await this.database.query<{ count: string }>(
+      "SELECT count(*)::bigint AS count FROM chat_messages WHERE timestamp < $1",
+      [this.archiveCutoff()],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  private archiveCutoff() {
+    return startOfUtcDay(Date.now() - this.hotRetentionDays * DAY_MS);
+  }
+
   private async performRun(): Promise<ColdArchiveRunResult> {
+    const lock = await this.database.pool.connect();
+    try {
+      const acquired = await lock.query<{ locked: boolean }>(
+        "SELECT pg_try_advisory_lock($1) AS locked",
+        [ARCHIVE_RUN_LOCK],
+      );
+      if (!acquired.rows[0]?.locked) {
+        return { enabled: true, chunksCreated: 0, chunksMigrated: 0, messagesArchived: 0, busy: true };
+      }
+      try {
+        return await this.performLockedRun();
+      } finally {
+        await lock.query("SELECT pg_advisory_unlock($1)", [ARCHIVE_RUN_LOCK]);
+      }
+    } finally {
+      lock.release();
+    }
+  }
+
+  private async performLockedRun(): Promise<ColdArchiveRunResult> {
     const chunksMigrated = await this.migrateLegacyChunks(MAX_LEGACY_MIGRATIONS_PER_RUN);
     const enabled = await this.isEnabled();
     if (!enabled) {
       return { enabled, chunksCreated: 0, chunksMigrated, messagesArchived: 0 };
     }
-    const cutoff = startOfUtcDay(Date.now() - this.hotRetentionDays * DAY_MS);
+    const cutoff = this.archiveCutoff();
     let chunksCreated = 0;
     let messagesArchived = 0;
     for (let index = 0; index < MAX_ARCHIVE_CHUNKS_PER_RUN; index += 1) {

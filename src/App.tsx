@@ -1,6 +1,7 @@
 import {
   Component,
   lazy,
+  memo,
   Suspense,
   type ErrorInfo,
   type ReactNode,
@@ -73,6 +74,13 @@ const GameScoreRoom = lazy(() => import("./GameScoreRoom"));
 const INITIAL_MESSAGE_COUNT = 50;
 const HISTORY_PAGE_SIZE = 100;
 const MAX_BULK_ITEMS = 100;
+// Shared formatters: toLocale*String with options builds a new formatter per call.
+const messageDateFormat = new Intl.DateTimeFormat([], { day: "2-digit", month: "2-digit", year: "2-digit" });
+const messageTimeFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const messageTitleFormat = new Intl.DateTimeFormat([], {
+  year: "numeric", month: "numeric", day: "numeric",
+  hour: "numeric", minute: "numeric", second: "numeric",
+});
 const sharedPathPattern = /^\/s\/([a-z0-9](?:[a-z0-9-]{1,46}[a-z0-9]))\/?$/i;
 
 interface TwitchAuthStatus {
@@ -475,7 +483,7 @@ export default function App() {
       });
   }, [importLocalChatTabs, isAdmin, legacyChatTabs, serverChatTabs]);
 
-  const deleteMessages = async (messageIds: string[]) => {
+  const deleteMessages = useCallback(async (messageIds: string[]) => {
     try {
       let deleted = 0;
       for (let offset = 0; offset < messageIds.length; offset += 200) {
@@ -488,9 +496,9 @@ export default function App() {
       setNotice(`Could not remove messages: ${(error as Error).message}`);
       throw error;
     }
-  };
+  }, [deleteMessagesMutation]);
 
-  const hideImages = async (images: Array<{ messageId: string; url: string }>) => {
+  const hideImages = useCallback(async (images: Array<{ messageId: string; url: string }>) => {
     try {
       let hidden = 0;
       for (let offset = 0; offset < images.length; offset += 100) {
@@ -503,7 +511,7 @@ export default function App() {
       setNotice(`Could not remove images: ${(error as Error).message}`);
       throw error;
     }
-  };
+  }, [hideImagesMutation]);
 
   const saveFilter = (filter: MessageFilter, apply: boolean) => {
     setFilterState((current) => {
@@ -1150,16 +1158,17 @@ function MessageFeed({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [moderationBusy, setModerationBusy] = useState(false);
 
-  const toggleSelected = (id: string) => {
+  // Row handlers stay stable so memoized rows skip re-rendering on every poll.
+  const toggleSelected = useCallback((id: string) => {
     setSelectedIds((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else if (next.size < MAX_BULK_ITEMS) next.add(id);
       return next;
     });
-  };
+  }, []);
 
-  const runModeration = async (action: () => Promise<void>) => {
+  const runModeration = useCallback(async (action: () => Promise<void>) => {
     setModerationBusy(true);
     try {
       await action();
@@ -1169,7 +1178,20 @@ function MessageFeed({
     } finally {
       setModerationBusy(false);
     }
-  };
+  }, []);
+
+  const deleteMessage = useCallback((message: ChatMessage) => {
+    if (window.confirm("Permanently delete this message from the logs?")) {
+      void runModeration(() => onDeleteMessages([message._id]));
+    }
+  }, [onDeleteMessages, runModeration]);
+
+  const hideMessageImages = useCallback((message: ChatMessage) => {
+    const images = (message.imageUrls ?? []).map((url) => ({ messageId: message._id, url }));
+    if (images.length > 0 && window.confirm("Permanently remove every image from this message?")) {
+      void runModeration(() => onHideImages(images));
+    }
+  }, [onHideImages, runModeration]);
 
   const selectedMessages = messages.filter((message) => selectedIds.has(message._id));
   const selectedImages = selectedMessages.flatMap((message) =>
@@ -1185,8 +1207,12 @@ function MessageFeed({
   useLayoutEffect(() => {
     if (status === "LoadingMore" || previousScrollHeightRef.current === undefined) return;
     const viewport = viewportRef.current;
-    if (viewport) {
+    // Native scroll anchoring already kept the view in place, except at scrollTop 0
+    // where browsers skip it; correcting again would throw the reader a page down.
+    if (viewport && (viewport.scrollTop === 0 || !CSS.supports("overflow-anchor", "auto"))) {
       viewport.scrollTop += viewport.scrollHeight - previousScrollHeightRef.current;
+    }
+    if (viewport) {
       // The anchor jump is not user scrolling; keep it out of the speed sample.
       scrollSampleRef.current.top = viewport.scrollTop;
     }
@@ -1317,21 +1343,9 @@ function MessageFeed({
               renderYouTubeVideos={renderYouTubeVideos}
               selectable={selectionMode}
               selected={selectedIds.has(message._id)}
-              onSelect={() => toggleSelected(message._id)}
-              onDelete={() => {
-                if (window.confirm("Permanently delete this message from the logs?")) {
-                  void runModeration(() => onDeleteMessages([message._id]));
-                }
-              }}
-              onHideImages={() => {
-                const images = (message.imageUrls ?? []).map((url) => ({
-                  messageId: message._id,
-                  url,
-                }));
-                if (images.length > 0 && window.confirm("Permanently remove every image from this message?")) {
-                  void runModeration(() => onHideImages(images));
-                }
-              }}
+              onSelect={toggleSelected}
+              onDelete={deleteMessage}
+              onHideImages={hideMessageImages}
             />
           ))
         )}
@@ -1784,7 +1798,7 @@ function GalleryImageViewer({
   );
 }
 
-function MessageRow({
+const MessageRow = memo(function MessageRow({
   message,
   emotes = new Map(),
   badgeCatalog = new Map(),
@@ -1805,9 +1819,9 @@ function MessageRow({
   isAdmin: boolean;
   selectable: boolean;
   selected: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
-  onHideImages: () => void;
+  onSelect: (messageId: string) => void;
+  onDelete: (message: ChatMessage) => void;
+  onHideImages: (message: ChatMessage) => void;
   renderInlineImages: boolean;
   renderYouTubeVideos: boolean;
 }) {
@@ -1832,7 +1846,7 @@ function MessageRow({
           <input
             aria-label={`Select message from ${message.senderDisplayName}`}
             checked={selected}
-            onChange={onSelect}
+            onChange={() => onSelect(message._id)}
             type="checkbox"
           />
         </label>
@@ -1840,26 +1854,18 @@ function MessageRow({
       {isAdmin && (
         <ItemActionMenu label="Message actions" actions={[
           ...((message.imageUrls?.length ?? 0) > 0
-            ? [{ label: "Remove all images", onClick: onHideImages }]
+            ? [{ label: "Remove all images", onClick: () => onHideImages(message) }]
             : []),
-          { label: "Delete message", danger: true, onClick: onDelete },
+          { label: "Delete message", danger: true, onClick: () => onDelete(message) },
         ]} />
       )}
       <time
         className="message-timestamp"
         dateTime={postedAt.toISOString()}
-        title={postedAt.toLocaleString()}
+        title={messageTitleFormat.format(postedAt)}
       >
-        <span>{postedAt.toLocaleDateString([], {
-          day: "2-digit",
-          month: "2-digit",
-          year: "2-digit",
-        })}</span>
-        <span>{postedAt.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })}</span>
+        <span>{messageDateFormat.format(postedAt)}</span>
+        <span>{messageTimeFormat.format(postedAt)}</span>
       </time>
       <span className="channel-tag">#{message.channelName}</span>
       <div className="message-content">
@@ -1917,7 +1923,7 @@ function MessageRow({
       </div>
     </article>
   );
-}
+});
 
 function InlineChatImage({ image }: { image: GalleryImage }) {
   const [failed, setFailed] = useState(false);

@@ -1141,6 +1141,11 @@ function MessageFeed({
   const viewportRef = useRef<HTMLDivElement>(null);
   const historyTriggerRef = useRef<HTMLDivElement>(null);
   const previousScrollHeightRef = useRef<number | undefined>(undefined);
+  // Upward scroll speed (px/ms) and history fetch latency (ms), both smoothed,
+  // so fast scrolling prefetches earlier and in bigger pages.
+  const scrollSampleRef = useRef({ top: 0, time: 0, speed: 0 });
+  const loadStartedRef = useRef(0);
+  const loadLatencyRef = useRef(500);
   const [followNewest, setFollowNewest] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [moderationBusy, setModerationBusy] = useState(false);
@@ -1182,7 +1187,11 @@ function MessageFeed({
     const viewport = viewportRef.current;
     if (viewport) {
       viewport.scrollTop += viewport.scrollHeight - previousScrollHeightRef.current;
+      // The anchor jump is not user scrolling; keep it out of the speed sample.
+      scrollSampleRef.current.top = viewport.scrollTop;
     }
+    const latency = performance.now() - loadStartedRef.current;
+    loadLatencyRef.current = loadLatencyRef.current * 0.5 + latency * 0.5;
     previousScrollHeightRef.current = undefined;
   }, [messages.length, status]);
 
@@ -1195,6 +1204,7 @@ function MessageFeed({
       if (!entries.some((entry) => entry.isIntersecting) ||
           previousScrollHeightRef.current !== undefined) return;
       previousScrollHeightRef.current = viewport.scrollHeight;
+      loadStartedRef.current = performance.now();
       loadMore(HISTORY_PAGE_SIZE);
     }, { root: viewport, rootMargin: "120px 0px 0px" });
     observer.observe(trigger);
@@ -1205,6 +1215,26 @@ function MessageFeed({
     const element = viewportRef.current;
     if (!element) return;
     setFollowNewest(element.scrollHeight - element.scrollTop - element.clientHeight < 100);
+
+    const now = performance.now();
+    const sample = scrollSampleRef.current;
+    const dt = now - sample.time;
+    const instant = dt > 0 ? Math.max(0, (sample.top - element.scrollTop) / dt) : sample.speed;
+    sample.speed = dt > 250 ? instant : sample.speed * 0.7 + instant * 0.3;
+    sample.top = element.scrollTop;
+    sample.time = now;
+
+    if (paused || !historyEnabled || status !== "CanLoadMore" ||
+        previousScrollHeightRef.current !== undefined) return;
+    // Distance the user covers while one fetch is in flight, with 2x headroom.
+    const runway = sample.speed * loadLatencyRef.current * 2;
+    if (element.scrollTop > Math.max(runway, element.clientHeight)) return;
+    const rowHeight = element.scrollHeight / Math.max(messages.length, 1);
+    // ponytail: server caps pages at 250; faster scrolling than that per fetch still stalls.
+    const items = Math.min(250, Math.max(HISTORY_PAGE_SIZE, Math.ceil(runway * 2 / rowHeight)));
+    previousScrollHeightRef.current = element.scrollHeight;
+    loadStartedRef.current = now;
+    loadMore(items);
   };
 
   return (
